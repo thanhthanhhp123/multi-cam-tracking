@@ -17,16 +17,24 @@ Detector và Re-ID dùng model có sẵn (fine-tune nếu cần), không train f
 
 ## 2. Ràng buộc môi trường — ĐỌC KỸ
 
-Có hai máy, code chạy ở hai nơi khác nhau:
+Có ba máy, mỗi máy một vai trò. Đừng gộp việc của máy này sang máy khác.
 
-| | Máy dev (hiện tại) | Máy chạy pipeline |
-|---|---|---|
-| Phần cứng | MacBook Apple M1 (arm64) | PC/laptop Ubuntu 22.04 + GPU NVIDIA rời (dự phòng: cloud GPU) |
-| Chạy được | `src/common`, `src/mct`, `src/dashboard`, `src/tools`, `eval/`, toàn bộ `tests/` | tất cả, kể cả `src/ds_pipeline` |
-| KHÔNG chạy được | `src/ds_pipeline` (cần pyds/CUDA/TensorRT) | — |
+| | Mac (dev, hiện tại) | `ut-hpc` (train/fine-tune) | `vast-gpu` (chạy pipeline, thuê khi cần) |
+|---|---|---|---|
+| Phần cứng | Apple M1 (arm64), không GPU | Cụm SLURM ĐH Twente, node `students` = `hpc-node08` (4× GPU Lovelace) | GPU rời thuê trên Vast.ai, IP/cấu hình đổi mỗi lần thuê |
+| OS | macOS | Ubuntu 22.04.5 LTS | tuỳ instance lúc thuê — kiểm tra lại mỗi lần |
+| Cách vào | local | `ssh ut-hpc`, việc nặng phải qua `srun`/`sbatch` — **không chạy trên head node**, xem mục "Cạm bẫy" | `ssh vast-gpu` (đổi `HostName`/`Port` trong `~/.ssh/config` mỗi lần thuê mới) |
+| Container | — | **Singularity** (`module load singularity/3.9.5`), không có Docker | Docker (kiểm tra lại — tuỳ image Vast.ai) |
+| Dùng để | `src/common`, `src/mct`, `src/dashboard`, `src/tools`, `eval/`, toàn bộ `tests/` | fine-tune YOLO (detection) + OSNet (Re-ID) trên COCO-person/Market-1501/MSMT17, xuất `.pt`/ONNX | `src/ds_pipeline` — pipeline DeepStream thật, đo FPS/độ trễ end-to-end |
+| KHÔNG chạy được | `src/ds_pipeline` | `src/ds_pipeline` (không có nvstreammux/DeepStream runtime, chỉ có CUDA/TensorRT để train) | — |
 
-**DeepStream không chạy trên macOS.** Đừng đề xuất chạy `src/ds_pipeline` trên máy này,
-đừng cài `pyds`/`tensorrt` vào venv của Mac, và đừng viết test cần GPU mà không đánh dấu skip.
+`vast-gpu` là **thuê theo phiên, không thường trực** — instance bị huỷ khi ngừng thuê, IP đổi
+mỗi lần thuê lại. Đừng giả định nó đang chạy; luôn xác minh (`ssh vast-gpu echo ok`) trước khi
+dùng, và đừng để job chạy quên trên đó (tính tiền theo giờ).
+
+**DeepStream không chạy trên macOS, và không chạy trên `ut-hpc` (không có DeepStream runtime,
+chỉ dùng để train).** Đừng đề xuất chạy `src/ds_pipeline` ở hai nơi đó, đừng cài `pyds`/`tensorrt`
+vào venv của Mac, và đừng viết test cần GPU mà không đánh dấu skip.
 
 ### Quy tắc bất biến (vi phạm = hỏng cả quy trình dev)
 
@@ -39,6 +47,8 @@ Có hai máy, code chạy ở hai nơi khác nhau:
    cũng không cần GPU. Fixture nằm ở `tests/fixtures/*.jsonl`.
 4. **Nhắm Python 3.10** (bằng phiên bản trong container DeepStream 7.x / Ubuntu 22.04).
    Mac đang có 3.11 — không dùng cú pháp/thư viện chỉ có từ 3.11 trở lên trong code dùng chung.
+5. **Trọng số model train trên `ut-hpc` phải chuyển sang `vast-gpu` qua `models/`** (gitignored,
+   không qua git). `ut-hpc` không bao giờ chạy pipeline; `vast-gpu` không bao giờ train.
 
 ## 3. Kiến trúc
 
@@ -170,21 +180,24 @@ Khi báo cáo số: luôn ghi kèm cấu hình GPU, model, độ phân giải, s
 | Mốc | Tuần | Nội dung | Máy |
 |---|---|---|---|
 | M0 | 1–2 | Khung repo, `schema.py`, wrapper Redis, `replay_metadata.py`, fixture tổng hợp, dashboard rỗng | Mac |
-| M1 | 3–4 | Pipeline DeepStream 1 camera: file/RTSP → YOLO → nvtracker → probe in ra console | GPU |
-| M2 | 5–7 | YOLO → ONNX → TensorRT engine, đo FPS, `nvstreammux` 3–4 luồng | GPU |
-| M3 | 8–10 | Trích Re-ID embedding vào metadata, publish Redis, **ghi fixture thật** | GPU |
+| M1 | 3–4 | Pipeline DeepStream 1 camera: file/RTSP → YOLO (weight gốc, chưa fine-tune) → nvtracker → probe in ra console | `vast-gpu` |
+| M2 | 5–7 | Fine-tune YOLO trên COCO-person → ONNX; sang `vast-gpu`: TensorRT engine, đo FPS, `nvstreammux` 3–4 luồng | `ut-hpc` → `vast-gpu` |
+| M3 | 8–10 | Fine-tune Re-ID (OSNet) trên Market-1501/MSMT17; sang `vast-gpu`: tích hợp vào pipeline, publish Redis, **ghi fixture thật** | `ut-hpc` → `vast-gpu` |
 | M4 | 11–13 | **Module liên kết đa camera** (đóng góp chính) — phát triển trên Mac bằng fixture M3 | Mac |
 | M5 | 14–15 | SQLite store + dashboard realtime | Mac |
-| M6 | 16–17 | Dataset tự thu + CVAT + TrackEval + sweep tham số | cả hai |
+| M6 | 16–17 | Dataset tự thu + CVAT + TrackEval + sweep tham số | cả ba |
 | M7 | 18–20 | (tuỳ chọn) Jetson + viết báo cáo | — |
 
 **Trạng thái hiện tại: M0 xong** (2026-08-27). Contract dữ liệu, wrapper Redis, bộ sinh
 fixture và khung dashboard đã chạy; 56 test pass không cần GPU. `src/mct/` và
-`src/ds_pipeline/` còn là package rỗng.
+`src/ds_pipeline/` còn là package rỗng. Đã khảo sát `ut-hpc` (SLURM + Singularity, GPU
+Lovelace ở partition `students`) — dùng để fine-tune, không chạy pipeline. `vast-gpu`
+là thuê theo phiên, thuê khi vào M1.
 
 Thứ tự này cố ý đặt M3 (ghi fixture) trước M4: một khi có fixture thật, phần khó nhất của đồ án
-phát triển được offline trên Mac. Nếu máy GPU chưa sẵn sàng khi tới M0, vẫn làm M0 được bằng
-fixture tổng hợp sinh bằng tay.
+phát triển được offline trên Mac. Nếu chưa thuê `vast-gpu` khi tới M0, vẫn làm M0 được bằng
+fixture tổng hợp sinh bằng tay — và M2 (fine-tune) làm được trên `ut-hpc` mà không cần đợi
+`vast-gpu`, miễn là xuất trọng số ra ONNX để dùng lại khi có pipeline.
 
 ## 10. Nhật ký làm việc — BẮT BUỘC
 
@@ -226,6 +239,20 @@ và trong worklog chỉ link tới nó.
   Giảm `batch-size` của SGIE trước, rồi mới giảm độ phân giải suy luận.
 - **Quyền riêng tư** (đề cương mục 4.3.3): dữ liệu người thật chỉ dùng cho học thuật, có đồng thuận,
   không commit vào git (`data/` đã ignore), làm mờ mặt trước khi đưa vào báo cáo/slide.
+- **`ut-hpc` không có Docker, chỉ có Singularity.** `docker/deepstream.Dockerfile` không dùng được
+  ở đây (mà cũng không cần — `ut-hpc` không chạy DeepStream). Khi fine-tune cần container (ví dụ
+  image Ultralytics/PyTorch), pull bằng `singularity pull docker://...` rồi `singularity exec --nv`.
+  Test đã xác nhận `singularity pull` từ `docker://` chạy được trên node có GPU.
+- **`ut-hpc` là cụm dùng chung — không chạy gì nặng trên head node (`hpc-head1`).** Mọi việc cần
+  GPU phải qua `srun`/`sbatch --partition=students --gres=gpu:...`. Node GPU được cấp:
+  `hpc-node08` (4× Lovelace). `srun` foreground dễ bị treo chờ hàng đợi khi node đang bận —
+  ưu tiên `sbatch` (job không đồng bộ) cho việc chạy lâu, dùng `squeue -u $USER` để theo dõi thay
+  vì đoán thời gian chờ.
+- **`vast-gpu` thuê theo phiên** — không giả định nó đang tồn tại. `~/.ssh/config` phải cập nhật
+  `HostName`/`Port` mỗi lần thuê instance mới. Kiểm tra Docker và phiên bản driver ngay khi thuê,
+  đừng giả định giống lần trước.
+- **Trọng số model không đi qua git.** Fine-tune xong trên `ut-hpc`, chép `.onnx`/`.pt` sang
+  `models/` (gitignored) rồi rsync/scp sang `vast-gpu` khi cần chạy pipeline.
 
 ## 12. Lệnh (sẽ hiện thực ở M0, ghi ở đây để thống nhất tên)
 
