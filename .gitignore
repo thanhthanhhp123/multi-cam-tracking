@@ -9,6 +9,12 @@ models/
 *.avi
 *.mkv
 
+# Fixture tổng hợp: sinh lại được bằng `make fixture`, deterministic theo seed nên ai
+# cũng ra file giống hệt. ~845K mỗi lần sinh, commit vào chỉ tổ phình repo.
+# Fixture ghi từ pipeline thật (M3) KHÔNG sinh lại được — xem tests/fixtures/README.md.
+tests/fixtures/*.jsonl
+tests/fixtures/*.gt.json
+
 # Kết quả chạy
 eval/results/
 outputs/

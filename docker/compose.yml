@@ -1,0 +1,20 @@
+# Service chạy được trên mọi máy, kể cả Mac không GPU.
+# Pipeline DeepStream nằm ở compose.gpu.yml (chỉ máy Ubuntu + GPU NVIDIA).
+
+services:
+  redis:
+    image: redis:7-alpine
+    container_name: mct-redis
+    ports:
+      - "6379:6379"
+    # Không cần persistence sang đĩa: stream chỉ là bộ đệm, fixture mới là thứ cần giữ lâu.
+    command: redis-server --save "" --appendonly no --maxmemory 512mb --maxmemory-policy noeviction
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 5
+
+  # M4/M5 sẽ thêm:
+  #   mct-engine  — python -m mct
+  #   dashboard   — uvicorn dashboard.app:app

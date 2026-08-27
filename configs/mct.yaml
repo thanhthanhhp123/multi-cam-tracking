@@ -1,0 +1,41 @@
+# Tham số engine liên kết đa camera.
+# Mọi ngưỡng nằm ở đây, KHÔNG hardcode trong code — tuần 16-17 phải sweep bộ này
+# và báo cáo độ nhạy của kết quả theo từng tham số (CLAUDE.md §6).
+
+mode: online          # online | offline  (offline = Hungarian theo lô, cho cận trên độ chính xác)
+
+tracklet:
+  # Tracklet ngắn hơn ngưỡng này bị bỏ qua: quá ít frame thì embedding trung bình không đáng tin.
+  min_frames: 5
+  # Không thấy lại trong khoảng này thì coi tracklet cục bộ đã kết thúc.
+  idle_timeout_ms: 2000
+
+gallery:
+  # Số embedding tối đa giữ cho mỗi GlobalTrack.
+  max_size: 32
+  # Query embedding = trung bình top-k detection có confidence cao nhất của tracklet.
+  # Không dùng embedding frame cuối vì hay dính crop mờ hoặc bị che.
+  topk_query: 8
+  # Trọng số cập nhật gallery khi khớp thêm một tracklet mới.
+  ema_alpha: 0.3
+
+association:
+  # Chu kỳ chạy vòng gán (ms).
+  window_ms: 1000
+  # cost = 1 - cosine_similarity. Chấp nhận cặp gán nếu cost < ngưỡng, ngược lại tạo Global ID mới.
+  # 0.30 tương ứng yêu cầu cosine > 0.70. Đối chiếu số đo trên fixture tổng hợp:
+  # cùng người khác camera ~0.74, hai người "mặc đồ giống nhau" ~0.63 — biên rất hẹp,
+  # nên đây là tham số nhạy nhất của cả hệ thống.
+  max_cost: 0.30
+  # Trọng số lambda của thành phần khoảng cách mặt đất (chỉ áp dụng cho cặp camera overlap).
+  homography_weight: 0.4
+  # Vượt khoảng cách này trên mặt phẳng tham chiếu thì loại thẳng, không cần xét ngoại hình.
+  max_ground_dist_m: 3.0
+  # GlobalTrack không xuất hiện lại trong khoảng này thì đóng lại, không xét làm ứng viên nữa.
+  global_track_ttl_ms: 120000
+
+store:
+  db_path: ${MCT_DB_PATH}
+  # Ghi theo lô cho đỡ tốn I/O; flush khi đủ số bản ghi hoặc hết thời gian.
+  batch_size: 64
+  flush_interval_ms: 1000

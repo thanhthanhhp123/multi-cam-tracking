@@ -178,7 +178,9 @@ Khi báo cáo số: luôn ghi kèm cấu hình GPU, model, độ phân giải, s
 | M6 | 16–17 | Dataset tự thu + CVAT + TrackEval + sweep tham số | cả hai |
 | M7 | 18–20 | (tuỳ chọn) Jetson + viết báo cáo | — |
 
-**Trạng thái hiện tại: trước M0.** Repo mới chỉ có `docs/` và file này.
+**Trạng thái hiện tại: M0 xong** (2026-08-27). Contract dữ liệu, wrapper Redis, bộ sinh
+fixture và khung dashboard đã chạy; 56 test pass không cần GPU. `src/mct/` và
+`src/ds_pipeline/` còn là package rỗng.
 
 Thứ tự này cố ý đặt M3 (ghi fixture) trước M4: một khi có fixture thật, phần khó nhất của đồ án
 phát triển được offline trên Mac. Nếu máy GPU chưa sẵn sàng khi tới M0, vẫn làm M0 được bằng

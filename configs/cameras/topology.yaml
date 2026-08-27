@@ -1,0 +1,38 @@
+# Sơ đồ bố trí camera: dùng cho ràng buộc không-thời gian khi liên kết xuyên camera
+# (CLAUDE.md §6 bước 2). Đo thực tế ở Bước 1 quy trình dựng dataset — đề cương mục 4.3.2.
+#
+# HIỆN TẠI là cấu hình khớp với fixture tổng hợp tests/fixtures/two_cam_walk.jsonl.
+# Khi lắp camera thật phải đo lại toàn bộ khoảng cách và thời gian di chuyển.
+
+cameras:
+  cam01:
+    name: "Hành lang tầng 1 - đầu"
+    resolution: [1920, 1080]
+    fps: 15
+    # Danh sách camera có vùng nhìn chồng lấn. Rỗng = không overlap với camera nào.
+    overlaps_with: []
+
+  cam02:
+    name: "Hành lang tầng 1 - cuối"
+    resolution: [1920, 1080]
+    fps: 15
+    overlaps_with: []
+
+# Thời gian di chuyển hợp lý giữa hai camera, tính từ lúc RỜI camera nguồn tới lúc
+# XUẤT HIỆN ở camera đích. Cặp match nằm ngoài khoảng này bị loại thẳng.
+#
+#   min_ms: đi nhanh nhất có thể (chạy). Đặt 0 cho cặp có vùng nhìn chồng lấn.
+#   max_ms: đi chậm nhất còn hợp lý (dừng lại nói chuyện...). Đặt rộng tay —
+#           chặt quá sẽ cắt mất match đúng, mà đó là lỗi khó truy hơn nhiều so với
+#           một match sai (match sai còn bị ngưỡng ngoại hình chặn lại).
+transitions:
+  - from: cam01
+    to: cam02
+    bidirectional: true
+    min_ms: 3000
+    max_ms: 15000
+    distance_m: 12.0
+
+# Ánh xạ homography cho các cặp camera overlap: đường dẫn tới file hiệu chỉnh.
+# Chưa có cặp overlap nào — bổ sung khi lắp camera thật (đề cương mục 4.2).
+homography: {}

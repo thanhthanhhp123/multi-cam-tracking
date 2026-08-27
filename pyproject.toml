@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "multicam-tracking-deepstream"
+version = "0.1.0"
+description = "MTMCT: theo dõi người xuyên nhiều camera trên nền NVIDIA DeepStream"
+readme = "README.md"
+# 3.10 để khớp Python trong container DeepStream 7.x / Ubuntu 22.04 (CLAUDE.md §2, quy tắc 4).
+# Máy dev là Mac Python 3.11 — không dùng cú pháp chỉ có từ 3.11 trở lên.
+requires-python = ">=3.10,<3.12"
+dependencies = [
+    "numpy>=1.24",
+    "msgpack>=1.0.5",
+    "redis>=5.0",
+    "PyYAML>=6.0",
+    "scipy>=1.10",       # linear_sum_assignment cho Hungarian
+    "python-dotenv>=1.0",
+]
+
+[project.optional-dependencies]
+dashboard = [
+    "fastapi>=0.110",
+    "uvicorn[standard]>=0.27",
+    "jinja2>=3.1",
+]
+# Chỉ cài trên máy có nhu cầu hiệu chỉnh camera / xử lý ảnh offline.
+cv = ["opencv-python>=4.8"]
+dev = [
+    "multicam-tracking-deepstream[dashboard]",
+    "pytest>=7.4",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+]
+
+[tool.setuptools]
+package-dir = { "" = "src" }
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.ruff]
+line-length = 100
+target-version = "py310"
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "UP", "B", "SIM", "RUF"]
+ignore = [
+    "B008",    # FastAPI dùng Depends() trong default argument
+    "RUF001",  # chuỗi tiếng Việt có ký tự Unicode nhìn giống ASCII
+    "RUF002",
+    "RUF003",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Test cần GPU/DeepStream đánh dấu @pytest.mark.gpu để CI trên Mac bỏ qua (CLAUDE.md §8).
+markers = [
+    "gpu: cần GPU NVIDIA + DeepStream, không chạy được trên Mac",
+    "redis: cần một instance Redis đang chạy",
+]
+addopts = "-m 'not gpu' --strict-markers"
