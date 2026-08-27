@@ -1,0 +1,34 @@
+# Dữ liệu và model — KHÔNG commit (dung lượng lớn + quyền riêng tư, xem CLAUDE.md mục 10)
+data/
+models/
+*.engine
+*.onnx
+*.etlt
+*.pt
+*.mp4
+*.avi
+*.mkv
+
+# Kết quả chạy
+eval/results/
+outputs/
+*.db
+*.sqlite3
+
+# Môi trường
+.env
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+*.egg-info/
+build/
+dist/
+
+# Hệ điều hành / IDE
+.DS_Store
+.idea/
+.vscode/
