@@ -27,6 +27,12 @@ dashboard = [
 ]
 # Chỉ cài trên máy có nhu cầu hiệu chỉnh camera / xử lý ảnh offline.
 cv = ["opencv-python>=4.8"]
+# Trích Re-ID embedding offline trên CPU (tools/reid_onnx.py, tools/wildtrack_to_fixture.py).
+# KHÔNG phải đường Re-ID của pipeline thật — pipeline chạy TensorRT trong DeepStream.
+reid = [
+    "multicam-tracking-deepstream[cv]",
+    "onnxruntime>=1.16",
+]
 dev = [
     "multicam-tracking-deepstream[dashboard]",
     "pytest>=7.4",

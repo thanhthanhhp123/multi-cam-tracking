@@ -1,6 +1,7 @@
-# Dữ liệu và model — KHÔNG commit (dung lượng lớn + quyền riêng tư, xem CLAUDE.md mục 10)
-data/
-models/
+# Dữ liệu và model — KHÔNG commit (dung lượng lớn + quyền riêng tư, xem CLAUDE.md mục 10).
+# Neo vào gốc repo: tests/data/ (dữ liệu mẫu nhỏ cho test) vẫn commit được.
+/data/
+/models/
 *.engine
 *.onnx
 *.etlt

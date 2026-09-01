@@ -38,3 +38,4 @@ Quyết định nhỏ ghi thẳng trong worklog. Quyết định lớn: tạo AD
 | [2026-08-27](2026-08-27-khoi-tao-kien-truc.md) | trước M0 | Đọc đề cương, chốt kiến trúc 3 tầng, viết CLAUDE.md |
 | [2026-08-27 (2)](2026-08-27-2-m0-khung-du-an.md) | M0 xong | Khung repo, contract dữ liệu, wrapper Redis, bộ sinh fixture |
 | [2026-08-27 (3)](2026-08-27-3-khao-sat-ut-hpc.md) | trước M1 | Khảo sát ut-hpc, chốt vai trò 3 máy (Mac / ut-hpc / vast-gpu) |
+| [2026-09-01](2026-09-01-wildtrack-fixture-m4.md) | chuẩn bị M4 | Bộ chuyển WildTrack → fixture (OSNet ONNX/CPU), kéo M4 lên sớm bằng dữ liệu thật |

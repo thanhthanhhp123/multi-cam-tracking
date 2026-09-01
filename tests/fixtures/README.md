@@ -58,3 +58,35 @@ python -m tools.record_metadata ...    # đã tự validate và cảnh báo khi 
 
 Cảnh báo hay gặp nhất là bbox tràn khỏi khung — dấu hiệu probe quên scale toạ độ từ
 `nvstreammux` về độ phân giải camera (CLAUDE.md §5).
+
+## 3. Fixture từ WildTrack — dữ liệu thật, có ground-truth Global ID
+
+Trước khi có pipeline (M1–M3), dùng WildTrack (7 camera HD overlap, chú thích ~2 fps,
+`personID` nhất quán xuyên camera) làm bàn thử cho engine liên kết với dữ liệu THẬT thay
+vì fixture tổng hợp. Xem `src/tools/wildtrack_to_fixture.py`.
+
+```bash
+# 1. Annotation + calibration (nhỏ, ~20MB)
+make wildtrack-annotations                    # -> data/wildtrack/annotations_positions/
+
+# 2a. Fixture chỉ hình học — không cần ảnh, không cần [reid], chạy được trong CI
+python -m tools.wildtrack_to_fixture --wildtrack-dir data/wildtrack --no-reid \
+    --views 1,4,7 --out tests/fixtures/wildtrack_geom.jsonl
+
+# 2b. Fixture đầy đủ (có embedding OSNet) — cần ảnh gốc ~13GB từ EPFL + `pip install -e ".[reid]"`
+python -m tools.export_osnet_onnx --weights <osnet_x1_0_market1501.pth.tar> \
+    --out models/reid/osnet_x1_0_market1501.onnx
+make wildtrack-fixture
+```
+
+Ảnh gốc tải từ <https://www.epfl.ch/labs/cvlab/data/data-wildtrack/>, giải nén vào
+`data/wildtrack/Image_subsets/C1..C7/`.
+
+`<out>.gt.json` giống định dạng fixture tổng hợp, thêm `world_xy_m` (vị trí mặt đất thật
+suy từ `positionID`) cho phần đánh giá cross-camera.
+
+Hạn chế: mọi camera WildTrack đều overlap (không có cặp non-overlap); `local_track_id`
+là SCT lý tưởng. Chi tiết trong docstring của tool và `docs/worklog/2026-09-01-*`.
+
+`tests/data/wildtrack/annotations_positions/` giữ 2 file annotation thật để test đối chiếu
+schema — đây là dữ liệu duy nhất trong nhóm này được commit.

@@ -1,4 +1,5 @@
-.PHONY: help dev test lint fmt up down replay record fixture eval ds-build ds-run clean
+.PHONY: help dev test lint fmt up down replay record fixture wildtrack-annotations \
+        wildtrack-fixture eval ds-build ds-run clean
 .DEFAULT_GOAL := help
 
 VENV    := .venv
@@ -42,6 +43,16 @@ down:  ## Tắt các service
 
 fixture:  ## Sinh lại fixture tổng hợp 2 camera
 	$(PY) -m tools.make_synthetic_fixture --out $(FIXTURE)
+
+WILDTRACK_DIR ?= data/wildtrack
+REID_ONNX     ?= models/reid/osnet_x1_0_market1501.onnx
+
+wildtrack-annotations:  ## Tải annotation + calibration WildTrack (nhỏ; ảnh gốc tải riêng)
+	$(PY) -m tools.fetch_wildtrack_annotations --dest $(WILDTRACK_DIR)
+
+wildtrack-fixture:  ## WildTrack -> fixture thật (cần $(WILDTRACK_DIR)/Image_subsets + [reid])
+	$(PY) -m tools.wildtrack_to_fixture --wildtrack-dir $(WILDTRACK_DIR) \
+		--views 1,4,7 --reid-onnx $(REID_ONNX) --out tests/fixtures/wildtrack_3cam.jsonl
 
 replay:  ## Phát lại fixture vào Redis — make replay FIXTURE=...
 	$(PY) -m tools.replay_metadata --fixture $(FIXTURE)

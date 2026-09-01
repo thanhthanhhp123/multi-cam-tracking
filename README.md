@@ -44,7 +44,7 @@ chạy không cần GPU, và có test tự động canh điều đó.
 
 ```bash
 make dev        # tạo .venv + cài dependencies
-make test       # 56 test, không cần GPU (test cần Redis tự bỏ qua nếu chưa `make up`)
+make test       # test không cần GPU (test cần Redis tự bỏ qua nếu chưa `make up`)
 make lint
 ```
 
@@ -68,5 +68,7 @@ open http://127.0.0.1:8000/health
 ## Trạng thái
 
 Xem bảng lộ trình M0–M7 ở [`CLAUDE.md` §9](CLAUDE.md). Hiện tại: **M0 xong** — khung
-repo, contract dữ liệu, wrapper Redis, bộ sinh fixture, dashboard rỗng. Tiếp theo là
-M1–M3 trên máy GPU (pipeline DeepStream) rồi M4 (engine liên kết).
+repo, contract dữ liệu, wrapper Redis, bộ sinh fixture, dashboard rỗng. Đang kéo M4
+(engine liên kết) lên sớm bằng fixture từ WildTrack — dữ liệu multi-camera thật, có
+ground-truth Global ID (xem `tests/fixtures/README.md`). M1–M3 (pipeline DeepStream)
+chạy song song khi thuê được máy GPU.
