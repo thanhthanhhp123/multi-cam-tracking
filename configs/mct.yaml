@@ -21,8 +21,15 @@ gallery:
   # Query embedding = trung bình top-k detection có confidence cao nhất của tracklet.
   # Không dùng embedding frame cuối vì hay dính crop mờ hoặc bị che.
   topk_query: 8
-  # Trọng số cập nhật gallery khi khớp thêm một tracklet mới.
+  # Trọng số cập nhật centroid EMA khi khớp thêm một tracklet mới.
   ema_alpha: 0.3
+  # Cách tính similarity giữa query embedding và một GlobalTrack:
+  #   max      — cosine lớn nhất với các embedding đang giữ. Chịu được thay đổi góc nhìn
+  #              và ánh sáng giữa các camera, nên là mặc định.
+  #   centroid — cosine với vector EMA. Rẻ và ổn định hơn, nhưng bị pha loãng khi cùng
+  #              một người trông khác hẳn ở camera khác.
+  # Giữ cả hai để tuần 16-17 sweep và báo cáo so sánh chứ không phải sửa code.
+  similarity_mode: max
 
 association:
   # Chu kỳ chạy vòng gán (ms).
