@@ -28,9 +28,17 @@ Có ba máy, mỗi máy một vai trò. Đừng gộp việc của máy này san
 | Dùng để | `src/common`, `src/mct`, `src/dashboard`, `src/tools`, `eval/`, toàn bộ `tests/` | fine-tune YOLO (detection) + OSNet (Re-ID) trên COCO-person/Market-1501/MSMT17, xuất `.pt`/ONNX | `src/ds_pipeline` — pipeline DeepStream thật, đo FPS/độ trễ end-to-end |
 | KHÔNG chạy được | `src/ds_pipeline` | `src/ds_pipeline` (không có nvstreammux/DeepStream runtime, chỉ có CUDA/TensorRT để train) | — |
 
+Quy trình thao tác chi tiết trên `ut-hpc` (SSH, `sbatch`, module load...) đóng gói trong skill
+`.claude/skills/ut-hpc/` — đọc trước khi thao tác lần đầu, đừng đoán cú pháp.
+
 `vast-gpu` là **thuê theo phiên, không thường trực** — instance bị huỷ khi ngừng thuê, IP đổi
 mỗi lần thuê lại. Đừng giả định nó đang chạy; luôn xác minh (`ssh vast-gpu echo ok`) trước khi
 dùng, và đừng để job chạy quên trên đó (tính tiền theo giờ).
+
+**Mọi lệnh chạy trên `vast-gpu` — kể cả `ssh vast-gpu echo ok` để kiểm tra — phải hỏi xác nhận
+người dùng trước khi thực thi.** Máy này tính phí theo giờ; ngay cả một lệnh "chỉ để kiểm tra"
+cũng có thể đánh thức billing nếu instance đang tắt hoặc tình cờ khởi động lại. Áp dụng cho
+`make ds-build`, `make ds-run`, và mọi thao tác đánh dấu "Trên máy GPU" ở mục 12.
 
 **DeepStream không chạy trên macOS, và không chạy trên `ut-hpc` (không có DeepStream runtime,
 chỉ dùng để train).** Đừng đề xuất chạy `src/ds_pipeline` ở hai nơi đó, đừng cài `pyds`/`tensorrt`
@@ -67,7 +75,7 @@ Ba tầng, tách rời qua Redis Streams:
 └───────────────────┘
    │ XREADGROUP
    ▼
-┌──────────────── src/mct/ (chạy đâu cũng được, không cần GPU) ─────────────┐
+┌────────────────  src/mct/ (chạy đâu cũng được, không cần GPU) ─────────────┐
 │ tracklet builder → gallery → affinity (cosine + spatio-temporal + homography) │
 │                  → Hungarian → gán Global ID → SQLite                        │
 └──────────────────────────────────────────────────────────────────────────────┘
@@ -155,6 +163,11 @@ Chạy theo cửa sổ (mặc định 1s). Với mỗi tracklet cục bộ vừa
 
 Mọi ngưỡng nằm trong `configs/mct.yaml`, **không hardcode trong code** — cần sweep tham số ở tuần 16–17.
 
+> Đặc tả trên là thiết kế tại thời điểm viết tài liệu này. Nếu lệch với `src/mct/associator.py`
+> hoặc `configs/mct.yaml` đang chạy thực tế, **code và config luôn đúng hơn tài liệu** — coi
+> phần này là ngữ cảnh lịch sử để hiểu ý đồ ban đầu, không phải đặc tả sống. Cập nhật lại đoạn
+> này nếu phát hiện lệch đáng kể.
+
 ## 7. Đánh giá
 
 - **Single-camera** (MOTA/MOTP/IDF1/HOTA): xuất theo định dạng MOT Challenge, chạy TrackEval.
@@ -188,16 +201,10 @@ Khi báo cáo số: luôn ghi kèm cấu hình GPU, model, độ phân giải, s
 | M6 | 16–17 | Dataset tự thu + CVAT + TrackEval + sweep tham số | cả ba |
 | M7 | 18–20 | (tuỳ chọn) Jetson + viết báo cáo | — |
 
-**Trạng thái hiện tại: M0 xong** (2026-08-27). Contract dữ liệu, wrapper Redis, bộ sinh
-fixture và khung dashboard đã chạy; 56 test pass không cần GPU. `src/mct/` và
-`src/ds_pipeline/` còn là package rỗng. Đã khảo sát `ut-hpc` (SLURM, GPU A40/L40 ở partition
-`main-gpu`) — dùng để fine-tune, không chạy pipeline; quy trình thao tác đóng gói trong
-skill `.claude/skills/ut-hpc/`. `vast-gpu` là thuê theo phiên, thuê khi vào M1.
+Bảng trên là **kế hoạch tham chiếu**, không phải tiến độ thật.
 
-Thứ tự này cố ý đặt M3 (ghi fixture) trước M4: một khi có fixture thật, phần khó nhất của đồ án
-phát triển được offline trên Mac. Nếu chưa thuê `vast-gpu` khi tới M0, vẫn làm M0 được bằng
-fixture tổng hợp sinh bằng tay — và M2 (fine-tune) làm được trên `ut-hpc` mà không cần đợi
-`vast-gpu`, miễn là xuất trọng số ra ONNX để dùng lại khi có pipeline.
+**Trạng thái hiện tại:** xem 2–3 file mới nhất trong `docs/worklog/` (quy ước ở mục 10) —
+không lặp lại ở đây vì sẽ lỗi thời ngay khi tiến độ đổi.
 
 ## 10. Nhật ký làm việc — BẮT BUỘC
 
@@ -263,7 +270,7 @@ và trong worklog chỉ link tới nó.
 - **Trọng số model không đi qua git.** Fine-tune xong trên `ut-hpc`, chép `.onnx`/`.pt` sang
   `models/` (gitignored) rồi rsync/scp sang `vast-gpu` khi cần chạy pipeline.
 
-## 12. Lệnh (sẽ hiện thực ở M0, ghi ở đây để thống nhất tên)
+## 12. Lệnh (tên chuẩn hoá cho Makefile — tham chiếu, không phải cam kết đã cài đặt đủ)
 
 ```bash
 # Trên Mac — không cần GPU
@@ -274,7 +281,7 @@ make up                 # docker compose: redis + mct-engine + dashboard
 make replay FIXTURE=tests/fixtures/two_cam_walk.jsonl   # phát lại metadata vào Redis
 make eval               # chạy TrackEval trên kết quả trong eval/
 
-# Trên máy GPU
+# ⚠️ Trên máy GPU (vast-gpu) — xác nhận với người dùng trước khi chạy, tính phí theo giờ (mục 2)
 make ds-build           # build docker/deepstream.Dockerfile
 make ds-run             # chạy pipeline theo configs/pipeline/streams.yaml
 make record OUT=tests/fixtures/<tên>.jsonl              # ghi Redis stream ra fixture
