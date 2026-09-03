@@ -8,7 +8,12 @@ tracklet:
   # Tracklet ngắn hơn ngưỡng này bị bỏ qua: quá ít frame thì embedding trung bình không đáng tin.
   min_frames: 5
   # Không thấy lại trong khoảng này thì coi tracklet cục bộ đã kết thúc.
+  # Cũng là ngưỡng cắt khi nvtracker cấp lại một local_track_id cũ cho người khác.
   idle_timeout_ms: 2000
+  # Trần số embedding giữ cho mỗi tracklet (giữ những cái confidence cao nhất).
+  # Không phải ngưỡng chất lượng — chỉ chặn bộ nhớ khi một người đứng yên rất lâu
+  # trong khung hình. Cần >= gallery.topk_query mới có ý nghĩa.
+  max_embeddings: 32
 
 gallery:
   # Số embedding tối đa giữ cho mỗi GlobalTrack.
