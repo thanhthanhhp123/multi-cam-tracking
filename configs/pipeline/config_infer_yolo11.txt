@@ -1,0 +1,34 @@
+[property]
+gpu-id=0
+net-scale-factor=0.0039215697906911373
+model-color-format=0
+onnx-file=../../models/detector/yolo11s.onnx
+model-engine-file=../../models/detector/yolo11s.onnx_b1_gpu0_fp16.engine
+labelfile-path=../../models/detector/labels.txt
+batch-size=1
+network-mode=2
+num-detected-classes=80
+interval=0
+gie-unique-id=1
+process-mode=1
+network-type=0
+cluster-mode=2
+maintain-aspect-ratio=1
+symmetric-padding=1
+parse-bbox-func-name=NvDsInferParseYolo
+custom-lib-path=../../third_party/DeepStream-Yolo/nvdsinfer_custom_impl_Yolo/libnvdsinfer_custom_impl_Yolo.so
+engine-create-func-name=NvDsInferYoloCudaEngineGet
+
+# CLAUDE.md §9 M1: weight gốc COCO (80 lớp, chưa fine-tune). M2 fine-tune trên
+# COCO-person (1 lớp) trên ut-hpc — đổi num-detected-classes=1 và labelfile-path
+# khi có weight mới trong models/detector/.
+#
+# onnx-file/model-engine-file/labelfile-path/custom-lib-path TƯƠNG ĐỐI so với vị trí
+# file config này (configs/pipeline/), khớp cấu trúc thư mục repo. Trên máy GPU thật,
+# models/ và third_party/ đã có sẵn qua bước chuẩn bị (xem docs/worklog M1).
+# network-mode=2 (FP16) — đo lại FP32 nếu cần đối chiếu độ chính xác baseline (chương 6).
+
+[class-attrs-all]
+nms-iou-threshold=0.45
+pre-cluster-threshold=0.25
+topk=300

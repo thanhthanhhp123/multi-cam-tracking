@@ -1,0 +1,26 @@
+# Danh sách nguồn camera cho src/ds_pipeline (CLAUDE.md §4). M1: một nguồn = video mẫu.
+#
+# cam_id: string ổn định, khớp key trong configs/cameras/topology.yaml — KHÔNG dùng
+# index streammux (đổi khi bật/tắt camera). Thứ tự trong danh sách "sources" quyết
+# định pad index của streammux (sink_0, sink_1, ...) trong phiên chạy này.
+
+sources:
+  - cam_id: cam01
+    uri: file:///opt/nvidia/deepstream/deepstream/samples/streams/sample_1080p_h264.mp4
+
+streammux:
+  width: 1920
+  height: 1080
+  batched_push_timeout_us: 40000
+  live_source: false     # true khi nguồn là RTSP thật (camera IP) — CLAUDE.md §5
+  attach_sys_ts: true
+
+tracker:
+  ll_lib_file: /opt/nvidia/deepstream/deepstream/lib/libnvds_nvmultiobjecttracker.so
+  ll_config_file: configs/pipeline/config_tracker_NvDCF_perf.yml
+  width: 960
+  height: 544
+  display_tracking_id: false
+
+pgie:
+  config_file: configs/pipeline/config_infer_yolo11.txt

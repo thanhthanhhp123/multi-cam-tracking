@@ -21,10 +21,10 @@ Có ba máy, mỗi máy một vai trò. Đừng gộp việc của máy này san
 
 | | Mac (dev, hiện tại) | `ut-hpc` (train/fine-tune) | `vast-gpu` (chạy pipeline, thuê khi cần) |
 |---|---|---|---|
-| Phần cứng | Apple M1 (arm64), không GPU | Cụm SLURM ĐH Twente, node `students` = `hpc-node08` (4× GPU Lovelace) | GPU rời thuê trên Vast.ai, IP/cấu hình đổi mỗi lần thuê |
+| Phần cứng | Apple M1 (arm64), không GPU | Cụm SLURM ĐH Twente. Partition mở cho mọi account: `main-gpu` (26 node, A40 46GB / L40 48GB / Lovelace). `students` chỉ có 1 node `hpc-node08` | GPU rời thuê trên Vast.ai, IP/cấu hình đổi mỗi lần thuê |
 | OS | macOS | Ubuntu 22.04.5 LTS | tuỳ instance lúc thuê — kiểm tra lại mỗi lần |
-| Cách vào | local | `ssh ut-hpc`, việc nặng phải qua `srun`/`sbatch` — **không chạy trên head node**, xem mục "Cạm bẫy" | `ssh vast-gpu` (đổi `HostName`/`Port` trong `~/.ssh/config` mỗi lần thuê mới) |
-| Container | — | **Singularity** (`module load singularity/3.9.5`), không có Docker | Docker (kiểm tra lại — tuỳ image Vast.ai) |
+| Cách vào | local | `ssh ut-hpc`, việc nặng qua `sbatch --partition=main-gpu` — **không chạy trên head node**, và **node tính toán không có Internet**, xem mục "Cạm bẫy" | `ssh vast-gpu` (đổi `HostName`/`Port` trong `~/.ssh/config` mỗi lần thuê mới) |
+| Container | — | Không cần: conda env trong `$HOME` chạy được GPU trên node tính toán (đã đo). Có `module load singularity/3.9.5` làm dự phòng, không có Docker | Docker (kiểm tra lại — tuỳ image Vast.ai) |
 | Dùng để | `src/common`, `src/mct`, `src/dashboard`, `src/tools`, `eval/`, toàn bộ `tests/` | fine-tune YOLO (detection) + OSNet (Re-ID) trên COCO-person/Market-1501/MSMT17, xuất `.pt`/ONNX | `src/ds_pipeline` — pipeline DeepStream thật, đo FPS/độ trễ end-to-end |
 | KHÔNG chạy được | `src/ds_pipeline` | `src/ds_pipeline` (không có nvstreammux/DeepStream runtime, chỉ có CUDA/TensorRT để train) | — |
 
@@ -190,9 +190,9 @@ Khi báo cáo số: luôn ghi kèm cấu hình GPU, model, độ phân giải, s
 
 **Trạng thái hiện tại: M0 xong** (2026-08-27). Contract dữ liệu, wrapper Redis, bộ sinh
 fixture và khung dashboard đã chạy; 56 test pass không cần GPU. `src/mct/` và
-`src/ds_pipeline/` còn là package rỗng. Đã khảo sát `ut-hpc` (SLURM + Singularity, GPU
-Lovelace ở partition `students`) — dùng để fine-tune, không chạy pipeline. `vast-gpu`
-là thuê theo phiên, thuê khi vào M1.
+`src/ds_pipeline/` còn là package rỗng. Đã khảo sát `ut-hpc` (SLURM, GPU A40/L40 ở partition
+`main-gpu`) — dùng để fine-tune, không chạy pipeline; quy trình thao tác đóng gói trong
+skill `.claude/skills/ut-hpc/`. `vast-gpu` là thuê theo phiên, thuê khi vào M1.
 
 Thứ tự này cố ý đặt M3 (ghi fixture) trước M4: một khi có fixture thật, phần khó nhất của đồ án
 phát triển được offline trên Mac. Nếu chưa thuê `vast-gpu` khi tới M0, vẫn làm M0 được bằng
@@ -239,18 +239,27 @@ và trong worklog chỉ link tới nó.
   Giảm `batch-size` của SGIE trước, rồi mới giảm độ phân giải suy luận.
 - **Quyền riêng tư** (đề cương mục 4.3.3): dữ liệu người thật chỉ dùng cho học thuật, có đồng thuận,
   không commit vào git (`data/` đã ignore), làm mờ mặt trước khi đưa vào báo cáo/slide.
-- **`ut-hpc` không có Docker, chỉ có Singularity.** `docker/deepstream.Dockerfile` không dùng được
-  ở đây (mà cũng không cần — `ut-hpc` không chạy DeepStream). Khi fine-tune cần container (ví dụ
-  image Ultralytics/PyTorch), pull bằng `singularity pull docker://...` rồi `singularity exec --nv`.
-  Test đã xác nhận `singularity pull` từ `docker://` chạy được trên node có GPU.
+- **`ut-hpc`: node tính toán KHÔNG có Internet, head node CÓ.** Đã đo 2026-09-03: từ `ctit091`,
+  `curl` tới pypi/github/docker registry đều không phản hồi; từ `hpc-head1` đều 200. Mọi thứ
+  chạm mạng (pip, tải dataset, weight tự tải của Ultralytics, `singularity pull`) phải làm trên
+  head node trước; job chỉ đọc từ đĩa. Đây là cạm bẫy số 1 — job có lệnh gọi mạng sẽ treo tới
+  hết `--time` rồi chết.
+- **`ut-hpc` không có Docker.** `docker/deepstream.Dockerfile` không dùng được ở đây (mà cũng
+  không cần — `ut-hpc` không chạy DeepStream). Không cần container để fine-tune: conda env đặt
+  trong `$HOME` (NFS) chạy được CUDA trên node tính toán, đã xác minh bằng job thật. Giữ
+  `module load singularity/3.9.5` làm phương án dự phòng.
 - **`ut-hpc` là cụm dùng chung — không chạy gì nặng trên head node (`hpc-head1`).** Mọi việc cần
-  GPU phải qua `srun`/`sbatch --partition=students --gres=gpu:...`. Node GPU được cấp:
-  `hpc-node08` (4× Lovelace). `srun` foreground dễ bị treo chờ hàng đợi khi node đang bận —
+  GPU phải qua `sbatch --partition=main-gpu --gres=gpu:...`. Dùng `main-gpu` (26 node,
+  `AllowAccounts=ALL`), **không** dùng `students` (đúng 1 node `hpc-node08`, hay pending):
+  đo 2026-09-03, `main-gpu` chờ ~40s trong khi `students` pending vô hạn định.
+  `srun` foreground dễ bị treo chờ hàng đợi khi node đang bận —
   ưu tiên `sbatch` (job không đồng bộ) cho việc chạy lâu, dùng `squeue -u $USER` để theo dõi thay
   vì đoán thời gian chờ.
 - **`vast-gpu` thuê theo phiên** — không giả định nó đang tồn tại. `~/.ssh/config` phải cập nhật
   `HostName`/`Port` mỗi lần thuê instance mới. Kiểm tra Docker và phiên bản driver ngay khi thuê,
   đừng giả định giống lần trước.
+- **Home trên `ut-hpc` còn ~113G/1TB (2026-09-03).** COCO + MSMT17 + env torch là vừa hết chỗ.
+  Kiểm tra `df -h $HOME` trước mỗi lần tải dataset.
 - **Trọng số model không đi qua git.** Fine-tune xong trên `ut-hpc`, chép `.onnx`/`.pt` sang
   `models/` (gitignored) rồi rsync/scp sang `vast-gpu` khi cần chạy pipeline.
 

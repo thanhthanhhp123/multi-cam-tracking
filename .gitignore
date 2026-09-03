@@ -2,6 +2,10 @@
 # Neo vào gốc repo: tests/data/ (dữ liệu mẫu nhỏ cho test) vẫn commit được.
 /data/
 /models/
+
+# Repo bên thứ ba clone trên máy GPU để build native lib (vd. DeepStream-Yolo — .so
+# kiến trúc-cụ thể, không portable). Cách dựng lại ghi trong docs/worklog M1.
+/third_party/
 *.engine
 *.onnx
 *.etlt

@@ -1,0 +1,61 @@
+%YAML:1.0
+# Tracker NvDCF cho M1 — dựng pipeline chạy được, CHƯA sweep tham số (đó là M6).
+#
+# KHÔNG sao chép nguyên văn config mẫu của NVIDIA (config_tracker_NvDCF_perf.yml đi kèm
+# DeepStream container) — file đó ghi "LicenseRef-NvidiaProprietary ... strictly
+# prohibited" khi tái phân phối. Tên tham số ở đây lấy từ tài liệu công khai DeepStream
+# (NvMultiObjectTracker), giá trị là mặc định hợp lý cho M1, chưa tune.
+#
+# reidType để 0 (DUMMY) — ReID qua nvtracker là M3, cần model resnet50_market1501
+# (hoặc OSNet fine-tune) chưa có trong models/ (CLAUDE.md §11, đường A).
+
+BaseConfig:
+  minDetectorConfidence: 0.2
+
+TargetManagement:
+  enableBboxUnClipping: 1
+  preserveStreamUpdateOrder: 0
+  maxTargetsPerStream: 150
+  minIouDiff4NewTarget: 0.5
+  minTrackerConfidence: 0.3
+  probationAge: 2
+  maxShadowTrackingAge: 30
+  earlyTerminationAge: 1
+
+TrajectoryManagement:
+  useUniqueID: 0
+
+DataAssociator:
+  dataAssociatorType: 0
+  associationMatcherType: 1
+  checkClassMatch: 1
+  minMatchingScore4Overall: 0.3
+  minMatchingScore4SizeSimilarity: 0.3
+  minMatchingScore4Iou: 0.2
+  minMatchingScore4VisualSimilarity: 0.5
+  matchingScoreWeight4VisualSimilarity: 0.35
+  matchingScoreWeight4SizeSimilarity: 0.4
+  matchingScoreWeight4Iou: 0.4
+  tentativeDetectorConfidence: 0.2
+  minMatchingScore4TentativeIou: 0.5
+
+StateEstimator:
+  stateEstimatorType: 1
+  processNoiseVar4Loc: 2.0
+  processNoiseVar4Size: 1.5
+  processNoiseVar4Vel: 0.05
+  measurementNoiseVar4Detector: 3.0
+  measurementNoiseVar4Tracker: 8.0
+
+VisualTracker:
+  visualTrackerType: 1
+  useColorNames: 1
+  useHog: 0
+  featureImgSizeLevel: 2
+  featureFocusOffsetFactor_y: -0.2
+  filterLr: 0.075
+  filterChannelWeightsLr: 0.1
+  gaussianSigma: 0.75
+
+ReID:
+  reidType: 0    # DUMMY — bật (2) ở M3 khi có model ReID, xem configs/pipeline/config_tracker_NvDCF_reid.yml

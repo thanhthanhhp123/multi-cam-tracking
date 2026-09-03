@@ -1,0 +1,34 @@
+# Chỉ máy Ubuntu + GPU NVIDIA (CLAUDE.md §2). Dùng cùng docker/compose.yml:
+#   make up      # redis (compose.yml)
+#   make ds-run  # pipeline (compose.yml + compose.gpu.yml)
+#
+# models/ mount từ host — trọng số KHÔNG đi qua image/git (CLAUDE.md §11): chép
+# .onnx/.pt vào models/detector/, models/reid/ trước khi chạy. Xem
+# docs/worklog/2026-09-03-3-m1-vast-deepstream.md cho bước xuất ONNX từ YOLO .pt.
+
+services:
+  ds-pipeline:
+    build:
+      context: ..
+      dockerfile: docker/deepstream.Dockerfile
+    image: mct-deepstream:dev
+    container_name: mct-ds-pipeline
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+      - NVIDIA_VISIBLE_DEVICES=all
+      - NVIDIA_DRIVER_CAPABILITIES=compute,video,utility,graphics
+    volumes:
+      - ../configs:/workspace/mct-repo/configs:ro
+      - ../models:/workspace/mct-repo/models
+      - ../data:/workspace/mct-repo/data:ro
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: 1
+              capabilities: [gpu]
+    command: ["--config", "configs/pipeline/streams.yaml", "--publish"]

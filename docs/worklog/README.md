@@ -39,3 +39,5 @@ Quyết định nhỏ ghi thẳng trong worklog. Quyết định lớn: tạo AD
 | [2026-08-27 (2)](2026-08-27-2-m0-khung-du-an.md) | M0 xong | Khung repo, contract dữ liệu, wrapper Redis, bộ sinh fixture |
 | [2026-08-27 (3)](2026-08-27-3-khao-sat-ut-hpc.md) | trước M1 | Khảo sát ut-hpc, chốt vai trò 3 máy (Mac / ut-hpc / vast-gpu) |
 | [2026-09-01](2026-09-01-wildtrack-fixture-m4.md) | chuẩn bị M4 | Bộ chuyển WildTrack → fixture (OSNet ONNX/CPU), kéo M4 lên sớm bằng dữ liệu thật |
+| [2026-09-03](2026-09-03-skill-ut-hpc.md) | chuẩn bị M2/M3 | Vọc lại ut-hpc (partition `main-gpu`, node tính toán không có mạng), skill `ut-hpc` |
+| [2026-09-03 (3)](2026-09-03-3-m1-vast-deepstream.md) | M1 | Thuê vast.ai, pipeline DeepStream 1 camera chạy thật (410.8 FPS), chốt DS 7.1/CUDA 12.6, Docker hoá |
