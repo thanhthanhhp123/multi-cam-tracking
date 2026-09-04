@@ -142,6 +142,14 @@ class GlobalTrack:
     n_tracklets: int = 0
     closed: bool = False
 
+    last_ground_point: tuple[float, float] = (0.0, 0.0)
+    """Điểm chân (đáy-giữa bbox) ở lần thấy gần nhất, theo toạ độ ảnh của `last_cam_id`.
+
+    Đầu vào của thành phần hình học trong `affinity.py` với cặp camera chồng lấn. Giữ ở
+    toạ độ ảnh chứ không quy đổi sẵn: phép ánh xạ homography phụ thuộc CẶP camera, mà lúc
+    ghi lại thì chưa biết sẽ so với camera nào.
+    """
+
     cam_last_seen: dict[str, int] = field(default_factory=dict)
     """cam_id → ts_ms lần cuối thấy ở camera đó. Đầu vào của ràng buộc thời gian di chuyển."""
 
@@ -255,6 +263,7 @@ class Gallery:
         if tracklet.end_ms >= track.last_seen_ms:
             track.last_seen_ms = tracklet.end_ms
             track.last_cam_id = tracklet.cam_id
+            track.last_ground_point = tracklet.last_ground_point
         track.created_ms = min(track.created_ms, tracklet.start_ms)
 
         query = tracklet.query_embedding(self.config.topk_query)
