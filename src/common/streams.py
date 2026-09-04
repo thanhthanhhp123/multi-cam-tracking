@@ -7,6 +7,7 @@ metadata thật từ máy GPU rồi phát lại trên máy không GPU để phá
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from types import TracebackType
 from typing import Any
 
@@ -15,7 +16,14 @@ from redis.exceptions import ResponseError
 
 from common.config import redis_url
 from common.logging import get_logger
-from common.schema import FrameMessage, decode_msgpack, encode_msgpack
+from common.schema import (
+    FrameMessage,
+    GlobalUpdate,
+    decode_global_msgpack,
+    decode_msgpack,
+    encode_global_msgpack,
+    encode_msgpack,
+)
 
 log = get_logger(__name__)
 
@@ -153,3 +161,80 @@ class FrameConsumer:
         tb: TracebackType | None,
     ) -> None:
         self.close()
+
+
+class GlobalPublisher:
+    """Đẩy `GlobalUpdate` lên `mct:global`. Dùng bởi engine liên kết (`python -m mct`).
+
+    Stream này chỉ để dashboard theo dõi realtime, KHÔNG phải nguồn sự thật — nguồn sự
+    thật là SQLite (`mct.store`). `MAXLEN` nhỏ hơn `mct:frames` mười lần vì mỗi tracklet
+    chỉ sinh vài cập nhật, và mất vài cập nhật cũ không ảnh hưởng gì.
+    """
+
+    def __init__(
+        self,
+        url: str | None = None,
+        *,
+        stream: str = STREAM_GLOBAL,
+        maxlen: int = MAXLEN_GLOBAL,
+        client: redis.Redis | None = None,
+    ) -> None:
+        self.stream = stream
+        self.maxlen = maxlen
+        self._client = client or connect(url)
+        self._owns_client = client is None
+
+    def publish(self, update: GlobalUpdate) -> str:
+        entry_id = self._client.xadd(
+            self.stream,
+            {_FIELD: encode_global_msgpack(update)},
+            maxlen=self.maxlen,
+            approximate=True,
+        )
+        return entry_id.decode() if isinstance(entry_id, bytes) else str(entry_id)
+
+    def publish_many(self, updates: Iterable[GlobalUpdate]) -> int:
+        """Gửi theo lô bằng pipeline — một vòng gán sinh hàng chục cập nhật một lúc."""
+        pipe = self._client.pipeline(transaction=False)
+        count = 0
+        for update in updates:
+            pipe.xadd(
+                self.stream,
+                {_FIELD: encode_global_msgpack(update)},
+                maxlen=self.maxlen,
+                approximate=True,
+            )
+            count += 1
+        if count:
+            pipe.execute()
+        return count
+
+    def close(self) -> None:
+        if self._owns_client:
+            self._client.close()
+
+    def __enter__(self) -> GlobalPublisher:
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        self.close()
+
+
+def read_global(
+    client: redis.Redis, *, last_id: str = "$", block_ms: int = 1000, count: int = 64
+) -> list[tuple[str, GlobalUpdate]]:
+    """Đọc `mct:global` bằng XREAD thường (không consumer group).
+
+    Dashboard là bên đọc duy nhất và nó chỉ cần "những gì mới từ lúc tôi kết nối" — dùng
+    consumer group ở đây chỉ tổ phải quản lý ack cho một thứ không cần đảm bảo giao nhận.
+    """
+    response = client.xread({STREAM_GLOBAL: last_id}, count=count, block=block_ms)
+    out: list[tuple[str, GlobalUpdate]] = []
+    for _stream, entries in response or []:
+        for entry_id, fields in entries:
+            raw = fields.get(_FIELD)
+            if raw is None:
+                log.warning("Entry %s trên %s thiếu field %r", entry_id, STREAM_GLOBAL, _FIELD)
+                continue
+            out.append((entry_id.decode(), decode_global_msgpack(raw)))
+    return out

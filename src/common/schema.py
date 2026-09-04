@@ -248,6 +248,101 @@ def read_jsonl(path: str | Path) -> Iterator[FrameMessage]:
 
 
 # --------------------------------------------------------------------------- #
+# mct:global — cập nhật Global ID cho dashboard
+# --------------------------------------------------------------------------- #
+
+
+@dataclass(slots=True)
+class GlobalUpdate:
+    """Một lần engine gán/cập nhật Global ID cho một tracklet.
+
+    Đây là toàn bộ nội dung stream `mct:global` (CLAUDE.md §5). Cố tình KHÔNG mang
+    embedding: dashboard không cần ngoại hình, mà 256 float mỗi cập nhật thì stream phình
+    vô ích. Ai cần ngoại hình thì đọc `mct:frames`.
+    """
+
+    global_id: int
+    cam_id: str
+    local_track_id: int
+    tracklet_id: int
+    ts_ms: int
+    """Mốc muộn nhất của tracklet tại thời điểm gán (không phải giờ hệ thống lúc ghi)."""
+
+    bbox: tuple[float, float, float, float]
+    """Vị trí gần nhất trong ảnh, [x, y, w, h] theo độ phân giải GỐC của camera."""
+
+    ground_point: tuple[float, float] = (0.0, 0.0)
+    cost: float = 0.0
+    """Chi phí ghép (0.0 khi tạo mới hoặc khi chỉ cập nhật tracklet đang chạy)."""
+
+    is_new: bool = False
+    """True = Global ID này vừa được tạo cho tracklet đó."""
+
+    is_update: bool = False
+    """True = tracklet đã thuộc Global ID này từ trước, lần này chỉ nới thêm."""
+
+    n_cameras: int = 1
+    """Số camera mà Global ID này đã đi qua — dashboard dùng để lọc "người xuyên camera"."""
+
+    reason: str = ""
+    """Vì sao phải tạo ID mới (rỗng nếu ghép được). Để truy nguyên khi soi dashboard."""
+
+
+def _global_to_dict(update: GlobalUpdate) -> dict[str, Any]:
+    return {
+        "global_id": int(update.global_id),
+        "cam_id": update.cam_id,
+        "local_track_id": int(update.local_track_id),
+        "tracklet_id": int(update.tracklet_id),
+        "ts_ms": int(update.ts_ms),
+        "bbox": [float(v) for v in update.bbox],
+        "ground_point": [float(v) for v in update.ground_point],
+        "cost": float(update.cost),
+        "is_new": bool(update.is_new),
+        "is_update": bool(update.is_update),
+        "n_cameras": int(update.n_cameras),
+        "reason": update.reason,
+    }
+
+
+def _global_from_dict(data: dict[str, Any]) -> GlobalUpdate:
+    bbox = tuple(float(v) for v in data["bbox"])
+    if len(bbox) != 4:
+        raise SchemaError(f"bbox phải có 4 phần tử, nhận {len(bbox)}")
+    point = tuple(float(v) for v in data.get("ground_point", (0.0, 0.0)))
+    return GlobalUpdate(
+        global_id=int(data["global_id"]),
+        cam_id=str(data["cam_id"]),
+        local_track_id=int(data["local_track_id"]),
+        tracklet_id=int(data["tracklet_id"]),
+        ts_ms=int(data["ts_ms"]),
+        bbox=bbox,  # type: ignore[arg-type]
+        ground_point=point,  # type: ignore[arg-type]
+        cost=float(data.get("cost", 0.0)),
+        is_new=bool(data.get("is_new", False)),
+        is_update=bool(data.get("is_update", False)),
+        n_cameras=int(data.get("n_cameras", 1)),
+        reason=str(data.get("reason", "")),
+    )
+
+
+def encode_global_msgpack(update: GlobalUpdate) -> bytes:
+    return msgpack.packb(_global_to_dict(update), use_bin_type=True)
+
+
+def decode_global_msgpack(raw: bytes) -> GlobalUpdate:
+    return _global_from_dict(msgpack.unpackb(raw, raw=False))
+
+
+def encode_global_jsonl(update: GlobalUpdate) -> str:
+    return json.dumps(_global_to_dict(update), separators=(",", ":"), ensure_ascii=False)
+
+
+def decode_global_jsonl(line: str) -> GlobalUpdate:
+    return _global_from_dict(json.loads(line))
+
+
+# --------------------------------------------------------------------------- #
 # Kiểm tra tính hợp lệ
 # --------------------------------------------------------------------------- #
 

@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 import numpy as np
 import pytest
 
@@ -9,9 +11,14 @@ from common.schema import (
     SCHEMA_VERSION,
     Detection,
     FrameMessage,
+    GlobalUpdate,
     SchemaError,
+    decode_global_jsonl,
+    decode_global_msgpack,
     decode_jsonl,
     decode_msgpack,
+    encode_global_jsonl,
+    encode_global_msgpack,
     encode_jsonl,
     encode_msgpack,
     l2_normalize,
@@ -201,3 +208,62 @@ def test_l2_normalize() -> None:
 def test_l2_normalize_vector_khong() -> None:
     with pytest.raises(SchemaError):
         l2_normalize(np.zeros(8))
+
+
+# --------------------------------------------------------------------------- #
+# GlobalUpdate — nội dung stream mct:global
+# --------------------------------------------------------------------------- #
+
+
+def _global_update() -> GlobalUpdate:
+    return GlobalUpdate(
+        global_id=47,
+        cam_id="cam03",
+        local_track_id=12,
+        tracklet_id=901,
+        ts_ms=1_788_231_600_123,
+        bbox=(100.5, 200.25, 60.0, 150.0),
+        ground_point=(130.5, 350.25),
+        cost=0.1875,
+        is_new=False,
+        is_update=True,
+        n_cameras=3,
+        reason="",
+    )
+
+
+def test_global_update_qua_msgpack_khong_doi() -> None:
+    update = _global_update()
+    assert decode_global_msgpack(encode_global_msgpack(update)) == update
+
+
+def test_global_update_qua_jsonl_khong_doi() -> None:
+    update = _global_update()
+    assert decode_global_jsonl(encode_global_jsonl(update)) == update
+
+
+def test_global_update_khong_mang_embedding() -> None:
+    """Dashboard không cần ngoại hình; 256 float mỗi cập nhật làm stream phình vô ích."""
+    payload = json.loads(encode_global_jsonl(_global_update()))
+    assert "embedding" not in payload
+    assert set(payload) == {
+        "global_id",
+        "cam_id",
+        "local_track_id",
+        "tracklet_id",
+        "ts_ms",
+        "bbox",
+        "ground_point",
+        "cost",
+        "is_new",
+        "is_update",
+        "n_cameras",
+        "reason",
+    }
+
+
+def test_global_update_bbox_sai_so_phan_tu_bi_tu_choi() -> None:
+    payload = json.loads(encode_global_jsonl(_global_update()))
+    payload["bbox"] = [1.0, 2.0, 3.0]
+    with pytest.raises(SchemaError, match="bbox"):
+        decode_global_jsonl(json.dumps(payload))
