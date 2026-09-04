@@ -6,8 +6,9 @@
 # prohibited" khi tái phân phối. Tên tham số ở đây lấy từ tài liệu công khai DeepStream
 # (NvMultiObjectTracker), giá trị là mặc định hợp lý cho M1, chưa tune.
 #
-# reidType để 0 (DUMMY) — ReID qua nvtracker là M3, cần model resnet50_market1501
-# (hoặc OSNet fine-tune) chưa có trong models/ (CLAUDE.md §11, đường A).
+# reidType để 0 (DUMMY) — file này là bản KHÔNG ReID, giữ lại làm đối chứng để đo chi
+# phí thật của ReID (cặp với config_tracker_NvDCF_reid.yml của M3, khác nhau đúng khối
+# ReID; có test canh). Muốn chạy có ReID thì dùng file kia, đừng sửa file này.
 
 BaseConfig:
   minDetectorConfidence: 0.2
@@ -58,4 +59,4 @@ VisualTracker:
   gaussianSigma: 0.75
 
 ReID:
-  reidType: 0    # DUMMY — bật (2) ở M3 khi có model ReID, xem configs/pipeline/config_tracker_NvDCF_reid.yml
+  reidType: 0    # DUMMY. Bản có ReID: configs/pipeline/config_tracker_NvDCF_reid.yml

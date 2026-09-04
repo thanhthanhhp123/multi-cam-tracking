@@ -1,0 +1,141 @@
+%YAML:1.0
+# Tracker NvDCF CÓ ReID — M3. Bản không ReID: config_tracker_NvDCF_perf.yml.
+#
+# KHÔNG sao chép nguyên văn config mẫu của NVIDIA (file đi kèm container ghi
+# "LicenseRef-NvidiaProprietary ... strictly prohibited" khi tái phân phối). Tên tham số
+# lấy từ tài liệu công khai của NvMultiObjectTracker; giá trị dưới đây là của đồ án.
+#
+# Mọi khối ngoài ReID giữ y hệt config_tracker_NvDCF_perf.yml, để chênh lệch đo được
+# giữa hai file quy về đúng một biến: ReID bật hay tắt.
+#
+# ============================ CHƯA CHẠY TRÊN PHẦN CỨNG ============================
+# File này soạn trên máy dev (không có DeepStream). Checklist phải làm ở lần thuê
+# `vast-gpu` tới, theo đúng thứ tự:
+#   1. Đọc log khởi động của nvtracker. NvMultiObjectTracker BỎ QUA IM LẶNG khoá lạ
+#      hoặc khoá đặt sai khối — sai chỗ thì ReID vẫn "chạy" mà không có tác dụng.
+#      Đặc biệt xác nhận `reidExtractionInterval` được nhận (xem chú thích dưới).
+#   2. Xác nhận probe nhận được embedding: `python -m ds_pipeline --stats` rồi kiểm
+#      `embed_dim=512` trong FrameMessage. Không có `outputReidTensor: 1` thì tracker
+#      vẫn trích đặc trưng nhưng KHÔNG gắn vào metadata, và probe thấy embedding=None.
+#   3. Đo lại FPS: ReID là một mạng nữa chạy trên mọi đối tượng mỗi frame.
+# =================================================================================
+
+BaseConfig:
+  minDetectorConfidence: 0.2
+
+TargetManagement:
+  enableBboxUnClipping: 1
+  preserveStreamUpdateOrder: 0
+  maxTargetsPerStream: 150
+  minIouDiff4NewTarget: 0.5
+  minTrackerConfidence: 0.3
+  probationAge: 2
+  maxShadowTrackingAge: 30
+  earlyTerminationAge: 1
+
+TrajectoryManagement:
+  useUniqueID: 0
+
+  # Tái liên kết trong PHẠM VI MỘT camera: nối lại tracklet bị đứt vì che khuất, nhờ đó
+  # `local_track_id` sống lâu hơn. Đây là việc của tracker, khác hẳn liên kết XUYÊN
+  # camera của src/mct — đừng lẫn hai tầng.
+  enableReAssoc: 1
+  minMatchingScore4ReidSimilarity: 0.4
+  matchingScoreWeight4ReidSimilarity: 0.5
+  matchingScoreWeight4TrackletSimilarity: 0.5
+
+  # 0 = trích đặc trưng MỌI frame cho mọi target. Tốn nhất, nhưng src/mct cần nhiều
+  # embedding: query embedding là trung bình có trọng số top-k confidence cao nhất của
+  # cả tracklet (CLAUDE.md §6), không phải embedding frame cuối. Lấy thưa đi thì
+  # top-k không còn gì để chọn. Đây là tham số đầu tiên nên nới nếu FPS không đạt (M6).
+  # CẢNH BÁO: tài liệu công khai xếp khoá này trong TrajectoryManagement; phải xác nhận
+  # lại bằng log khởi động trên máy thật (xem checklist đầu file).
+  reidExtractionInterval: 0
+
+DataAssociator:
+  dataAssociatorType: 0
+  associationMatcherType: 1
+  checkClassMatch: 1
+  minMatchingScore4Overall: 0.3
+  minMatchingScore4SizeSimilarity: 0.3
+  minMatchingScore4Iou: 0.2
+  minMatchingScore4VisualSimilarity: 0.5
+  matchingScoreWeight4VisualSimilarity: 0.35
+  matchingScoreWeight4SizeSimilarity: 0.4
+  matchingScoreWeight4Iou: 0.4
+  tentativeDetectorConfidence: 0.2
+  minMatchingScore4TentativeIou: 0.5
+
+StateEstimator:
+  stateEstimatorType: 1
+  processNoiseVar4Loc: 2.0
+  processNoiseVar4Size: 1.5
+  processNoiseVar4Vel: 0.05
+  measurementNoiseVar4Detector: 3.0
+  measurementNoiseVar4Tracker: 8.0
+
+VisualTracker:
+  visualTrackerType: 1
+  useColorNames: 1
+  useHog: 0
+  featureImgSizeLevel: 2
+  featureFocusOffsetFactor_y: -0.2
+  filterLr: 0.075
+  filterChannelWeightsLr: 0.1
+  gaussianSigma: 0.75
+
+ReID:
+  # 2 = REASSOC: ReID dùng để nối lại tracklet đứt. Không chọn 1 (NvDeepSORT) vì nó đưa
+  # ReID vào thẳng vòng data association của tracker — đổi hành vi bám của NvDCF và cần
+  # tune thêm một bộ ngưỡng nữa, trong khi đóng góp của đồ án nằm ở liên kết xuyên
+  # camera (src/mct), không ở tracker đơn camera.
+  reidType: 2
+
+  # BẮT BUỘC. Không có dòng này thì tracker vẫn trích embedding và vẫn dùng nội bộ,
+  # nhưng KHÔNG gắn vào user meta — probe đọc ra None, src/mct không có gì để so, và
+  # cả pipeline chạy "thành công" mà không sinh ra dữ liệu nào có ích.
+  outputReidTensor: 1
+
+  reidFeatureSize: 512      # osnet_x1_0 -> 512-d. Model resnet50_market1501 của
+                            # DeepStream là 256-d — khác model, khác số. Phải khớp
+                            # `embed_dim` trong message (CLAUDE.md §5).
+  reidHistorySize: 100
+  batchSize: 100
+  workspaceSize: 1000       # MB, cho TensorRT dựng engine
+
+  inferDims: [3, 256, 128]  # C, H, W — khớp torchreid và src/tools/reid_onnx.py
+  inputOrder: 0             # NCHW
+  colorFormat: 0            # RGB
+  networkMode: 1            # FP16
+
+  # Chuẩn hoá ImageNet, viết theo công thức của DeepStream: y = netScaleFactor * (x - offset),
+  # với x là pixel 0..255.
+  #   offsets        = 255 * mean = 255 * [0.485, 0.456, 0.406]
+  #   netScaleFactor = 1 / (255 * std)
+  # CHÊNH LỆCH CÓ CHỦ Ý, phải nhớ: netScaleFactor là MỘT số vô hướng, trong khi
+  # torchreid dùng std riêng từng kênh [0.229, 0.224, 0.225]. Ở đây buộc phải lấy std
+  # trung bình 0.226 -> 1/(255*0.226) = 0.01735207. Hệ quả: embedding sinh từ pipeline
+  # DeepStream KHÔNG trùng khít embedding sinh từ src/tools/reid_onnx.py (lệch ~1.3% ở
+  # kênh R và B, cộng thêm khác biệt FP16 vs FP32). Ngưỡng `max_cost` trong
+  # configs/mct.yaml được chỉnh trên fixture của đường ONNX Runtime, nên phải kiểm lại
+  # trên fixture sinh từ pipeline thật trước khi tin.
+  offsets: [123.6750, 116.2800, 103.5300]
+  netScaleFactor: 0.01735207
+
+  # 0 = resize thẳng về 256x128, KHÔNG giữ tỉ lệ khung. Đây là tiền xử lý chuẩn của
+  # torchreid/OSNet, và cũng đúng bằng thứ src/tools/reid_onnx.py làm (cv2.resize trần).
+  # Config mẫu của NVIDIA để 1 vì model resnet50_market1501 của họ được train kiểu đó —
+  # bê nguyên sang OSNet là cho model ăn ảnh có viền đen mà nó chưa từng thấy lúc train.
+  keepAspc: 0
+
+  # OSNet trả feature CHƯA chuẩn hoá. CLAUDE.md §5 yêu cầu L2-normalize tại producer,
+  # nên bật ở đây. probes.py vẫn gọi l2_normalize lần nữa — phép này idempotent, giữ cả
+  # hai để probe đúng kể cả khi chạy với model khác không tự chuẩn hoá.
+  addFeatureNormalization: 1
+
+  # Đường dẫn TƯƠNG ĐỐI so với vị trí file config này, khớp cấu trúc thư mục repo —
+  # cùng quy ước với config_infer_yolo11.txt.
+  # modelEngineFile chưa tồn tại ở lần chạy đầu: TensorRT dựng từ onnxFile rồi ghi ra.
+  # Lần sau có sẵn engine thì nạp thẳng, không dựng lại.
+  onnxFile: "../../models/reid/osnet_x1_0_msdc_dg.onnx"
+  modelEngineFile: "../../models/reid/osnet_x1_0_msdc_dg.onnx_b100_gpu0_fp16.engine"

@@ -1,6 +1,6 @@
 .PHONY: help dev test lint fmt up down replay record fixture wildtrack-annotations \
         wildtrack-fixture wildtrack-homography engine engine-fixture dashboard compare eval \
-        ds-build ds-run clean
+        ds-build ds-run ds-run-reid clean
 .DEFAULT_GOAL := help
 
 VENV    := .venv
@@ -94,3 +94,6 @@ ds-build:  ## Build image DeepStream
 
 ds-run:  ## Chạy pipeline theo configs/pipeline/streams.yaml
 	docker compose -f docker/compose.yml -f docker/compose.gpu.yml up ds-pipeline
+
+ds-run-reid:  ## Chạy 4 luồng CÓ ReID (M3) — đối chứng FPS của streams_multi.yaml
+	docker compose -f docker/compose.yml -f docker/compose.gpu.yml run --rm 		ds-pipeline python -m ds_pipeline --config configs/pipeline/streams_reid.yaml --stats

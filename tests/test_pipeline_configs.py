@@ -14,6 +14,7 @@ import configparser
 from pathlib import Path
 
 import pytest
+import yaml
 
 # Lớp person trong labels.txt của COCO — trùng CLASS_PERSON mà probes.py lọc lần hai.
 PERSON_CLASS_ID = 0
@@ -91,3 +92,100 @@ def test_hai_ban_config_chi_khac_batch_va_ten_engine(pipeline_dir: Path) -> None
     assert b4["batch-size"] == "4"
     assert "_b1_" in b1["model-engine-file"]
     assert "_b4_" in b4["model-engine-file"]
+
+
+# --------------------------------------------------------------------------------------
+# Tracker + ReID (M3)
+# --------------------------------------------------------------------------------------
+#
+# `config_tracker_*.yml` mở đầu bằng chỉ thị `%YAML:1.0` của OpenCV FileStorage, không
+# phải YAML hợp lệ — PyYAML từ chối. Cắt bỏ dòng chỉ thị rồi parse phần còn lại (đúng là
+# YAML thuần).
+
+TRACKER_PERF = "config_tracker_NvDCF_perf.yml"
+TRACKER_REID = "config_tracker_NvDCF_reid.yml"
+
+# osnet_x1_0 trả feature 512 chiều (xác nhận trên chính file ONNX: output ('features',
+# ['batch', 512])). Model resnet50_market1501 kèm DeepStream là 256 — khác model, khác số.
+OSNET_FEATURE_SIZE = 512
+
+
+def _read_tracker(path: Path) -> dict:
+    noi_dung = "\n".join(
+        d for d in path.read_text(encoding="utf-8").splitlines() if not d.startswith("%")
+    )
+    return yaml.safe_load(noi_dung)
+
+
+@pytest.fixture(scope="module")
+def tracker_reid(pipeline_dir: Path) -> dict:
+    return _read_tracker(pipeline_dir / TRACKER_REID)
+
+
+def test_reid_duoc_bat_va_xuat_ra_metadata(tracker_reid: dict) -> None:
+    """Thiếu `outputReidTensor` là lỗi kinh điển: tracker vẫn trích embedding và vẫn dùng
+    nội bộ, nhưng KHÔNG gắn vào user meta — probe đọc ra None và cả pipeline chạy
+    "thành công" mà không sinh ra dữ liệu nào cho src/mct."""
+    reid = tracker_reid["ReID"]
+    assert reid["reidType"] != 0
+    assert reid["outputReidTensor"] == 1
+
+
+def test_kich_thuoc_feature_khop_osnet(tracker_reid: dict) -> None:
+    assert tracker_reid["ReID"]["reidFeatureSize"] == OSNET_FEATURE_SIZE
+
+
+def test_tien_xu_ly_khop_duong_onnx_o_may_dev(tracker_reid: dict) -> None:
+    """Hai đường sinh embedding phải cùng tiền xử lý, nếu không so cosine giữa chúng là vô nghĩa.
+
+    Đường 1: pipeline DeepStream (file config này).
+    Đường 2: `tools/reid_onnx.py` trên máy dev — thứ đã sinh fixture WildTrack và là chỗ
+    ngưỡng `max_cost` trong configs/mct.yaml được chỉnh.
+    """
+    from tools import reid_onnx
+
+    reid = tracker_reid["ReID"]
+
+    assert reid["inferDims"] == [3, reid_onnx.INPUT_H, reid_onnx.INPUT_W]
+    assert reid["inputOrder"] == 0  # NCHW, như batch của reid_onnx
+    assert reid["colorFormat"] == 0  # RGB — reid_onnx đảo BGR->RGB trước khi chuẩn hoá
+
+    # reid_onnx resize thẳng bằng cv2.resize, KHÔNG letterbox giữ tỉ lệ.
+    assert reid["keepAspc"] == 0
+
+    # y = netScaleFactor * (x - offset) với x là pixel 0..255, so với
+    # (x/255 - mean) / std của reid_onnx  =>  offset = 255*mean, scale = 1/(255*std).
+    mean = reid_onnx._IMAGENET_MEAN.reshape(-1)
+    assert reid["offsets"] == pytest.approx((255.0 * mean).tolist(), abs=1e-3)
+
+    # netScaleFactor là MỘT số vô hướng trong khi std của ImageNet khác nhau theo kênh —
+    # buộc phải dùng std trung bình. Test ghim sai số đó lại để nó là lựa chọn có ý thức,
+    # không phải thứ trôi đi lúc nào không hay.
+    std_tb = float(reid_onnx._IMAGENET_STD.reshape(-1).mean())
+    assert reid["netScaleFactor"] == pytest.approx(1.0 / (255.0 * std_tb), rel=2e-3)
+
+
+def test_hai_config_tracker_chi_khac_khoi_reid(pipeline_dir: Path) -> None:
+    """Chênh lệch FPS đo được giữa hai file phải quy về đúng một biến: ReID bật hay tắt."""
+    perf = _read_tracker(pipeline_dir / TRACKER_PERF)
+    reid = _read_tracker(pipeline_dir / TRACKER_REID)
+
+    bo_qua = {"ReID", "TrajectoryManagement"}  # TrajectoryManagement chứa tham số re-assoc của ReID
+    assert {k: v for k, v in perf.items() if k not in bo_qua} == {
+        k: v for k, v in reid.items() if k not in bo_qua
+    }
+
+
+def test_streams_reid_chi_khac_streams_multi_o_config_tracker(pipeline_dir: Path) -> None:
+    """Cặp đối chứng để đo chi phí ReID: mọi thứ khác phải giống hệt."""
+    multi = yaml.safe_load((pipeline_dir / "streams_multi.yaml").read_text(encoding="utf-8"))
+    reid = yaml.safe_load((pipeline_dir / "streams_reid.yaml").read_text(encoding="utf-8"))
+
+    assert multi["sources"] == reid["sources"]
+    assert multi["streammux"] == reid["streammux"]
+    assert multi["pgie"] == reid["pgie"]
+    assert multi["sink"] == reid["sink"]
+
+    khac = {k for k in multi["tracker"] if multi["tracker"][k] != reid["tracker"][k]}
+    assert khac == {"ll_config_file"}
+    assert reid["tracker"]["ll_config_file"].endswith(TRACKER_REID)

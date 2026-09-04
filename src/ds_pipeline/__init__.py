@@ -15,8 +15,7 @@ FPS/luồng.
 Hai điểm CLAUDE.md §11 để ngỏ đã xác minh trên máy thật:
   1. DeepStream 7.1.0 / CUDA 12.6 / TensorRT 10.3.0.26 — chốt cho .env.
   2. Đường lấy Re-ID embedding: (A) — nvtracker NvDCF có sẵn khối `ReID:` trong config,
-     `reidFeatureSize: 256`, tự L2-normalize (`addFeatureNormalization: 1`). Không cần
-     SGIE thứ hai. Model resnet50_market1501 chưa có trong image, chưa bật (M3).
+     tự L2-normalize (`addFeatureNormalization: 1`). Không cần SGIE thứ hai.
 
 M2 xong (2026-09-04): detector chốt là **weight YOLO11s gốc COCO, không fine-tune**.
 Lớp `person` của weight này đã được train trên chính COCO nên fine-tune lại trên tập con
@@ -24,8 +23,14 @@ COCO-person là học lại đúng dữ liệu cũ. Thứ thật sự cần — 
 khối `[class-attrs-*]` trong configs/pipeline/config_infer_yolo11*.txt, không tốn GPU-hour.
 Xem docs/worklog/2026-09-04-7-m2-detector-pretrained.md.
 
-Còn thiếu cho M3: tải model ReID pretrained về models/reid/, bật `reidType: 2` trong
-configs/pipeline/config_tracker_NvDCF_perf.yml, ghi fixture thật qua Redis. Cũng KHÔNG
-fine-tune trên Market-1501/MSMT17 (cùng lý do như M2 — OSNet pretrained đã học chính hai
-bộ đó); fine-tune dời sang M6 trên dữ liệu tự thu, đóng khung như một ablation.
+M3 soạn xong phần chạy được ngoài máy GPU (2026-09-04): model OSNet pretrained
+(bản khái quát hoá miền, 512-d) ở models/reid/, config bật ReID ở
+configs/pipeline/config_tracker_NvDCF_reid.yml, và đường đọc embedding từ user meta của
+tracker ở ds_pipeline/reid_meta.py. KHÔNG fine-tune (cùng lý do như M2 — OSNet pretrained
+đã học chính Market-1501/MSMT17); fine-tune dời sang M6, đóng khung như một ablation.
+
+Còn thiếu cho M3, PHẢI làm trên vast-gpu: xác minh tracker nhận đúng các khoá ReID (log
+khởi động), xác nhận probe đọc được embedding 512-d, đo chi phí FPS của ReID
+(streams_reid.yaml vs streams_multi.yaml), rồi ghi fixture thật qua Redis với sink.sync
+bật. Xem docs/worklog/2026-09-04-8-m3-reid-pretrained.md.
 """

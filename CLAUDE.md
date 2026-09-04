@@ -269,14 +269,19 @@ và trong worklog chỉ link tới nó.
   Chốt phiên bản chính xác vào `.env` + `docker/deepstream.Dockerfile` **sau khi kiểm tra driver
   trên máy GPU thật** — DeepStream rất kén cặp driver/CUDA/TensorRT. Dùng Docker image chính thức
   của NVIDIA ngay từ đầu, đừng cài native (đề cương chương 5.2 đã liệt kê đây là rủi ro số 1).
-- **Có hai đường lấy Re-ID embedding**, xác minh đường nào khả dụng trên phiên bản DeepStream thực tế
-  trước khi viết code:
-  - (A) **mặc định** — dùng ReID extractor tích hợp trong `nvtracker` (NvDCF/NvDeepSORT):
-    bật trong config tracker, embedding ra qua user meta. Hiệu quả hơn vì tracker đã crop sẵn.
-  - (B) **dự phòng** — SGIE `nvinfer` thứ hai (`process-mode=2`, `output-tensor-meta=1`) chạy OSNet
-    trên crop. Đây là cách đề cương mô tả (mục 3.3); giữ lại như phương án B nếu (A) không dùng được.
-  Tên chính xác của meta type khác nhau giữa các phiên bản DeepStream — **tra tài liệu bản đã cài,
-  đừng đoán**.
+- **Đường lấy Re-ID embedding: đã chốt (A)** — ReID extractor tích hợp trong `nvtracker`
+  (NvDCF), bật bằng khối `ReID:` trong config tracker; embedding ra qua user meta. Đường (B)
+  — SGIE `nvinfer` thứ hai (`process-mode=2`, `output-tensor-meta=1`) chạy OSNet trên crop,
+  đúng như đề cương mục 3.3 — giữ lại làm dự phòng, code vẫn đọc được cả hai.
+  Mọi chi tiết phụ thuộc phiên bản gom trong `src/ds_pipeline/reid_meta.py`; API dùng ở đó
+  tra từ binding `pyds` v1.2.0 (bản của DeepStream 7.1), **không đoán từ bản khác**.
+- **`outputReidTensor: 1` là bắt buộc nếu muốn đọc embedding từ probe.** Thiếu nó, tracker
+  vẫn trích đặc trưng và vẫn dùng nội bộ để tái liên kết, nhưng KHÔNG gắn vào user meta —
+  probe đọc ra `None`, `src/mct` không có gì để so, và pipeline chạy "thành công" mà không
+  sinh ra dữ liệu nào có ích. Lại một lỗi không triệu chứng.
+- **NvMultiObjectTracker bỏ qua IM LẶNG khoá lạ hoặc khoá đặt sai khối** trong file config
+  tracker. Đặt `reidExtractionInterval` nhầm khối thì ReID vẫn "chạy" mà tham số không có
+  tác dụng. Sau mỗi lần sửa config tracker phải đọc log khởi động của nvtracker.
 - **Toạ độ bbox theo streammux, không phải theo camera** — xem mục 5.
 - **Đồng bộ thời gian giữa các camera là điều kiện sống còn** cho ràng buộc thời gian di chuyển.
   Bật NTP trên mọi nguồn; điện thoại Android phát RTSP thường lệch — đo và ghi lại offset.
@@ -325,5 +330,6 @@ make eval               # chạy TrackEval trên kết quả trong eval/
 # ⚠️ Trên máy GPU (vast-gpu) — xác nhận với người dùng trước khi chạy, tính phí theo giờ (mục 2)
 make ds-build           # build docker/deepstream.Dockerfile
 make ds-run             # chạy pipeline theo configs/pipeline/streams.yaml
+make ds-run-reid        # 4 luồng CÓ ReID (streams_reid.yaml) — đối chứng của streams_multi.yaml
 make record OUT=tests/fixtures/<tên>.jsonl              # ghi Redis stream ra fixture
 ```
