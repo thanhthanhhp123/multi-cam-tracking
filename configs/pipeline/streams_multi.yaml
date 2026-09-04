@@ -1,0 +1,39 @@
+# Cấu hình đo FPS nhiều luồng (M1/M2, CLAUDE.md §7: mục tiêu 3-4 luồng, >=15 FPS/luồng).
+#
+# TẠM THỜI dùng cùng một file video mẫu cho cả bốn nguồn: mục đích là đo tải decode +
+# suy luận + tracking khi nvstreammux gộp 4 luồng, chưa phải đo trên cảnh thật. Con số
+# đo được ở đây là TRẦN — nguồn file đọc nhanh hơn thời gian thực và không có jitter
+# mạng như RTSP. Khi có tools/rtsp_sim.py thì đo lại với live_source: true.
+sources:
+  - cam_id: cam01
+    uri: file:///opt/nvidia/deepstream/deepstream/samples/streams/sample_1080p_h264.mp4
+  - cam_id: cam02
+    uri: file:///opt/nvidia/deepstream/deepstream/samples/streams/sample_1080p_h264.mp4
+  - cam_id: cam03
+    uri: file:///opt/nvidia/deepstream/deepstream/samples/streams/sample_1080p_h264.mp4
+  - cam_id: cam04
+    uri: file:///opt/nvidia/deepstream/deepstream/samples/streams/sample_1080p_h264.mp4
+
+streammux:
+  width: 1920
+  height: 1080
+  batched_push_timeout_us: 40000
+  live_source: false
+  attach_sys_ts: true
+
+tracker:
+  ll_lib_file: /opt/nvidia/deepstream/deepstream/lib/libnvds_nvmultiobjecttracker.so
+  ll_config_file: configs/pipeline/config_tracker_NvDCF_perf.yml
+  width: 960
+  height: 544
+  display_tracking_id: false
+
+sink:
+  # false = chạy hết tốc lực (đo FPS). true = phát đúng tốc độ thật — bắt buộc khi GHI
+  # FIXTURE từ nguồn file, nếu không cả đoạn video bị nén vào vài giây ts_ms và ràng
+  # buộc thời gian di chuyển (src/mct/topology.py) mất ý nghĩa. Đo 2026-09-04: chạy hết
+  # tốc lực thì 853 frame trải đúng 4.7 s thay vì ~48 s.
+  sync: false
+
+pgie:
+  config_file: configs/pipeline/config_infer_yolo11_b4.txt

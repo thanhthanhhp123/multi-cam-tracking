@@ -2,9 +2,12 @@
 
     python -m ds_pipeline --config configs/pipeline/streams.yaml
     python -m ds_pipeline --config configs/pipeline/streams.yaml --publish
+    python -m ds_pipeline --config configs/pipeline/streams_multi.yaml --stats
 
 Không --publish: chỉ in message ra console (đúng mục tiêu M1, CLAUDE.md §9). Có
 --publish: đẩy lên Redis qua FramePublisher — dùng khi đã sẵn sàng ghi fixture (M3).
+--stats: không in từng frame, chỉ đếm và báo cáo throughput lúc kết thúc — con số đo
+được mới là của pipeline chứ không phải của việc ghi log (CLAUDE.md §7).
 """
 
 from __future__ import annotations
@@ -12,6 +15,8 @@ from __future__ import annotations
 import argparse
 import signal
 import sys
+import time
+from collections import Counter
 from pathlib import Path
 
 import gi
@@ -43,6 +48,67 @@ def _print_sink(msg: FrameMessage) -> None:
     )
 
 
+class _StatsSink:
+    """Đếm frame/detection theo camera và báo cáo throughput khi pipeline kết thúc.
+
+    Đồng hồ bắt đầu tính từ MESSAGE ĐẦU TIÊN, không phải từ lúc gọi set_state(PLAYING):
+    lần chạy đầu còn phải build engine TensorRT (vài phút), gộp vào sẽ ra FPS vô nghĩa.
+    """
+
+    def __init__(self, inner=None) -> None:
+        self._inner = inner
+        self.frames: Counter[str] = Counter()
+        self.detections: Counter[str] = Counter()
+        self.embed_dims: set[int] = set()
+        self.first_ts: float | None = None
+        self.last_ts: float | None = None
+
+    def __call__(self, msg: FrameMessage) -> None:
+        now = time.perf_counter()
+        if self.first_ts is None:
+            self.first_ts = now
+        self.last_ts = now
+        self.frames[msg.cam_id] += 1
+        self.detections[msg.cam_id] += len(msg.detections)
+        self.embed_dims.add(msg.embed_dim)
+        if self._inner is not None:
+            self._inner(msg)
+
+    @property
+    def elapsed_s(self) -> float:
+        if self.first_ts is None or self.last_ts is None:
+            return 0.0
+        return self.last_ts - self.first_ts
+
+    def report(self) -> None:
+        total_frames = sum(self.frames.values())
+        elapsed = self.elapsed_s
+        if not total_frames or elapsed <= 0:
+            log.warning("không có frame nào đi qua probe — không báo cáo được throughput")
+            return
+
+        log.info(
+            "throughput: %d frame / %.2f s = %.1f FPS gộp trên %d luồng "
+            "(embed_dim=%s, tổng %d detection)",
+            total_frames,
+            elapsed,
+            total_frames / elapsed,
+            len(self.frames),
+            sorted(self.embed_dims),
+            sum(self.detections.values()),
+        )
+        for cam_id in sorted(self.frames):
+            frames = self.frames[cam_id]
+            log.info(
+                "  %s: %d frame, %.1f FPS, %d detection (%.2f/frame)",
+                cam_id,
+                frames,
+                frames / elapsed,
+                self.detections[cam_id],
+                self.detections[cam_id] / frames,
+            )
+
+
 def _redis_sink():
     from common.streams import FramePublisher
 
@@ -63,6 +129,11 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument(
         "--publish", action="store_true", help="đẩy lên Redis thay vì chỉ in console"
     )
+    parser.add_argument(
+        "--stats",
+        action="store_true",
+        help="không in từng frame, chỉ báo cáo throughput lúc kết thúc (dùng khi đo FPS)",
+    )
     args = parser.parse_args(argv)
 
     if not Path(args.config).is_absolute() and not Path(args.config).exists():
@@ -72,6 +143,12 @@ def main(argv: list[str] | None = None) -> int:
 
     cfg = load_pipeline_config(args.config)
     sink = _redis_sink() if args.publish else _print_sink
+    stats: _StatsSink | None = None
+    if args.stats:
+        # --stats bỏ hẳn phần in từng frame: ở vài trăm FPS, chi phí ghi log lớn hơn
+        # chi phí suy luận và sẽ trở thành thứ đang đo.
+        stats = _StatsSink(_redis_sink() if args.publish else None)
+        sink = stats
 
     geometries = {
         index: CameraGeometry(
@@ -115,6 +192,8 @@ def main(argv: list[str] | None = None) -> int:
         loop.run()
     finally:
         pipeline.set_state(Gst.State.NULL)
+        if stats is not None:
+            stats.report()
 
     return 0
 

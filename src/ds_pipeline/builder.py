@@ -64,10 +64,23 @@ class TrackerConfig:
 
 
 @dataclass(slots=True)
+class SinkConfig:
+    sync: bool = False
+    """False = chạy nhanh nhất có thể (đo throughput). True = phát đúng tốc độ thật.
+
+    Đặt True khi GHI FIXTURE từ nguồn file: `attach_sys_ts` gắn wall clock lúc xử lý,
+    nên chạy hết tốc lực sẽ nén cả đoạn video vài chục giây vào vài giây `ts_ms` và mọi
+    ràng buộc thời gian di chuyển ở `src/mct/topology.py` trở nên vô nghĩa. Đo FPS thì
+    ngược lại: phải để False, nếu không chỉ đo được đúng tốc độ phát của video.
+    """
+
+
+@dataclass(slots=True)
 class PipelineConfig:
     sources: list[SourceSpec] = field(default_factory=list)
     streammux: StreammuxConfig = field(default_factory=StreammuxConfig)
     tracker: TrackerConfig = field(default_factory=TrackerConfig)
+    sink: SinkConfig = field(default_factory=SinkConfig)
     pgie_config_file: str = "configs/pipeline/config_infer_yolo11.txt"
 
     @property
@@ -97,6 +110,9 @@ def load_pipeline_config(path: str | Path) -> PipelineConfig:
     for key, value in (raw.get("tracker") or {}).items():
         if hasattr(cfg.tracker, key):
             setattr(cfg.tracker, key, value)
+    for key, value in (raw.get("sink") or {}).items():
+        if hasattr(cfg.sink, key):
+            setattr(cfg.sink, key, value)
     if pgie := (raw.get("pgie") or {}).get("config_file"):
         cfg.pgie_config_file = str(pgie)
     return cfg
@@ -184,7 +200,7 @@ def build_pipeline(cfg: PipelineConfig, probe: ProbeFn | None = None) -> Gst.Pip
         tracker.set_property("display-tracking-id", cfg.tracker.display_tracking_id)
 
     sink = _make("fakesink", "sink")
-    sink.set_property("sync", False)
+    sink.set_property("sync", cfg.sink.sync)
     sink.set_property("async", False)
 
     for element in (pgie, tracker, sink):
