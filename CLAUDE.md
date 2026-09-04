@@ -204,6 +204,13 @@ Mọi ngưỡng nằm trong `configs/mct.yaml`, **không hardcode trong code** �
 - **Hiệu năng**: FPS/luồng, độ trễ end-to-end, GPU/VRAM. Mục tiêu đề cương: 3–4 luồng, ≥15 FPS/luồng, <1s.
 - Ground-truth tự gán bằng CVAT → `tools/cvat_to_mot.py` → `eval/gt/`.
 
+**Số đo trên fixture WildTrack cũ (`wildtrack_to_fixture.py`) là CẬN TRÊN, không phải hiệu
+năng hệ thống.** Fixture đó dùng bbox ground-truth và `local_track_id` sinh từ `personID` —
+tức tracking đơn camera lý tưởng: tracklet dài, không id-switch, không bỏ sót. Đo 2026-09-04
+trên cùng dataset, cùng cấu hình, cùng code chấm điểm: F1 **0.752** trên fixture đó so với
+**0.170** trên fixture do pipeline DeepStream thật sinh ra. Mọi con số của `src/mct` lấy từ
+fixture cũ phải ghi kèm chữ "cận trên (SCT lý tưởng)" khi vào chương 6.
+
 Khi báo cáo số: luôn ghi kèm cấu hình GPU, model, độ phân giải, số luồng. Số không tái lập được thì vô nghĩa.
 
 ## 8. Quy ước code
@@ -320,6 +327,23 @@ và trong worklog chỉ link tới nó.
   `srun` foreground dễ bị treo chờ hàng đợi khi node đang bận —
   ưu tiên `sbatch` (job không đồng bộ) cho việc chạy lâu, dùng `squeue -u $USER` để theo dõi thay
   vì đoán thời gian chờ.
+- **Instance vast.ai có thể hỏng NVDEC dù mọi thứ khác bình thường** (đo 2026-09-04: 2/3 máy
+  thuê trong một phiên). `nvidia-smi`, CUDA, TensorRT, `libnvcuvid.so`, `/dev/nvidia*` đều
+  đủ và đúng, nhưng `nvv4l2decoder` dừng ở `PREROLLING` vĩnh viễn, GPU 0%. Không kiểm được
+  bằng cách xem thư viện — **phải chạy thử thật, và làm điều đó ĐẦU TIÊN** trên mọi instance
+  mới, trước cả `vast_bootstrap.sh`:
+
+  ```bash
+  SAMPLE=/opt/nvidia/deepstream/deepstream/samples/streams/sample_720p.h264
+  gst-launch-1.0 -e nvurisrcbin uri=file://$SAMPLE ! fakesink sync=false 2>&1 | grep -E "PREROLLED|PLAYING|EOS"
+  ```
+
+  Máy tốt in `PREROLLED → PLAYING → EOS`. Không tương quan với phiên bản driver; card
+  datacenter (T4) chạy được, hai card tiêu dùng thì không. Bỏ qua bước 30 giây này đã tốn
+  ~30 phút tiền thuê một lần rồi.
+- **Đừng kill pipeline trong lúc build engine TensorRT.** Build batch 7 mất ~5 phút và GPU
+  util có lúc về 0% — im lặng KHÔNG có nghĩa là treo. Kiểm bằng `ls` xem file `.engine` có
+  đang lớn dần không, đừng đoán.
 - **`vast-gpu` thuê theo phiên** — không giả định nó đang tồn tại. `~/.ssh/config` phải cập nhật
   `HostName`/`Port` mỗi lần thuê instance mới. Kiểm tra Docker và phiên bản driver ngay khi thuê,
   đừng giả định giống lần trước.
