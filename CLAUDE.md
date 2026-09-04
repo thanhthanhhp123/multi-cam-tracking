@@ -25,11 +25,27 @@ Có ba máy, mỗi máy một vai trò. Đừng gộp việc của máy này san
 | OS | macOS | Ubuntu 22.04.5 LTS | tuỳ instance lúc thuê — kiểm tra lại mỗi lần |
 | Cách vào | local | `ssh ut-hpc`, việc nặng qua `sbatch --partition=main-gpu` — **không chạy trên head node**, và **node tính toán không có Internet**, xem mục "Cạm bẫy" | `ssh vast-gpu` (đổi `HostName`/`Port` trong `~/.ssh/config` mỗi lần thuê mới) |
 | Container | — | Không cần: conda env trong `$HOME` chạy được GPU trên node tính toán (đã đo). Có `module load singularity/3.9.5` làm dự phòng, không có Docker | Docker (kiểm tra lại — tuỳ image Vast.ai) |
-| Dùng để | `src/common`, `src/mct`, `src/dashboard`, `src/tools`, `eval/`, toàn bộ `tests/` | fine-tune YOLO (detection) + OSNet (Re-ID) trên COCO-person/Market-1501/MSMT17, xuất `.pt`/ONNX | `src/ds_pipeline` — pipeline DeepStream thật, đo FPS/độ trễ end-to-end |
+| Dùng để | soạn `src/common`, `src/mct`, `src/dashboard`, `src/tools`, `eval/`, `tests/` | fine-tune YOLO (detection) + OSNet (Re-ID) trên COCO-person/Market-1501/MSMT17, xuất `.pt`/ONNX; **và chạy `pytest`/`ruff`** (xem dưới) | `src/ds_pipeline` — pipeline DeepStream thật, đo FPS/độ trễ end-to-end |
 | KHÔNG chạy được | `src/ds_pipeline` | `src/ds_pipeline` (không có nvstreammux/DeepStream runtime, chỉ có CUDA/TensorRT để train) | — |
 
 Quy trình thao tác chi tiết trên `ut-hpc` (SSH, `sbatch`, module load...) đóng gói trong skill
 `.claude/skills/ut-hpc/` — đọc trước khi thao tác lần đầu, đừng đoán cú pháp.
+
+**Chạy test và lint ở `ut-hpc`, không phải máy dev** (chốt 2026-09-04). Máy dev hiện tại là
+Windows và chỉ có Python 3.13, trong khi repo nhắm 3.10 — test chạy ở đó không bao giờ bắt
+được vi phạm quy tắc phiên bản. Head node `ut-hpc` có sẵn Python 3.10.12, **đúng bằng bản
+trong container DeepStream 7.1**, nên vừa là chỗ chạy test vừa là chỗ kiểm chứng ràng buộc đó:
+
+```bash
+tar czf - src tests configs pyproject.toml | ssh ut-hpc 'tar xzf - -C ~/mct/repo'
+ssh ut-hpc 'cd ~/mct/repo && PYTHONPATH=src ~/mct/venv-test/bin/python -m pytest -q'
+ssh ut-hpc 'cd ~/mct/repo && ~/mct/venv-test/bin/ruff check src tests eval'
+```
+
+`~/mct/venv-test` là venv NHẸ (numpy/scipy/msgpack/redis/PyYAML/dotenv/pytest/ruff/fastapi,
+không có torch) — chạy hết bộ test trong ~1.3 s nên không vi phạm quy tắc "không chạy gì
+nặng trên head node". `ut-hpc` cần VPN vào mạng ĐH Twente; `ssh` timeout thì kiểm tra VPN
+trước khi đoán là cụm hỏng.
 
 `vast-gpu` là **thuê theo phiên, không thường trực** — instance bị huỷ khi ngừng thuê, IP đổi
 mỗi lần thuê lại. Đừng giả định nó đang chạy; luôn xác minh (`ssh vast-gpu echo ok`) trước khi
