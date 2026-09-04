@@ -1,6 +1,6 @@
-# 2026-09-04 (phiên 5) — Homography: hình học vào cuộc, F1 trên WildTrack 0.014 → 0.712
+# 2026-09-04 (phiên 5) — Homography + vòng online: F1 trên WildTrack 0.014 → 0.929
 
-- **Mốc:** M4 (tuần 11–13) | **Máy:** máy dev (soạn code) + `ut-hpc` (test, hiệu chỉnh, sweep) | **Thời lượng:** ~3h
+- **Mốc:** M4 (tuần 11–13) | **Máy:** máy dev (soạn code) + `ut-hpc` (test, hiệu chỉnh, sweep) | **Thời lượng:** ~5h
 
 ## Mục tiêu phiên
 
@@ -8,6 +8,8 @@
   `GroundMapper` mà `affinity.py` đã chừa sẵn từ phiên 3.
 - Đo lại trên fixture WildTrack: phiên trước kết luận "ngoại hình đã hết đất ở F1 ≈ 0.4–0.5,
   hình học gần như chắc chắn là thứ kéo lên nhiều nhất" — kiểm chứng câu đó.
+- Nối nốt hai tầng cuối của sơ đồ: `store.py` (SQLite) + `__main__.py` (vòng online), để
+  đo được chênh lệch online vs offline — con số "giá của thời gian thực" cho chương 6.
 
 ## Đã làm
 
@@ -26,8 +28,18 @@
   `ground_gap_policy`.
 - `eval/eval_wildtrack.py`: thêm `--homography-dir`, `--ground-gap-policy`, và chẩn đoán
   `diagnose_ground` (phân bố khoảng cách mặt đất cùng/khác danh tính + trần lý thuyết).
-- 32 test mới (`tests/test_homography.py` 30, `tests/test_associator.py` 2) →
-  **208 passed, 5 skipped**, `ruff` sạch (chạy trên `ut-hpc`, Python 3.10.12).
+- **`src/mct/store.py`** — SQLite hai bảng (`global_tracks`, `appearances`). Trạng thái
+  của `global_tracks` suy ra hoàn toàn từ `appearances` nên hai bảng không bao giờ lệch;
+  khoá chính của `appearances` là `tracklet_id` nên tracklet dài được gán lại qua nhiều
+  cửa sổ chỉ nới `end_ms` chứ không đẻ thêm dòng.
+- **`src/mct/__main__.py`** — vòng online thật: `mct:frames` → tracklet → associator →
+  `mct:global` + SQLite. Cửa sổ tính theo `ts_ms` **trong message**, không theo đồng hồ
+  hệ thống; `--source <fixture.jsonl>` chạy đúng vòng lặp đó mà không cần Redis.
+- **`common/schema.py`: `GlobalUpdate`** + `GlobalPublisher`/`read_global` trong
+  `common/streams.py` — nội dung stream `mct:global`, cố tình không mang embedding.
+- **`eval/compare_online_offline.py`** — cùng dữ liệu, cùng tham số, hai đường.
+- Makefile: `wildtrack-homography`, `engine`, `engine-fixture`, `compare`.
+- 57 test mới → **233 passed, 5 skipped**, `ruff` sạch (chạy trên `ut-hpc`, Python 3.10.12).
 
 ## Quyết định kỹ thuật
 
@@ -68,8 +80,19 @@ không áp dụng.
 **4. Có hình học thì `max_cost` phải NỚI RA, không siết vào.** Ngược hẳn kết luận của phiên
 trước (khi chỉ có ngoại hình, phải siết xuống 0.08–0.15). Lý do: khi vị trí đã lo phần loại
 bỏ, ngưỡng ngoại hình chặt chỉ tổ ném đi những cặp đúng có cosine thấp (p05 của cặp cùng
-người = 0.589, tức cost 0.41). Đo được: `max_cost` 0.30 → F1 0.446, 0.40 → **0.712**.
-Con số trong `configs/mct.yaml` **chưa chốt** — chờ sweep đầy đủ và chờ model Re-ID cuối cùng.
+người = 0.589, tức cost 0.41). Sweep đầy đủ: 0.30 → 0.446, 0.40 → 0.712, 0.50 → 0.737,
+0.60 → 0.765, ≥0.80 bão hoà ở 0.768.
+
+**Vẫn giữ `max_cost: 0.30` làm mặc định trong `configs/mct.yaml`, và đây là quyết định có
+chủ ý.** WildTrack chỉ có cặp chồng lấn, nên mọi cặp ở đó đều được hình học bảo vệ. Hệ thống
+thật có cặp non-overlap, và ở đó ngoại hình là bằng chứng DUY NHẤT — thả ngưỡng lên 0.60
+tại đó nghĩa là gộp gần như mọi người lại với nhau. Lời giải đúng là **ngưỡng theo từng cặp
+camera** (chặt khi thiếu hình học, lỏng khi có), nhưng chưa làm vì chưa có dữ liệu non-overlap
+thật để đo — ghi lại thành việc của M6 thay vì tối ưu bừa lên một dataset mượn.
+
+**`max_ground_dist_m` hạ 3.0 → 1.0.** Có căn cứ đo: sai số hiệu chỉnh p95 cho cặp hai camera
+là 0.14 m, nên 1.0 m vẫn rộng gấp bảy lần sai số; và sweep cho đỉnh phẳng quanh 1.0
+(0.5 → 0.736, 1.0 → 0.768, 2.0 → 0.764).
 
 **5. Homography chứ không hiệu chỉnh camera đầy đủ.** Giả thiết duy nhất: người đứng trên
 một mặt phẳng. Khi đó điểm chân và điểm mặt đất liên hệ bằng đúng một ma trận 3x3, cần ≥4
@@ -136,31 +159,76 @@ ngoại hình gần 20 lần**, và mọi công sức chỉnh ngưỡng ngoại 
 
 Ba lần nhảy bậc, mỗi lần là một sửa đổi ở mục Quyết định kỹ thuật:
 `0.014 → 0.083` (thêm hình học so theo thời gian) → `0.446` (Hungarian theo từng camera +
-`reject`) → `0.712` (nới `max_cost`). Còn cách trần 0.929 khoảng 0.22 — phần chênh nằm ở
-những cặp không có mốc thời gian chung, chỗ mà hệ thống buộc phải tin vào ngoại hình.
+`reject`) → `0.712` (nới `max_cost`).
+
+### Sweep đầy đủ `max_ground_dist_m` × `max_cost` (chế độ `reject`, job SLURM 581533)
+
+| d_max \ max_cost | 0.30 | 0.40 | 0.50 | 0.60 | 0.80 | 1.00 |
+|---|---|---|---|---|---|---|
+| **0.5 m** | 0.446 | 0.712 | 0.736 | 0.736 | 0.736 | 0.736 |
+| **1.0 m** | 0.437 | 0.705 | 0.737 | 0.765 | **0.768** | **0.768** |
+| **2.0 m** | 0.443 | 0.708 | 0.734 | 0.764 | 0.748 | 0.739 |
+
+(giá trị = F1). Hai đọc được: (a) `max_cost` là trục nhạy hơn hẳn `max_ground_dist_m`;
+(b) ở `d_max = 2.0` m, nới `max_cost` lên 0.80–1.00 bắt đầu **giảm** F1 (0.768 → 0.748 →
+0.739) — cả hai ràng buộc cùng lỏng thì không còn gì chặn việc gộp người.
+
+### Online so với offline — "giá của thời gian thực" (job SLURM 581534)
+
+Cùng fixture, cùng tham số, khác nhau duy nhất ở thời điểm tracklet được đưa vào vòng gán.
+
+| cấu hình | chế độ | #Global ID | danh tính vỡ | ID gộp nhầm | P | R | F1 |
+|---|---|---|---|---|---|---|---|
+| hình học `reject`, max_cost 0.60, d_max 1.0 | **online** | 321 | 62 | 14 | **0.976** | **0.886** | **0.929** |
+| hình học `reject`, max_cost 0.60, d_max 1.0 | offline | 310 | 131 | 85 | 0.780 | 0.751 | 0.765 |
+| chỉ ngoại hình, max_cost 0.10 | online | 840 | 297 | 206 | 0.126 | 0.024 | 0.041 |
+| chỉ ngoại hình, max_cost 0.10 | offline | 699 | 297 | 128 | 0.033 | 0.032 | 0.033 |
+
+**Online TỐT HƠN offline (F1 0.929 vs 0.765), và chạm đúng trần lý thuyết 0.929 của hình
+học.** Đây là kết quả ngược với giả định trong CLAUDE.md §6 ("offline cho cận trên của độ
+chính xác"), và nó có lý do rõ ràng, không phải may mắn:
+
+> **Ràng buộc hình học là một hàm của THỜI GIAN, nên nó mạnh nhất khi phép gán diễn ra gần
+> thời gian thực.** Chế độ online đưa tracklet vào vòng gán ngay lúc nó đang chạy, nên quỹ
+> đạo của nó và quỹ đạo trong gallery **đương nhiên trùng khoảng thời gian** — đúng điều
+> kiện để `_synchronized_distance` phán được. Chế độ offline xếp tracklet theo `end_ms`;
+> lúc một tracklet đã đóng được đem đi ghép, quỹ đạo mà GlobalTrack đang giữ cho camera kia
+> có thể thuộc một quãng thời gian hoàn toàn khác, và bằng chứng hình học biến mất.
+
+Với đường **chỉ ngoại hình** thì khoảng cách giữa hai chế độ gần như không có (0.041 vs
+0.033) — đúng như dự đoán: ngoại hình không phụ thuộc thời điểm gán.
+
+Hệ quả cho báo cáo (chương 6): **câu "thời gian thực phải trả giá bằng độ chính xác" không
+đúng một cách phổ quát.** Nó đúng với phần ngoại hình, nhưng với cặp camera chồng lấn thì
+thời gian thực lại là *điều kiện* để ràng buộc không–thời gian phát huy. Cận trên thật của
+hệ thống nằm ở đường online, không phải đường offline — và câu tương ứng trong CLAUDE.md §6
+cần sửa lại sau khi kiểm chứng thêm trên dataset có cặp non-overlap (M6).
 
 ## Vướng mắc / chưa xong
 
-- **Sweep đầy đủ `max_cost` × `max_ground_dist_m` chưa xong** (job SLURM 581533, ~4 phút/cấu
-  hình vì phần chiếu quỹ đạo còn chậm). Bốn dòng trong bảng trên là các mốc đã có; giá trị
-  chốt cho `configs/mct.yaml` chờ kết quả đầy đủ.
-- **Chưa chốt `max_cost` và `ground_gap_policy` trong `configs/mct.yaml`** — mặc định vẫn là
-  0.30/`allow`. Chốt sau khi có sweep đầy đủ *và* sau khi chọn xong model Re-ID (M3).
+- **`ground_gap_policy=reject` chưa được kiểm trên cặp non-overlap.** WildTrack không có
+  cặp nào như vậy, mà chính ở đó lập luận của `reject` ("không cùng lúc thì không phải một
+  người") là SAI. Mặc định vẫn `allow`; chỉ cân nhắc đổi sau dataset tự thu M6.
+- **`max_cost` mặc định (0.30) không phải giá trị tốt nhất trên WildTrack (0.60–0.80).**
+  Cố ý — xem Quyết định kỹ thuật 4. Việc đúng phải làm là ngưỡng theo từng cặp camera.
+- **Kết luận "online tốt hơn offline" mới đo trên MỘT dataset toàn cặp chồng lấn.** Cơ chế
+  giải thích được và nhất quán với số liệu, nhưng đừng viết vào báo cáo như một quy luật
+  cho tới khi đo lại trên dữ liệu có cặp non-overlap.
 - **`_ground_term` chậm**: mỗi cặp (tracklet, GlobalTrack) phải ghép hai quỹ đạo. Đã cache
-  phép chiếu trong phạm vi một lần dựng ma trận, nhưng vẫn là O(n·m·k). Chưa tối ưu vì chưa
-  chạy online thật — đo lại khi có `__main__.py`.
+  phép chiếu trong phạm vi một lần dựng ma trận nhưng vẫn O(n·m·k) — một cấu hình sweep
+  mất ~4 phút cho 1544 tracklet. Chưa chạm giới hạn thật (fixture 2 fps), nhưng ở 15 fps
+  ×4 luồng thì phải đo lại độ trễ end-to-end trước khi kết luận đạt mục tiêu <1 s.
 - **Thứ tự camera ảnh hưởng kết quả** (hệ quả của Hungarian theo từng camera). Chưa đo độ
-  nhạy: chạy lại với thứ tự camera đảo ngược sẽ cho biết ảnh hưởng lớn hay nhỏ.
-- **WildTrack không có cặp non-overlap** nên `ground_gap_policy=reject` và toàn bộ phần
-  ràng buộc thời gian di chuyển vẫn chưa được kiểm bằng dữ liệu thật. Chờ dataset tự thu M6.
-- `src/mct/store.py` và `src/mct/__main__.py` vẫn chưa có → **chưa đo được chênh lệch
-  online vs offline**, con số "giá của thời gian thực" cho chương 6.
+  nhạy: chạy lại với `sorted(by_cam)` đảo ngược sẽ cho biết ảnh hưởng lớn hay nhỏ.
+- **Dashboard chưa đọc `mct:global`** — publisher và schema đã có, bên tiêu thụ thì chưa.
+- **Chưa đo độ trễ end-to-end thật** (từ lúc probe đẩy message tới lúc có Global ID). Cần
+  chạy engine cạnh pipeline trên `vast-gpu`, chưa làm.
 
 ## Bước tiếp theo
 
-1. Đọc kết quả sweep 581533, chốt `max_cost` (và cân nhắc `ground_gap_policy`) vào
-   `configs/mct.yaml` kèm lý do.
-2. `src/mct/store.py` (SQLite) + `src/mct/__main__.py` (vòng online: Redis → tracklet →
-   associator → `mct:global` + SQLite) — mở đường đo online vs offline.
-3. Đo độ nhạy theo thứ tự camera trong `_match` (đảo `sorted(by_cam)`) để biết cái giá của
-   phép ghép tham lam theo camera.
+1. `src/dashboard/` — đọc `mct:global` qua WebSocket + tra cứu hành trình từ SQLite
+   (`Store.trajectory`). Toàn bộ phía dữ liệu đã sẵn sàng, đây là M5.
+2. Đo độ nhạy theo thứ tự camera trong `Associator._match` (đảo `sorted(by_cam)`) — biết
+   cái giá của phép ghép tham lam theo camera.
+3. Đo độ trễ end-to-end: chạy `python -m mct` cạnh pipeline DeepStream trên `vast-gpu`
+   (nhớ xác nhận với người dùng trước, tính phí theo giờ).

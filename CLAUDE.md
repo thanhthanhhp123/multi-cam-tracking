@@ -167,16 +167,26 @@ Chạy theo cửa sổ (mặc định 1s). Với mỗi tracklet cục bộ vừa
      (cặp overlap thì `t_min = 0`).
 3. **Ma trận chi phí** = `1 − cosine_similarity`, ô không khả thi đặt `inf`.
    Với cặp camera overlap, cộng thêm `λ · d_ground` — khoảng cách giữa hai điểm chân
-   sau khi ánh xạ homography về mặt phẳng tham chiếu chung.
-4. **Hungarian** (`scipy.optimize.linear_sum_assignment`) trên ma trận đã mask.
+   sau khi ánh xạ homography về mặt phẳng tham chiếu chung. `d_ground` so vị trí **tại
+   cùng mốc thời gian** (trung vị trên các mốc chung của hai quỹ đạo, dung sai
+   `ground_time_tol_ms`); không có mốc chung thì `ground_gap_policy` quyết định thả qua
+   hay loại thẳng. Đo trên WildTrack 2026-09-04: so "điểm cuối ↔ điểm đầu" như thiết kế
+   ban đầu làm kết quả TỆ ĐI, xem `docs/worklog/2026-09-04-5-*`.
+4. **Hungarian** (`scipy.optimize.linear_sum_assignment`) trên ma trận đã mask,
+   chạy **riêng cho từng camera**. Ghép một-một chỉ đúng trong phạm vi một camera; áp nó
+   lên cả chiều liên camera thì một người xuất hiện ở N camera sẽ mất N−1 tracklet sang
+   Global ID mới (đo được: recall 0.06 → 0.37 khi sửa).
 5. Chấp nhận cặp gán nếu `cost < τ` (`configs/mct.yaml`); ngược lại **tạo Global ID mới**.
 6. Cập nhật gallery của GlobalTrack (append có giới hạn kích thước + EMA), ghi SQLite.
 
 **Hai chế độ, giữ cả hai:**
 - `online` — chế độ thật, là sản phẩm bàn giao, dùng để đo độ trễ end-to-end.
-- `offline` — chạy Hungarian theo lô trên toàn bộ tracklet đã hoàn tất. Không real-time,
-  nhưng cho **cận trên** của độ chính xác; báo cáo nên đối chiếu online vs offline
-  để định lượng cái giá phải trả của ràng buộc thời gian thực.
+- `offline` — chạy Hungarian theo lô trên toàn bộ tracklet đã hoàn tất. Không real-time.
+  Vốn được coi là **cận trên** của độ chính xác, nhưng đo trên WildTrack 2026-09-04 cho
+  kết quả NGƯỢC LẠI: online F1 0.929 vs offline 0.765. Lý do: ràng buộc hình học là hàm
+  của thời gian, gán gần thời gian thực thì hai quỹ đạo mới trùng khoảng thời gian để so
+  vị trí. Vẫn giữ cả hai chế độ để đối chiếu — chỉ đừng giả định chiều thắng thua trước
+  khi đo (`eval/compare_online_offline.py`).
 
 Mọi ngưỡng nằm trong `configs/mct.yaml`, **không hardcode trong code** — cần sweep tham số ở tuần 16–17.
 

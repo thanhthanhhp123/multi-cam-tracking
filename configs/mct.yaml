@@ -38,23 +38,44 @@ gallery:
 association:
   # Chu kỳ chạy vòng gán (ms).
   window_ms: 1000
-  # cost = 1 - cosine_similarity. Chấp nhận cặp gán nếu cost < ngưỡng, ngược lại tạo Global ID mới.
-  # 0.30 tương ứng yêu cầu cosine > 0.70. Đối chiếu số đo trên fixture tổng hợp:
-  # cùng người khác camera ~0.74, hai người "mặc đồ giống nhau" ~0.63 — biên rất hẹp,
-  # nên đây là tham số nhạy nhất của cả hệ thống.
+  # cost = 1 - cosine_similarity (+ lambda * d_ground với cặp overlap đã hiệu chỉnh).
+  # Chấp nhận cặp gán nếu cost < ngưỡng, ngược lại tạo Global ID mới.
+  #
+  # ĐÂY LÀ THAM SỐ NHẠY NHẤT, và giá trị đúng phụ thuộc việc cặp camera đó CÓ HÌNH HỌC
+  # hay không — hai chế độ cần hai vùng ngưỡng ngược nhau (đo trên WildTrack 2026-09-04):
+  #   - không hình học (cặp non-overlap, hoặc chưa hiệu chỉnh): ngoại hình là bằng chứng
+  #     duy nhất nên phải SIẾT. Trên embedding thật, cosine giữa hai người khác nhau đã
+  #     ~0.69 nên vùng dùng được là 0.08-0.15; 0.30 là quá lỏng.
+  #   - có hình học (cặp overlap đã hiệu chỉnh): vị trí lo phần loại bỏ, siết ngưỡng
+  #     ngoại hình chỉ ném đi cặp đúng có cosine thấp. F1 theo max_cost: 0.30 -> 0.446,
+  #     0.40 -> 0.712, 0.50 -> 0.737, 0.60 -> 0.765, >=0.80 bão hoà ở 0.768.
+  #
+  # Giữ 0.30 làm mặc định vì hệ thống thật CÓ cặp non-overlap, mà ở đó ngưỡng lỏng là
+  # thảm hoạ. Ngưỡng riêng theo từng cặp camera (chặt khi thiếu hình học, lỏng khi có)
+  # là việc của M6, khi đã có dữ liệu non-overlap thật để đo.
   max_cost: 0.30
   # Trọng số lambda của thành phần khoảng cách mặt đất (chỉ áp dụng cho cặp camera overlap).
   homography_weight: 0.4
   # Vượt khoảng cách này trên mặt phẳng tham chiếu thì loại thẳng, không cần xét ngoại hình.
   # Đặt theo sai số hiệu chỉnh: `tools/calibrate_homography.py` in ra p95 sai số chiếu
   # của từng camera, cặp hai camera lệch cỡ p95*sqrt(2). Chặt hơn số đó là loại nhầm.
-  max_ground_dist_m: 3.0
+  # Đo trên WildTrack: 0.5 -> F1 0.736, 1.0 -> 0.768, 2.0 -> 0.764 — đỉnh phẳng quanh 1.0,
+  # và 1.0 vẫn rộng hơn nhiều lần sai số hiệu chỉnh (p95 cặp camera = 0.14 m).
+  max_ground_dist_m: 1.0
   # Hai quan sát ở hai camera lệch nhau dưới ngưỡng này thì coi là cùng một thời điểm.
   # Theo độ lệch NTP + chu kỳ khung; rộng quá thì người đi bộ đã dịch chuyển đáng kể.
   ground_time_tol_ms: 400
   # Tốc độ đi bộ nhanh nhất còn hợp lý — chỉ dùng khi hai bên KHÔNG có mốc thời gian
   # chung: ngưỡng loại được nới thành max_ground_dist_m + max_speed_m_s * dt.
   max_speed_m_s: 2.5
+  # Cặp camera CHỒNG LẤN mà hai bên không có mốc thời gian chung thì xử lý thế nào:
+  #   allow  — thả qua, chỉ nới ngưỡng theo max_speed_m_s * dt (mặc định: không bịa
+  #            ràng buộc mà dữ liệu chưa chứng minh)
+  #   reject — loại thẳng, coi "không có bằng chứng hình học" là đủ để từ chối. Đổi
+  #            recall lấy precision; đo trên WildTrack: P 0.060 -> 0.544 tại max_cost 0.30.
+  # WildTrack chỉ có cặp overlap nên chưa kiểm được `reject` gây hại thế nào cho cặp
+  # non-overlap — chờ dataset tự thu M6 rồi mới cân nhắc đổi mặc định.
+  ground_gap_policy: allow
   # GlobalTrack không xuất hiện lại trong khoảng này thì đóng lại, không xét làm ứng viên nữa.
   global_track_ttl_ms: 120000
 
