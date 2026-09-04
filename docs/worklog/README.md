@@ -44,3 +44,4 @@ Quyết định nhỏ ghi thẳng trong worklog. Quyết định lớn: tạo AD
 | [2026-09-04](2026-09-04-vast-image-pull-stuck.md) | M1 (chưa xong) | Thuê lại vast.ai để build Docker + đo FPS multi-stream — image pull kẹt ~28 phút, huỷ instance giữa chừng |
 | [2026-09-04 (2)](2026-09-04-2-m1-fps-multistream-va-m4-tracklet-gallery.md) | M1 xong + M4 | Đóng phần treo M1: Dockerfile tái lập được, 4 luồng 189 FPS/luồng, fixture thật qua Redis. Khởi động M4: tracklet + gallery + topology |
 | [2026-09-04 (3)](2026-09-04-3-m4-affinity-associator.md) | M4 | affinity + associator: engine liên kết chạy trọn vòng. Sweep max_cost (vùng đúng rất hẹp [0.30, 0.37]). Chuyển chỗ chạy test sang ut-hpc (Python 3.10.12) |
+| [2026-09-04 (4)](2026-09-04-4-wildtrack-fixture-va-danh-gia-that.md) | M4 | Fixture WildTrack thật (7 camera, OSNet ONNX) + lần đầu đo engine trên người thật: max_cost 0.30 sai hẳn trên embedding thật, checkpoint domain-generalization hơn Market-1501 25% |
