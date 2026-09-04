@@ -19,10 +19,10 @@ Detector và Re-ID dùng model có sẵn (fine-tune nếu cần), không train f
 
 Có ba máy, mỗi máy một vai trò. Đừng gộp việc của máy này sang máy khác.
 
-| | Mac (dev, hiện tại) | `ut-hpc` (train/fine-tune) | `vast-gpu` (chạy pipeline, thuê khi cần) |
+| | máy dev (hiện tại: Windows) | `ut-hpc` (train/fine-tune + test) | `vast-gpu` (chạy pipeline, thuê khi cần) |
 |---|---|---|---|
-| Phần cứng | Apple M1 (arm64), không GPU | Cụm SLURM ĐH Twente. Partition mở cho mọi account: `main-gpu` (26 node, A40 46GB / L40 48GB / Lovelace). `students` chỉ có 1 node `hpc-node08` | GPU rời thuê trên Vast.ai, IP/cấu hình đổi mỗi lần thuê |
-| OS | macOS | Ubuntu 22.04.5 LTS | tuỳ instance lúc thuê — kiểm tra lại mỗi lần |
+| Phần cứng | Windows 11, không GPU NVIDIA dùng được cho DeepStream (repo giai đoạn đầu dev trên Apple M1) | Cụm SLURM ĐH Twente. Partition mở cho mọi account: `main-gpu` (26 node, A40 46GB / L40 48GB / Lovelace). `students` chỉ có 1 node `hpc-node08` | GPU rời thuê trên Vast.ai, IP/cấu hình đổi mỗi lần thuê |
+| OS | Windows 11 (Git Bash + PowerShell) | Ubuntu 22.04.5 LTS | tuỳ instance lúc thuê — kiểm tra lại mỗi lần |
 | Cách vào | local | `ssh ut-hpc`, việc nặng qua `sbatch --partition=main-gpu` — **không chạy trên head node**, và **node tính toán không có Internet**, xem mục "Cạm bẫy" | `ssh vast-gpu` (đổi `HostName`/`Port` trong `~/.ssh/config` mỗi lần thuê mới) |
 | Container | — | Không cần: conda env trong `$HOME` chạy được GPU trên node tính toán (đã đo). Có `module load singularity/3.9.5` làm dự phòng, không có Docker | Docker (kiểm tra lại — tuỳ image Vast.ai) |
 | Dùng để | soạn `src/common`, `src/mct`, `src/dashboard`, `src/tools`, `eval/`, `tests/` | fine-tune YOLO (detection) + OSNet (Re-ID) trên COCO-person/Market-1501/MSMT17, xuất `.pt`/ONNX; **và chạy `pytest`/`ruff`** (xem dưới) | `src/ds_pipeline` — pipeline DeepStream thật, đo FPS/độ trễ end-to-end |
@@ -58,7 +58,7 @@ cũng có thể đánh thức billing nếu instance đang tắt hoặc tình c�
 
 **DeepStream không chạy trên macOS, và không chạy trên `ut-hpc` (không có DeepStream runtime,
 chỉ dùng để train).** Đừng đề xuất chạy `src/ds_pipeline` ở hai nơi đó, đừng cài `pyds`/`tensorrt`
-vào venv của Mac, và đừng viết test cần GPU mà không đánh dấu skip.
+vào venv của máy dev, và đừng viết test cần GPU mà không đánh dấu skip.
 
 ### Quy tắc bất biến (vi phạm = hỏng cả quy trình dev)
 
@@ -67,10 +67,11 @@ vào venv của Mac, và đừng viết test cần GPU mà không đánh dấu s
    Chỉ `src/ds_pipeline/` được phép. Có test tự động canh điều này (`tests/test_no_gpu_imports.py`).
 2. Ranh giới giữa hai bên là **schema message trong `src/common/schema.py`** — không có kênh nào khác.
    Đổi schema là breaking change: phải cập nhật cả producer, consumer, và fixtures cùng lúc.
-3. Mọi thứ chạy được trên Mac phải test được bằng **fixture ghi sẵn**, không cần Redis thật
+3. Mọi thứ chạy được ngoài máy GPU phải test được bằng **fixture ghi sẵn**, không cần Redis thật
    cũng không cần GPU. Fixture nằm ở `tests/fixtures/*.jsonl`.
 4. **Nhắm Python 3.10** (bằng phiên bản trong container DeepStream 7.x / Ubuntu 22.04).
-   Mac đang có 3.11 — không dùng cú pháp/thư viện chỉ có từ 3.11 trở lên trong code dùng chung.
+   Máy dev đang có 3.13 — không dùng cú pháp/thư viện chỉ có từ 3.11 trở lên trong code dùng
+   chung; test chạy ở `ut-hpc` (3.10.12) mới là chỗ bắt được vi phạm.
 5. **Trọng số model train trên `ut-hpc` phải chuyển sang `vast-gpu` qua `models/`** (gitignored,
    không qua git). `ut-hpc` không bao giờ chạy pipeline; `vast-gpu` không bao giờ train.
 
@@ -87,7 +88,7 @@ Ba tầng, tách rời qua Redis Streams:
 └──────────────────────────────────────────────────────────────────────────────────────────────────┘
    │ XADD mct:frames   (msgpack: bbox + local_track_id + embedding + timestamp)
    ▼
-┌── Redis Streams ──┐   ← ranh giới duy nhất. Ghi lại được → replay được → dev trên Mac được.
+┌── Redis Streams ──┐   ← ranh giới duy nhất. Ghi lại được → replay được → dev không cần GPU.
 └───────────────────┘
    │ XREADGROUP
    ▼
@@ -101,7 +102,7 @@ src/dashboard/ (FastAPI + WebSocket): sơ đồ camera, vị trí hiện tại, 
 ```
 
 **Vì sao tách bằng Redis Streams:** cho phép ghi lại luồng metadata thật từ máy GPU một lần,
-rồi phát lại trên Mac để phát triển và tinh chỉnh module liên kết đa camera — phần chiếm
+rồi phát lại trên máy dev để phát triển và tinh chỉnh module liên kết đa camera — phần chiếm
 tuần 11–13 và là đóng góp chính của đồ án — mà không cần ngồi cạnh máy GPU. Redis kiêm luôn
 state store và persistence (replay được khi consumer chết).
 
@@ -122,7 +123,7 @@ src/
                  calibrate_homography.py, cvat_to_mot.py, export_trackeval.py
 eval/            run_trackeval.py, gt/ (ground-truth MOT format + bảng global_id)
 tests/           fixtures/*.jsonl + test_*.py
-docker/          deepstream.Dockerfile, compose.yml (Mac), compose.gpu.yml (máy GPU)
+docker/          deepstream.Dockerfile, compose.yml (máy dev), compose.gpu.yml (máy GPU)
 data/ models/    .gitignore — video, ảnh, weights, .onnx, .engine KHÔNG commit
 docs/            đề cương + worklog/ (nhật ký từng phiên) + adr/ (quyết định kiến trúc lớn)
 ```
@@ -202,18 +203,18 @@ Khi báo cáo số: luôn ghi kèm cấu hình GPU, model, độ phân giải, s
 - Config đọc từ YAML trong `configs/`, secret/đường dẫn máy từ `.env` (mẫu: `.env.example`).
   Không hardcode đường dẫn tuyệt đối, IP camera, hay ngưỡng thuật toán.
 - Log dùng `src/common/logging.py` (structured), không dùng `print` trong code chạy production.
-- Test nào cần GPU/DeepStream: đánh dấu `@pytest.mark.gpu` để CI trên Mac skip được.
+- Test nào cần GPU/DeepStream: đánh dấu `@pytest.mark.gpu` để bộ test ngoài máy GPU skip được.
 
 ## 9. Lộ trình (bám theo chương 5 đề cương, 18–20 tuần)
 
 | Mốc | Tuần | Nội dung | Máy |
 |---|---|---|---|
-| M0 | 1–2 | Khung repo, `schema.py`, wrapper Redis, `replay_metadata.py`, fixture tổng hợp, dashboard rỗng | Mac |
+| M0 | 1–2 | Khung repo, `schema.py`, wrapper Redis, `replay_metadata.py`, fixture tổng hợp, dashboard rỗng | máy dev |
 | M1 | 3–4 | Pipeline DeepStream 1 camera: file/RTSP → YOLO (weight gốc, chưa fine-tune) → nvtracker → probe in ra console | `vast-gpu` |
 | M2 | 5–7 | Fine-tune YOLO trên COCO-person → ONNX; sang `vast-gpu`: TensorRT engine, đo FPS, `nvstreammux` 3–4 luồng | `ut-hpc` → `vast-gpu` |
 | M3 | 8–10 | Fine-tune Re-ID (OSNet) trên Market-1501/MSMT17; sang `vast-gpu`: tích hợp vào pipeline, publish Redis, **ghi fixture thật** | `ut-hpc` → `vast-gpu` |
-| M4 | 11–13 | **Module liên kết đa camera** (đóng góp chính) — phát triển trên Mac bằng fixture M3 | Mac |
-| M5 | 14–15 | SQLite store + dashboard realtime | Mac |
+| M4 | 11–13 | **Module liên kết đa camera** (đóng góp chính) — phát triển bằng fixture M3 | máy dev |
+| M5 | 14–15 | SQLite store + dashboard realtime | máy dev |
 | M6 | 16–17 | Dataset tự thu + CVAT + TrackEval + sweep tham số | cả ba |
 | M7 | 18–20 | (tuỳ chọn) Jetson + viết báo cáo | — |
 
@@ -289,7 +290,7 @@ và trong worklog chỉ link tới nó.
 ## 12. Lệnh (tên chuẩn hoá cho Makefile — tham chiếu, không phải cam kết đã cài đặt đủ)
 
 ```bash
-# Trên Mac — không cần GPU
+# Trên máy dev — không cần GPU
 make dev                # cài deps CPU (pip install -e ".[dev]")
 make test               # pytest, bỏ qua test có mark gpu
 make lint               # ruff check + ruff format --check
