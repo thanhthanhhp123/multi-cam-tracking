@@ -65,9 +65,7 @@ def _print_quantile_row(name: str, values: list[float], fmt: str = "{:8.1f}") ->
     print(f"{name:26s}" + "".join(fmt.format(v) for v in _quantiles(values)))
 
 
-def fragmentation(
-    tracklets: list[Tracklet], gt: dict[tuple[str, int], int]
-) -> dict:
+def fragmentation(tracklets: list[Tracklet], gt: dict[tuple[str, int], int]) -> dict:
     """Mỗi danh tính bị cắt thành mấy tracklet, và tracklet dài bao nhiêu."""
     scored = [t for t in tracklets if t.key in gt]
 

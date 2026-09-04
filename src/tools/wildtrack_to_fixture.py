@@ -288,6 +288,21 @@ def assign_local_tracks(
     return tracklets
 
 
+def crop_for_reid(image: np.ndarray, bbox: tuple[float, float, float, float]) -> np.ndarray:
+    """Cắt vùng ảnh cho ReID từ bbox `(x, y, w, h)`.
+
+    Public vì `tools/reembed_fixture.py` phải cắt **y hệt** cách này: hai fixture sinh bằng
+    hai đoạn code cắt khác nhau thì chênh lệch embedding đo được không quy về nguyên nhân
+    nào. Một hàm, hai chỗ gọi.
+    """
+    x, y, w, h = (round(v) for v in bbox)
+    x = max(0, min(x, WILDTRACK_W - 1))
+    y = max(0, min(y, WILDTRACK_H - 1))
+    x2 = min(WILDTRACK_W, x + max(w, 1))
+    y2 = min(WILDTRACK_H, y + max(h, 1))
+    return image[y:y2, x:x2]
+
+
 def _default_image_reader(path: Path) -> np.ndarray | None:
     import cv2
 
@@ -324,12 +339,7 @@ def _attach_embeddings(
                 f"Không đọc được ảnh {img_path} — kiểm tra --wildtrack-dir và --image-subdir-fmt"
             )
 
-        crops: list[np.ndarray] = []
-        for det in dets:
-            x, y, w, h = (round(v) for v in det.bbox)
-            x2 = min(WILDTRACK_W, x + max(w, 1))
-            y2 = min(WILDTRACK_H, y + max(h, 1))
-            crops.append(image[y:y2, x:x2])
+        crops = [crop_for_reid(image, det.bbox) for det in dets]
 
         feats = embedder.embed(crops)
         for det, feat in zip(dets, feats, strict=True):
