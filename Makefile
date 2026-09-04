@@ -1,5 +1,5 @@
 .PHONY: help dev test lint fmt up down replay record fixture wildtrack-annotations \
-        wildtrack-fixture wildtrack-homography engine engine-fixture compare eval \
+        wildtrack-fixture wildtrack-homography engine engine-fixture dashboard compare eval \
         ds-build ds-run clean
 .DEFAULT_GOAL := help
 
@@ -66,6 +66,9 @@ engine:  ## Chạy engine liên kết (Redis -> Global ID -> mct:global + SQLite
 
 engine-fixture:  ## Chạy engine trên fixture, không cần Redis — make engine-fixture FIXTURE=...
 	$(PY) -m mct --config configs/mct.yaml --source $(FIXTURE) --db $(DB)
+
+dashboard:  ## Mở dashboard ở http://localhost:8000 (đọc Redis + $(DB))
+	MCT_DB_PATH=$(DB) $(VENV)/bin/uvicorn dashboard.app:app --port 8000 --reload
 
 compare:  ## Đo chênh lệch online vs offline trên fixture — make compare FIXTURE=...
 	$(PY) -m eval.compare_online_offline --fixture $(FIXTURE) \

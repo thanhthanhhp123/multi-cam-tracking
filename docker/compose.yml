@@ -15,6 +15,42 @@ services:
       timeout: 3s
       retries: 5
 
-  # M4/M5 sẽ thêm:
-  #   mct-engine  — python -m mct
-  #   dashboard   — uvicorn dashboard.app:app
+  mct-engine:
+    build:
+      context: ..
+      dockerfile: docker/engine.Dockerfile
+    container_name: mct-engine
+    depends_on:
+      redis:
+        condition: service_healthy
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      MCT_DB_PATH: /data/mct.sqlite3
+    volumes:
+      - ../configs:/app/configs:ro
+      - mct-data:/data
+    command: python -m mct --config configs/mct.yaml --publish
+
+  dashboard:
+    build:
+      context: ..
+      dockerfile: docker/engine.Dockerfile
+    container_name: mct-dashboard
+    depends_on:
+      redis:
+        condition: service_healthy
+    ports:
+      - "8000:8000"
+    environment:
+      REDIS_URL: redis://redis:6379/0
+      MCT_DB_PATH: /data/mct.sqlite3
+    volumes:
+      - ../configs:/app/configs:ro
+      # Chỉ-đọc: engine mới là bên ghi SQLite (mct/store.py).
+      - mct-data:/data:ro
+    command: uvicorn dashboard.app:app --host 0.0.0.0 --port 8000
+
+volumes:
+  # Ổ dùng chung giữa engine (ghi) và dashboard (đọc). Không bind-mount ra host vì
+  # SQLite + WAL trên bind mount của Docker Desktop hay hỏng khoá.
+  mct-data:

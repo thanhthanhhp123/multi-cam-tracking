@@ -13,6 +13,7 @@ from mct.homography import (
     HomographyMapper,
     apply_homography,
     estimate_homography,
+    ground_polygon,
     reprojection_errors,
 )
 from mct.topology import Topology
@@ -494,3 +495,62 @@ def test_quy_dao_bi_tia_khi_vuot_tran():
     # Vẫn phủ trọn quãng thời gian, chỉ thưa hơn.
     assert tracklet.ground_path[0][0] == 1_000
     assert tracklet.ground_path[-1][0] >= 1_000 + 100 * 40
+
+
+# ------------------------------------------------- vùng phủ mặt đất (sơ đồ camera)
+
+
+def test_vung_phu_la_da_giac_chua_cac_diem_da_chieu():
+    cam = CameraHomography("cam01", TRUE_H, image_size=(1920, 1080))
+
+    polygon = cam.ground_polygon(max_range_m=100.0)
+
+    assert len(polygon) >= 3
+    # Điểm chân giữa đáy khung chắc chắn nhìn thấy được -> phải nằm trong vùng phủ.
+    inside = cam.project((960.0, 1079.0))
+    assert inside is not None
+    assert _point_in_polygon(inside, polygon)
+
+
+def _point_in_polygon(point, polygon) -> bool:
+    x, y = point
+    hit = False
+    n = len(polygon)
+    for i in range(n):
+        (x1, y1), (x2, y2) = polygon[i], polygon[(i + 1) % n]
+        if (y1 > y) != (y2 > y) and x < (x2 - x1) * (y - y1) / (y2 - y1) + x1:
+            hit = not hit
+    return hit
+
+
+def test_vung_phu_bi_chan_boi_max_range():
+    cam = CameraHomography("cam01", TRUE_H, image_size=(1920, 1080))
+
+    near = cam.ground_polygon(max_range_m=10.0)
+
+    assert near
+    assert all(abs(x) <= 10.0 + 1e-6 and abs(y) <= 10.0 + 1e-6 for x, y in near)
+
+
+def test_chua_biet_do_phan_giai_thi_khong_ve_duoc_vung_phu():
+    cam = CameraHomography("cam01", TRUE_H)
+    assert cam.ground_polygon() == []
+
+
+def test_camera_khong_nhin_thay_mat_phang_tra_da_giac_rong():
+    """Ma trận có toàn bộ khung hình nằm sau đường chân trời -> không có vùng phủ."""
+    behind = TRUE_H.copy()
+    behind[2] = (0.0, 0.0, -1.0)  # w < 0 với mọi điểm ảnh
+
+    assert ground_polygon(behind, (1920, 1080)) == []
+
+
+def test_footprints_bo_qua_camera_chua_biet_kich_thuoc():
+    mapper = HomographyMapper(
+        {
+            "cam01": CameraHomography("cam01", TRUE_H, image_size=(1920, 1080)),
+            "cam02": CameraHomography("cam02", TRUE_H),  # thiếu image_size
+        }
+    )
+
+    assert list(mapper.footprints()) == ["cam01"]

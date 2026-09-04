@@ -163,6 +163,16 @@ def build_engine(
     else:
         log.info("Không có file hiệu chỉnh trong %s — bỏ qua thành phần hình học", homography_dir)
 
+    if mapper is not None and topology is None:
+        # Cạm bẫy im lặng: `affinity._pair_cost` chỉ gọi thành phần hình học khi CÓ
+        # topology, vì nó cần biết cặp camera nào chồng lấn. Hiệu chỉnh xong mà quên khai
+        # topology thì engine chạy bằng ngoại hình thuần và không báo gì cả.
+        log.warning(
+            "Có %d camera đã hiệu chỉnh nhưng KHÔNG có topology — thành phần hình học bị bỏ "
+            "qua hoàn toàn. Khai `overlaps_with` trong configs/cameras/topology.yaml.",
+            len(mapper.calibrated),
+        )
+
     associator = Associator.from_mapping(config, topology=topology, ground_mapper=mapper)
     store_config = StoreConfig.from_mapping(config)
     if db_path:

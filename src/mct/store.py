@@ -115,12 +115,30 @@ class StoreConfig:
 class Store:
     """Ghi/đọc kết quả liên kết. Một tiến trình ghi; dashboard mở riêng ở chế độ đọc."""
 
-    def __init__(self, config: StoreConfig | None = None, *, db_path: str | Path | None = None):
+    def __init__(
+        self,
+        config: StoreConfig | None = None,
+        *,
+        db_path: str | Path | None = None,
+        readonly: bool = False,
+    ):
         self.config = config or StoreConfig()
         if db_path is not None:
             self.config.db_path = str(db_path)
+        self.readonly = readonly
 
         path = self.config.db_path
+        if readonly:
+            # Dashboard chạy trong tiến trình KHÁC engine. Mở chỉ-đọc để chắc chắn nó
+            # không bao giờ giành khoá ghi của engine, và để lỗi lộ ra ngay tại đây nếu
+            # ai đó lỡ gọi nhầm hàm ghi.
+            self.conn = sqlite3.connect(f"file:{path}?mode=ro", uri=True)
+            self.conn.row_factory = sqlite3.Row
+            self._pending: list[Assignment] = []
+            self._last_flush_ms = 0
+            self.n_written = 0
+            return
+
         if path != ":memory:":
             Path(path).parent.mkdir(parents=True, exist_ok=True)
         self.conn = sqlite3.connect(path)
@@ -145,6 +163,8 @@ class Store:
 
     def record(self, assignment: Assignment, *, now_ms: int | None = None) -> None:
         """Xếp một kết quả gán vào hàng chờ. Tự flush khi đủ lô hoặc hết thời gian."""
+        if self.readonly:
+            raise RuntimeError("Store mở ở chế độ chỉ-đọc, không ghi được")
         self._pending.append(assignment)
         stamp = assignment.tracklet.end_ms if now_ms is None else int(now_ms)
         if self._last_flush_ms == 0:
@@ -274,8 +294,21 @@ class Store:
 
     # ------------------------------------------------------------------ vòng đời
 
+    @classmethod
+    def open_readonly(cls, db_path: str | Path) -> Store:
+        """Mở một file đã có ở chế độ chỉ-đọc. `FileNotFoundError` nếu chưa có file.
+
+        SQLite với `mode=ro` KHÔNG tạo file mới — đó chính là điều mong muốn: dashboard
+        chỉ ra bảng rỗng khi engine chưa từng chạy thì gây hiểu nhầm hơn là báo thẳng.
+        """
+        path = Path(db_path)
+        if not path.is_file():
+            raise FileNotFoundError(f"{path} chưa tồn tại — engine (`python -m mct`) chưa chạy?")
+        return cls(StoreConfig(db_path=str(path)), readonly=True)
+
     def close(self) -> None:
-        self.flush()
+        if not self.readonly:
+            self.flush()
         self.conn.close()
 
     def __enter__(self) -> Store:

@@ -8,7 +8,7 @@ version = "0.1.0"
 description = "MTMCT: theo dõi người xuyên nhiều camera trên nền NVIDIA DeepStream"
 readme = "README.md"
 # 3.10 để khớp Python trong container DeepStream 7.x / Ubuntu 22.04 (CLAUDE.md §2, quy tắc 4).
-# Máy dev là Mac Python 3.11 — không dùng cú pháp chỉ có từ 3.11 trở lên.
+# Máy dev là Windows Python 3.13 — test chạy ở ut-hpc (3.10.12) mới bắt được vi phạm.
 requires-python = ">=3.10,<3.12"
 dependencies = [
     "numpy>=1.24",
@@ -37,6 +37,7 @@ dev = [
     "multicam-tracking-deepstream[dashboard]",
     "pytest>=7.4",
     "pytest-asyncio>=0.23",
+    "httpx>=0.27",       # fastapi.testclient.TestClient chạy trên httpx
     "ruff>=0.4",
 ]
 

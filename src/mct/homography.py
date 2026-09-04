@@ -225,6 +225,12 @@ class CameraHomography:
         """Điểm chân trong ảnh → (X, Y) mét. `None` nếu suy biến."""
         return apply_homography(self.matrix, point)
 
+    def ground_polygon(self, **kwargs: Any) -> list[Point]:
+        """Vùng mặt đất camera này nhìn thấy và định vị được. Rỗng nếu chưa biết `image_size`."""
+        if self.image_size is None:
+            return []
+        return ground_polygon(self.matrix, self.image_size, **kwargs)
+
     @classmethod
     def from_mapping(
         cls, data: Mapping[str, Any], *, cam_id: str | None = None
@@ -273,6 +279,108 @@ class CameraHomography:
         path = Path(path)
         data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
         return cls.from_mapping(data, cam_id=path.stem)
+
+
+# ------------------------------------------------- vùng phủ trên mặt phẳng
+
+
+def _clip_halfplane(
+    polygon: list[Point], normal: tuple[float, float, float], eps: float = 0.0
+) -> list[Point]:
+    """Cắt đa giác lồi bằng nửa mặt phẳng `a·x + b·y + c >= eps` (Sutherland–Hodgman)."""
+    a, b, c = normal
+    out: list[Point] = []
+    n = len(polygon)
+    for i in range(n):
+        cur, nxt = polygon[i], polygon[(i + 1) % n]
+        d_cur = a * cur[0] + b * cur[1] + c - eps
+        d_nxt = a * nxt[0] + b * nxt[1] + c - eps
+        if d_cur >= 0:
+            out.append(cur)
+        if (d_cur >= 0) != (d_nxt >= 0):
+            t = d_cur / (d_cur - d_nxt)
+            out.append((cur[0] + t * (nxt[0] - cur[0]), cur[1] + t * (nxt[1] - cur[1])))
+    return out
+
+
+def ground_scale_m_per_px(matrix: np.ndarray, point: Point, *, dv: float = 1.0) -> float:
+    """Một pixel theo chiều dọc ở `point` phủ bao nhiêu mét trên mặt đất.
+
+    Đây là thước đo "còn định vị được không": sát chân camera một pixel là vài milimét,
+    càng lên phía đường chân trời thì một pixel càng phủ rộng, tới mức điểm chân của một
+    người không còn xác định nổi vị trí. Trả `inf` khi điểm nằm sau mặt phẳng camera.
+    """
+    a = apply_homography(matrix, point)
+    b = apply_homography(matrix, (point[0], point[1] - dv))
+    if a is None or b is None:
+        return float("inf")
+    return float(np.hypot(a[0] - b[0], a[1] - b[1]) / dv)
+
+
+def ground_polygon(
+    matrix: np.ndarray,
+    image_size: tuple[int, int],
+    *,
+    max_ground_per_pixel_m: float = 0.05,
+    max_range_m: float = 200.0,
+) -> list[Point]:
+    """Vùng mặt đất mà một camera nhìn thấy **và định vị được**, trên mặt phẳng tham chiếu.
+
+    Đây là "sơ đồ camera" của dashboard (CLAUDE.md §3), lấy được miễn phí từ chính
+    homography — không cần đo đạc gì thêm.
+
+    **Cắt ở đâu mới đúng?** Cắt theo đường chân trời là sai về mặt hữu dụng: ngay dưới
+    đường chân trời một pixel đã phủ hàng chục mét, nên đa giác kéo dài gần như vô tận và
+    bản đồ thu vùng thật sự có người xuống thành một chấm (đo trên WildTrack: khung nhìn
+    ra 144x144 m cho một quảng trường 12x36 m). Cắt ở bán kính cố định thì lại là con số
+    tuỳ tiện, mỗi hiện trường một khác.
+
+    Tiêu chí dùng ở đây có ý nghĩa vật lý: **cắt tại hàng ảnh mà một pixel bắt đầu phủ
+    quá `max_ground_per_pixel_m` mét mặt đất**. Xa hơn mức đó thì dù có nhìn thấy người,
+    điểm chân của họ cũng không định vị nổi, nên vẽ ra chỉ gây hiểu nhầm.
+
+    Mặc định 0.05 m/pixel — "lệch một pixel là lệch 5 cm", nhỏ hơn hẳn ngưỡng
+    `max_ground_dist_m` (1.0 m) mà engine dùng để loại cặp. Con số này còn có một xác nhận
+    thực nghiệm dễ chịu: trên WildTrack, vùng phủ tính ở 0.05 m/pixel ra X [-7.3, 12.8],
+    Y [-8.2, 22.4] m, gần trùng với vùng mà người chú thích dataset đã chọn để gán nhãn
+    (X [-3.0, 9.0], Y [-7.5, 23.1] m). Nới lên 0.25 thì khung nhìn phình gấp ba mà không
+    thêm được vùng nào có người.
+
+    Ước lượng theo **cột giữa ảnh**: tỉ lệ còn thay đổi theo phương ngang (ống kính rộng),
+    nhưng đây là dữ liệu để VẼ chứ không phải để tính toán, và cột giữa là đại diện tốt.
+
+    `max_range_m` chỉ là chốt chặn cuối cho trường hợp suy biến.
+    """
+    width, height = float(image_size[0]), float(image_size[1])
+    u_center = width / 2.0
+
+    # `w <= 0` ở hàng đáy = mặt phẳng nằm SAU camera. Phép chiếu vẫn ra số (chỉ là bị lộn
+    # ngược), nên phải kiểm riêng — dựa vào `apply_homography` trả None thì không bắt được.
+    if float(matrix[2] @ np.array([u_center, height, 1.0])) <= 0.0:
+        return []
+    if ground_scale_m_per_px(matrix, (u_center, height)) > max_ground_per_pixel_m:
+        return []  # ngay sát chân camera đã không định vị nổi
+
+    step = max(1.0, height / 200.0)
+    v_cut = height
+    v = height - step
+    while v >= 0.0:
+        if ground_scale_m_per_px(matrix, (u_center, v)) > max_ground_per_pixel_m:
+            break
+        v_cut = v
+        v -= step
+
+    rect: list[Point] = [(0.0, v_cut), (width, v_cut), (width, height), (0.0, height)]
+    projected = [p for point in rect if (p := apply_homography(matrix, point)) is not None]
+    if len(projected) < 3:
+        return []
+
+    limit = float(max_range_m)
+    for normal in ((1.0, 0.0, limit), (-1.0, 0.0, limit), (0.0, 1.0, limit), (0.0, -1.0, limit)):
+        projected = _clip_halfplane(projected, normal)
+        if len(projected) < 3:
+            return []
+    return projected
 
 
 # ------------------------------------------------------------------- nhiều camera
@@ -379,6 +487,14 @@ class HomographyMapper:
         if pa is None or pb is None:
             return None
         return float(np.hypot(pa[0] - pb[0], pa[1] - pb[1]))
+
+    def footprints(self, **kwargs: Any) -> dict[str, list[Point]]:
+        """Vùng phủ mặt đất của từng camera — dữ liệu vẽ sơ đồ của dashboard."""
+        return {
+            cam_id: polygon
+            for cam_id, cam in sorted(self.cameras.items())
+            if (polygon := cam.ground_polygon(**kwargs))
+        }
 
     def check_frame_size(self, cam_id: str, width: int, height: int) -> str | None:
         """Cảnh báo nếu khung hình đang chạy khác độ phân giải lúc hiệu chỉnh.

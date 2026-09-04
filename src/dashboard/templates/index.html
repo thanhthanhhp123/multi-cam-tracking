@@ -1,0 +1,67 @@
+<!doctype html>
+<html lang="vi">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Multi-Camera Tracking</title>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+  <header>
+    <h1>Multi-Camera Tracking</h1>
+    <div class="stats">
+      <span id="conn" class="badge off">chưa nối</span>
+      <span class="stat"><b id="n-live">0</b> đang theo dõi</span>
+      <span class="stat"><b id="n-cross">0</b> xuyên camera</span>
+      <span class="stat"><b id="n-updates">0</b> cập nhật</span>
+      <span class="stat" id="clock">—</span>
+    </div>
+  </header>
+
+  <main>
+    <section class="map-panel">
+      <div class="panel-head">
+        <h2>Mặt phẳng mặt đất</h2>
+        <label class="toggle"><input type="checkbox" id="show-trails" checked> vệt di chuyển</label>
+        <label class="toggle"><input type="checkbox" id="show-fov" checked> vùng phủ camera</label>
+      </div>
+      <div id="map-wrap">
+        <svg id="map" role="img" aria-label="Sơ đồ camera và vị trí đối tượng"></svg>
+        <p id="map-empty" class="empty">
+          Chưa có camera nào được hiệu chỉnh homography.<br>
+          Chạy <code>make wildtrack-homography</code> hoặc
+          <code>python -m tools.calibrate_homography --points …</code>.
+        </p>
+      </div>
+    </section>
+
+    <aside>
+      <section class="panel">
+        <div class="panel-head"><h2>Đang theo dõi</h2></div>
+        <ul id="live-list" class="list">
+          <li class="empty">Chưa có ai trong khung hình.</li>
+        </ul>
+      </section>
+
+      <section class="panel">
+        <div class="panel-head">
+          <h2>Tra cứu hành trình</h2>
+          <form id="lookup" autocomplete="off">
+            <input type="number" id="gid" min="1" placeholder="Global ID" required>
+            <button type="submit">Tra</button>
+          </form>
+        </div>
+        <div id="trajectory"></div>
+        <ul id="history-list" class="list"></ul>
+      </section>
+    </aside>
+  </main>
+
+  <footer>
+    SQLite: <code>{{ db_path }}</code> &middot;
+    <a href="/health">/health</a> &middot; <a href="/docs">/docs</a>
+  </footer>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>
