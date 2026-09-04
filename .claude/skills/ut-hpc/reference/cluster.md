@@ -96,6 +96,12 @@ Chỉ `$HOME` vừa ghi được vừa thấy từ mọi node → dataset và en
 - **Không có Docker.**
 - Python hệ thống trên node tính toán: **3.10.12** (khớp mục tiêu 3.10 của dự án).
 - Có sẵn: `git`, `rsync`, `curl`, `tclsh`. Không có `nvcc` nếu chưa load module.
+- **Node tính toán KHÔNG cùng image với nhau** (đo 2026-09-04). `ffmpeg` 4.4.2 có mặt ở mọi
+  nơi đã thử, nhưng bản build khác nhau: `ctit086` có `libx264`, `libx265`, `h264_nvenc`;
+  `ctit085` và `hpc-node09` **không có `libx264`** (job 581854 và 581864 chết ngay). Head node
+  có `libx264`. Hệ quả: một job chạy được hôm qua KHÔNG chứng minh nó chạy được hôm nay —
+  SLURM cấp node khác. Job nào phụ thuộc công cụ hệ thống phải **tự kiểm và chết to tiếng ở
+  dòng đầu**, và ghim `--nodelist=<node đã kiểm>` khi cần chắc chắn.
 
 ## Env Python — cách đã kiểm chứng
 

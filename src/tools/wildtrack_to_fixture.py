@@ -166,6 +166,20 @@ def _frame_files(ann_dir: Path, *, stride: int, max_frames: int) -> list[Path]:
     return files
 
 
+def annotation_frame_numbers(
+    ann_dir: str | Path, *, stride: int = 1, max_frames: int = 0
+) -> list[int]:
+    """Số khung WildTrack (00000000.png -> 0, 00000005.png -> 5...) theo ĐÚNG thứ tự mà
+    `parse_raw_detections` đánh `frame_idx`.
+
+    Public vì `tools.wildtrack_to_video` phải đóng video theo đúng thứ tự này: chỉ khi
+    khung thứ i của video là `annotation_frame_numbers()[i]` thì `frame_id` mà probe
+    DeepStream ghi ra mới tra thẳng được về khung chú thích. Gọi chung một hàm để hai
+    đường không thể trôi khỏi nhau.
+    """
+    return [int(p.stem) for p in _frame_files(Path(ann_dir), stride=stride, max_frames=max_frames)]
+
+
 def _normalize_views(views: list[int]) -> list[int]:
     out = sorted({int(v) - 1 for v in views})
     if not out or out[0] < 0 or out[-1] >= N_VIEWS:

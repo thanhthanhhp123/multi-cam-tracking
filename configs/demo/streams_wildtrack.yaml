@@ -1,0 +1,62 @@
+# 7 luồng WildTrack CÓ ReID — dùng để trả lời câu hỏi còn treo của M3: ngưỡng `max_cost`
+# chỉnh trên embedding của đường ONNX Runtime (tools/reid_onnx.py) có chuyển được sang
+# embedding của đường DeepStream (nvtracker + TensorRT) không?
+#
+# Đây là cấu hình cho DATASET MƯỢN, không phải hệ thống camera thật của đồ án — vì vậy nó
+# nằm trong configs/demo/ chứ không phải configs/pipeline/ (cùng chỗ với wildtrack.mct.yaml
+# và wildtrack.topology.yaml).
+#
+# CHUẨN BỊ TRƯỚC KHI CHẠY (trên vast-gpu, cwd = gốc repo /workspace/mct-repo):
+#   1. Đóng video trên ut-hpc:  python -m tools.wildtrack_to_video \
+#          --wildtrack-dir ~/mct/data/wildtrack --out-dir ~/mct/data/wildtrack_video
+#   2. Chép sang máy GPU:       rsync -av wildtrack_video/ vast-gpu:/workspace/mct-repo/data/wildtrack_video/
+#   3. Chạy:                    make ds-run-wildtrack
+#   4. Ghi fixture:             python -m tools.record_metadata --out tests/fixtures/ds_wildtrack_7cam.jsonl
+#   5. Gán ground-truth (máy dev/ut-hpc): python -m tools.ds_wildtrack_gt --fixture ... --wildtrack-dir ...
+#   6. Đánh giá:                python -m eval.eval_wildtrack --fixture ... --diagnose --sweep
+#
+# `frame_id` mà probes.py ghi ra tra thẳng về khung chú thích WildTrack — quy ước do
+# tools/wildtrack_to_video.py bảo đảm (khung thứ i của video = khung chú thích thứ i).
+# Vì thế KHÔNG được cắt/nối lại video bằng công cụ khác, và KHÔNG đổi --frame-stride ở
+# một bên mà quên bên kia.
+sources:
+  - cam_id: cam01
+    uri: file:///workspace/mct-repo/data/wildtrack_video/cam01.mp4
+  - cam_id: cam02
+    uri: file:///workspace/mct-repo/data/wildtrack_video/cam02.mp4
+  - cam_id: cam03
+    uri: file:///workspace/mct-repo/data/wildtrack_video/cam03.mp4
+  - cam_id: cam04
+    uri: file:///workspace/mct-repo/data/wildtrack_video/cam04.mp4
+  - cam_id: cam05
+    uri: file:///workspace/mct-repo/data/wildtrack_video/cam05.mp4
+  - cam_id: cam06
+    uri: file:///workspace/mct-repo/data/wildtrack_video/cam06.mp4
+  - cam_id: cam07
+    uri: file:///workspace/mct-repo/data/wildtrack_video/cam07.mp4
+
+streammux:
+  width: 1920
+  height: 1080
+  batched_push_timeout_us: 40000
+  live_source: false
+  attach_sys_ts: true
+
+tracker:
+  ll_lib_file: /opt/nvidia/deepstream/deepstream/lib/libnvds_nvmultiobjecttracker.so
+  ll_config_file: configs/pipeline/config_tracker_NvDCF_reid.yml
+  width: 960
+  height: 544
+  display_tracking_id: false
+
+sink:
+  # BẮT BUỘC true ở đây. Video WildTrack chạy ở 2 fps; chạy hết tốc lực thì 400 khung dồn
+  # vào vài giây ts_ms, cửa sổ gán 1000 ms của src/mct nuốt trọn cả đoạn và ràng buộc thời
+  # gian mất nghĩa. Với sync=true, 400 khung trải đúng 200 s — bằng nhịp mà fixture
+  # wildtrack_to_fixture.py giả lập (fps=2.0), nên hai bên so được với nhau.
+  sync: true
+
+pgie:
+  # 7 luồng -> engine batch 7. Xem chú thích trong file đó về việc vì sao phải có file
+  # riêng cho mỗi batch size.
+  config_file: configs/pipeline/config_infer_yolo11_b7.txt

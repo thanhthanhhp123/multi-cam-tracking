@@ -1,0 +1,68 @@
+[property]
+gpu-id=0
+net-scale-factor=0.0039215697906911373
+model-color-format=0
+onnx-file=../../models/detector/yolo11s.onnx
+model-engine-file=../../models/detector/yolo11s.onnx_b7_gpu0_fp16.engine
+labelfile-path=../../models/detector/labels.txt
+batch-size=7
+network-mode=2
+num-detected-classes=80
+interval=0
+gie-unique-id=1
+process-mode=1
+network-type=0
+cluster-mode=2
+maintain-aspect-ratio=1
+symmetric-padding=1
+parse-bbox-func-name=NvDsInferParseYolo
+custom-lib-path=../../third_party/DeepStream-Yolo/nvdsinfer_custom_impl_Yolo/libnvdsinfer_custom_impl_Yolo.so
+engine-create-func-name=NvDsInferYoloCudaEngineGet
+
+# CLAUDE.md §9 M2: dùng THẲNG weight gốc YOLO11s (COCO 80 lớp), KHÔNG fine-tune lại
+# trên COCO-person. Lớp `person` của weight này vốn đã được train trên chính COCO, nên
+# fine-tune trên tập con của nó là train lại trên đúng dữ liệu model đã thấy — kỳ vọng
+# cải thiện gần bằng 0, mà tốn ~20G đĩa cụm và vài giờ GPU. Lợi ích thật của một head
+# 1 lớp (tracker không phải bám xe/ghế/túi) lấy được rẻ hơn nhiều bằng khối class-attrs
+# bên dưới. Fine-tune chỉ làm khi có domain shift thật -> dữ liệu tự thu, M6.
+# Xem docs/worklog/2026-09-04-7-m2-detector-pretrained.md.
+#
+# num-detected-classes=80 PHẢI giữ nguyên 80 — nó mô tả đầu ra của file ONNX, không phải
+# số lớp ta quan tâm. Muốn chỉ lấy người thì siết ngưỡng theo lớp, không sửa số này.
+#
+# onnx-file/model-engine-file/labelfile-path/custom-lib-path TƯƠNG ĐỐI so với vị trí
+# file config này (configs/pipeline/), khớp cấu trúc thư mục repo. Trên máy GPU thật,
+# models/ và third_party/ đã có sẵn qua bước chuẩn bị (xem docs/worklog M1).
+# network-mode=2 (FP16) — đo lại FP32 nếu cần đối chiếu độ chính xác baseline (chương 6).
+#
+# BẢN 7 LUỒNG: chỉ khác config_infer_yolo11.txt ở batch-size và tên file engine.
+# Cần file riêng vì engine TensorRT gắn chặt với batch size, và nvinfer chỉ đọc lại
+# được engine đã build khi đường dẫn khai ở đây trùng đúng tên file. Không có nó thì
+# mỗi lần chạy 7 luồng phải build lại engine (~4 phút, đo 2026-09-04). Dùng cho dataset
+# WildTrack (7 camera) — xem configs/demo/streams_wildtrack.yaml.
+#
+# builder.py tự set thuộc tính batch-size = số nguồn lúc chạy, nên giá trị batch-size
+# trong file này chỉ để tài liệu hoá; thứ thực sự phải khớp là tên file engine.
+
+# LỌC CHỈ LẤY NGƯỜI, NGAY TẠI DETECTOR.
+# [class-attrs-all] là mặc định cho mọi lớp; [class-attrs-<id>] ghi đè cho lớp đó.
+# Đặt ngưỡng mặc định 1.0 = không confidence nào vượt qua => 79 lớp còn lại bị loại ngay
+# trong hàm parse của DeepStream-Yolo (nó so `maxProb < preclusterThreshold[classId]`),
+# trước nvtracker. Nhờ vậy tracker chỉ bám người, và ReID (M3) chỉ trích embedding của
+# người — chứ không của ô tô.
+#
+# probes.py vẫn còn `if obj_meta.class_id == 0` như lưới an toàn thứ hai; giữ cả hai vì
+# chúng chặn ở hai tầng khác nhau (chi phí vs. đúng đắn của schema).
+#
+# Cách khác cùng tác dụng: `filter-out-class-ids=1;2;...;79` trong [property] (DS >= 6.1),
+# nhưng phải liệt kê 79 id và lọc SAU khi parse xong. Bỏ.
+[class-attrs-all]
+pre-cluster-threshold=1.0
+nms-iou-threshold=0.45
+topk=300
+
+# lớp 0 = person (dòng đầu models/detector/labels.txt)
+[class-attrs-0]
+pre-cluster-threshold=0.25
+nms-iou-threshold=0.45
+topk=300

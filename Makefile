@@ -1,6 +1,6 @@
 .PHONY: help dev test lint fmt up down replay record fixture wildtrack-annotations \
         wildtrack-fixture wildtrack-homography engine engine-fixture dashboard compare eval \
-        ds-build ds-run ds-run-reid clean
+        wildtrack-video wildtrack-ds-gt \n        ds-build ds-run ds-run-reid ds-run-wildtrack clean
 .DEFAULT_GOAL := help
 
 VENV    := .venv
@@ -46,6 +46,7 @@ fixture:  ## Sinh lại fixture tổng hợp 2 camera
 	$(PY) -m tools.make_synthetic_fixture --out $(FIXTURE)
 
 WILDTRACK_DIR ?= data/wildtrack
+WILDTRACK_VIDEO_DIR ?= data/wildtrack_video
 REID_ONNX     ?= models/reid/osnet_x1_0_market1501.onnx
 
 wildtrack-annotations:  ## Tải annotation + calibration WildTrack (nhỏ; ảnh gốc tải riêng)
@@ -54,6 +55,14 @@ wildtrack-annotations:  ## Tải annotation + calibration WildTrack (nhỏ; ản
 wildtrack-fixture:  ## WildTrack -> fixture thật (cần $(WILDTRACK_DIR)/Image_subsets + [reid])
 	$(PY) -m tools.wildtrack_to_fixture --wildtrack-dir $(WILDTRACK_DIR) \
 		--views 1,4,7 --reid-onnx $(REID_ONNX) --out tests/fixtures/wildtrack_3cam.jsonl
+
+wildtrack-video:  ## WildTrack -> 7 video H.264 cho pipeline DeepStream (chạy trên ut-hpc)
+	$(PY) -m tools.wildtrack_to_video --wildtrack-dir $(WILDTRACK_DIR) \
+		--out-dir $(WILDTRACK_VIDEO_DIR)
+
+wildtrack-ds-gt:  ## Gán ground-truth cho fixture DeepStream — make wildtrack-ds-gt FIXTURE=...
+	$(PY) -m tools.ds_wildtrack_gt --fixture $(FIXTURE) --wildtrack-dir $(WILDTRACK_DIR) \
+		--report $(FIXTURE:.jsonl=.gt-report.json)
 
 wildtrack-homography:  ## Hiệu chỉnh homography 7 camera WildTrack từ chú thích
 	$(PY) -m tools.calibrate_homography --wildtrack-dir $(WILDTRACK_DIR) \
@@ -97,3 +106,7 @@ ds-run:  ## Chạy pipeline theo configs/pipeline/streams.yaml
 
 ds-run-reid:  ## Chạy 4 luồng CÓ ReID (M3) — đối chứng FPS của streams_multi.yaml
 	docker compose -f docker/compose.yml -f docker/compose.gpu.yml run --rm 		ds-pipeline python -m ds_pipeline --config configs/pipeline/streams_reid.yaml --stats
+
+ds-run-wildtrack:  ## Chạy 7 luồng WildTrack CÓ ReID — cần data/wildtrack_video/ (xem file config)
+	docker compose -f docker/compose.yml -f docker/compose.gpu.yml run --rm \
+		ds-pipeline python -m ds_pipeline --config configs/demo/streams_wildtrack.yaml --stats
