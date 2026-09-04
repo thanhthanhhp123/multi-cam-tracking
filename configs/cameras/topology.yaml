@@ -25,6 +25,13 @@ cameras:
 #   max_ms: đi chậm nhất còn hợp lý (dừng lại nói chuyện...). Đặt rộng tay —
 #           chặt quá sẽ cắt mất match đúng, mà đó là lỗi khó truy hơn nhiều so với
 #           một match sai (match sai còn bị ngưỡng ngoại hình chặn lại).
+# Cặp camera CHƯA khai trong `transitions` thì xử lý thế nào:
+#   allow  — thả tự do, chỉ dựa vào ngoại hình (mặc định, dùng khi chưa đo transit time:
+#            siết sớm sẽ làm engine im lặng không khớp gì và rất khó truy nguyên nhân)
+#   reject — loại thẳng, coi topology là bộ lọc thật. Chuyển sang đây khi đã đo đủ
+#            mọi cặp camera trong hệ thống.
+unknown_pair_policy: allow
+
 transitions:
   - from: cam01
     to: cam02
