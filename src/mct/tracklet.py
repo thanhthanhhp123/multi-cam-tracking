@@ -80,6 +80,14 @@ class TrackletConfig:
     topk_query: int = 8
     """Số embedding dùng khi tính query embedding."""
 
+    ground_path_max_points: int = 64
+    """Trần số điểm quỹ đạo mặt đất giữ cho mỗi tracklet.
+
+    Thành phần hình học của `affinity.py` cần so vị trí tại CÙNG mốc thời gian giữa hai
+    camera, nên một điểm chân duy nhất là không đủ. Đầy trần thì tỉa bớt một nửa (giữ
+    điểm chẵn) — vẫn phủ trọn quãng thời gian, chỉ thưa hơn.
+    """
+
     @classmethod
     def from_mapping(cls, data: dict[str, Any]) -> TrackletConfig:
         """Đọc từ dict đã load của configs/mct.yaml (chấp nhận cả dict con `tracklet`)."""
@@ -91,6 +99,9 @@ class TrackletConfig:
             idle_timeout_ms=int(tracklet.get("idle_timeout_ms", defaults.idle_timeout_ms)),
             max_embeddings=int(tracklet.get("max_embeddings", defaults.max_embeddings)),
             topk_query=int(gallery.get("topk_query", defaults.topk_query)),
+            ground_path_max_points=int(
+                tracklet.get("ground_path_max_points", defaults.ground_path_max_points)
+            ),
         )
 
     def __post_init__(self) -> None:
@@ -102,6 +113,10 @@ class TrackletConfig:
             raise ValueError(f"max_embeddings phải >= 1, nhận {self.max_embeddings}")
         if self.topk_query < 1:
             raise ValueError(f"topk_query phải >= 1, nhận {self.topk_query}")
+        if self.ground_path_max_points < 2:
+            raise ValueError(
+                f"ground_path_max_points phải >= 2, nhận {self.ground_path_max_points}"
+            )
 
 
 @dataclass(slots=True)
@@ -129,6 +144,13 @@ class Tracklet:
     last_bbox: tuple[float, float, float, float] = (0.0, 0.0, 0.0, 0.0)
     first_ground_point: tuple[float, float] = (0.0, 0.0)
     last_ground_point: tuple[float, float] = (0.0, 0.0)
+
+    ground_path: list[tuple[int, tuple[float, float]]] = field(default_factory=list)
+    """(ts_ms, điểm chân trong ảnh) đã tỉa thưa — quỹ đạo để so vị trí theo thời gian.
+
+    Giữ ở toạ độ ảnh, không quy đổi sẵn ra mét: phép ánh xạ phụ thuộc camera và lúc ghi
+    thì chưa chắc đã có file hiệu chỉnh.
+    """
 
     recent: deque[Observation] = field(default_factory=lambda: deque(maxlen=_RECENT_HISTORY))
     """Vài observation gần nhất — dùng cho ràng buộc chuyển động, không phải toàn bộ lịch sử."""
@@ -162,7 +184,7 @@ class Tracklet:
     def mean_confidence(self) -> float:
         return self.confidence_sum / self.n_frames if self.n_frames else 0.0
 
-    def add(self, obs: Observation, *, max_embeddings: int) -> None:
+    def add(self, obs: Observation, *, max_embeddings: int, max_points: int = 64) -> None:
         if self.closed:
             raise ValueError(f"tracklet {self.tracklet_id} đã đóng, không thêm được observation")
 
@@ -182,9 +204,15 @@ class Tracklet:
             self.last_bbox = obs.bbox
             self.last_ground_point = obs.ground_point
         self.recent.append(obs)
+        self._push_ground_point(obs, max_points)
 
         if obs.embedding is not None:
             self._push_embedding(obs.embedding, obs.confidence, max_embeddings)
+
+    def _push_ground_point(self, obs: Observation, max_points: int) -> None:
+        self.ground_path.append((obs.ts_ms, obs.ground_point))
+        if len(self.ground_path) > max(2, int(max_points)):
+            self.ground_path = self.ground_path[::2]
 
     def _push_embedding(
         self, embedding: np.ndarray, confidence: float, max_embeddings: int
@@ -289,7 +317,11 @@ class TrackletBuilder:
             if tracklet is None:
                 tracklet = self._start(key)
 
-            tracklet.add(obs, max_embeddings=self.config.max_embeddings)
+            tracklet.add(
+                obs,
+                max_embeddings=self.config.max_embeddings,
+                max_points=self.config.ground_path_max_points,
+            )
             self._updated.add(tracklet.tracklet_id)
 
         return closed

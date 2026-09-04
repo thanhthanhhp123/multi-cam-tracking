@@ -156,6 +156,17 @@ class GlobalTrack:
     cam_last_tracklet: dict[str, int] = field(default_factory=dict)
     """cam_id → tracklet_id gần nhất ở camera đó. Dùng cho ràng buộc loại trừ cùng camera."""
 
+    cam_ground_path: dict[str, list[tuple[int, tuple[float, float]]]] = field(default_factory=dict)
+    """cam_id → quỹ đạo (ts_ms, điểm chân ảnh) của tracklet gần nhất ở camera đó.
+
+    Vì sao cần cả quỹ đạo chứ không chỉ `last_ground_point`: với cặp camera chồng lấn,
+    bằng chứng mạnh nhất là "hai camera thấy người ở cùng một chỗ TẠI CÙNG MỘT LÚC".
+    So điểm cuối của track với điểm đầu của tracklet là so hai thời điểm khác nhau —
+    người đi 2 m/s thì chỉ cần lệch 3 giây là sai 6 m, đủ để loại nhầm mọi cặp đúng.
+    Giữ tham chiếu tới chính list của tracklet nên nó tự dài ra khi tracklet còn chạy;
+    kích thước đã bị `TrackletConfig.ground_path_max_points` chặn.
+    """
+
     members: deque[TrackletRef] = field(default_factory=lambda: deque(maxlen=_MAX_MEMBERS))
     entries: list[GalleryEntry] = field(default_factory=list)
     centroid: np.ndarray | None = None
@@ -257,6 +268,7 @@ class Gallery:
             track.members[-1] = TrackletRef.of(tracklet)
 
         track.cam_last_tracklet[tracklet.cam_id] = tracklet.tracklet_id
+        track.cam_ground_path[tracklet.cam_id] = tracklet.ground_path
         track.cam_last_seen[tracklet.cam_id] = max(
             tracklet.end_ms, track.cam_last_seen.get(tracklet.cam_id, tracklet.end_ms)
         )

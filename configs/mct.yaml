@@ -10,6 +10,10 @@ tracklet:
   # Không thấy lại trong khoảng này thì coi tracklet cục bộ đã kết thúc.
   # Cũng là ngưỡng cắt khi nvtracker cấp lại một local_track_id cũ cho người khác.
   idle_timeout_ms: 2000
+  # Trần số điểm quỹ đạo mặt đất (ts, điểm chân) giữ cho mỗi tracklet. Thành phần
+  # hình học so vị trí hai camera tại CÙNG thời điểm nên cần cả quỹ đạo, không chỉ
+  # một điểm. Đầy trần thì tỉa một nửa: vẫn phủ trọn thời gian, chỉ thưa hơn.
+  ground_path_max_points: 64
   # Trần số embedding giữ cho mỗi tracklet (giữ những cái confidence cao nhất).
   # Không phải ngưỡng chất lượng — chỉ chặn bộ nhớ khi một người đứng yên rất lâu
   # trong khung hình. Cần >= gallery.topk_query mới có ý nghĩa.
@@ -42,7 +46,15 @@ association:
   # Trọng số lambda của thành phần khoảng cách mặt đất (chỉ áp dụng cho cặp camera overlap).
   homography_weight: 0.4
   # Vượt khoảng cách này trên mặt phẳng tham chiếu thì loại thẳng, không cần xét ngoại hình.
+  # Đặt theo sai số hiệu chỉnh: `tools/calibrate_homography.py` in ra p95 sai số chiếu
+  # của từng camera, cặp hai camera lệch cỡ p95*sqrt(2). Chặt hơn số đó là loại nhầm.
   max_ground_dist_m: 3.0
+  # Hai quan sát ở hai camera lệch nhau dưới ngưỡng này thì coi là cùng một thời điểm.
+  # Theo độ lệch NTP + chu kỳ khung; rộng quá thì người đi bộ đã dịch chuyển đáng kể.
+  ground_time_tol_ms: 400
+  # Tốc độ đi bộ nhanh nhất còn hợp lý — chỉ dùng khi hai bên KHÔNG có mốc thời gian
+  # chung: ngưỡng loại được nới thành max_ground_dist_m + max_speed_m_s * dt.
+  max_speed_m_s: 2.5
   # GlobalTrack không xuất hiện lại trong khoảng này thì đóng lại, không xét làm ứng viên nữa.
   global_track_ttl_ms: 120000
 

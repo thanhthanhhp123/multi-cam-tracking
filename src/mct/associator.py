@@ -146,6 +146,30 @@ class Associator:
         return sorted(results, key=lambda a: (a.tracklet.end_ms, a.tracklet.tracklet_id))
 
     def _match(self, tracklets: list[Tracklet]) -> list[Assignment]:
+        """Ghép theo TỪNG CAMERA, không phải một lần Hungarian cho cả vòng.
+
+        Phép ghép một-một chỉ đúng trong phạm vi một camera: hai local track khác nhau
+        của cùng một camera không thể là một người (ràng buộc loại trừ). GIỮA các camera
+        thì ngược lại — camera chồng lấn nhìn thấy đúng một người cùng lúc, nên một
+        Global ID phải được phép nhận nhiều tracklet trong cùng một vòng. Gộp tất cả vào
+        một ma trận là áp nhầm ràng buộc một-một lên cả chiều liên camera: người xuất hiện
+        ở 7 camera thì 6 tracklet còn lại bị đẩy sang Global ID mới, và danh tính vỡ vụn
+        ngay tại vòng đầu tiên. Đo trên WildTrack (7 camera chồng lấn): recall 0.06 khi
+        gộp chung, xem worklog M4.
+
+        Đổi lại, thứ tự xử lý camera ảnh hưởng tới kết quả (camera sau nhìn thấy gallery
+        đã cập nhật bởi camera trước). Sắp theo `cam_id` để chạy lại là tất định.
+        """
+        by_cam: dict[str, list[Tracklet]] = {}
+        for tracklet in tracklets:
+            by_cam.setdefault(tracklet.cam_id, []).append(tracklet)
+
+        results: list[Assignment] = []
+        for cam_id in sorted(by_cam):
+            results.extend(self._match_one_camera(by_cam[cam_id]))
+        return results
+
+    def _match_one_camera(self, tracklets: list[Tracklet]) -> list[Assignment]:
         tracks = self.gallery.open_tracks()
         matrix = self.cost_matrix(tracklets, tracks)
         results: list[Assignment] = []
@@ -277,6 +301,7 @@ def assign_messages(
     tracklet_config: TrackletConfig | None = None,
     config: AffinityConfig | None = None,
     gallery_config: GalleryConfig | None = None,
+    ground_mapper: GroundMapper | None = None,
     window_ms: int = 1000,
 ) -> tuple[list[Assignment], Associator]:
     """Đường tắt: `FrameMessage` → tracklet → Global ID, chạy offline một lần.
@@ -290,5 +315,6 @@ def assign_messages(
         topology=topology,
         config=config,
         gallery_config=gallery_config,
+        ground_mapper=ground_mapper,
         window_ms=window_ms,
     )

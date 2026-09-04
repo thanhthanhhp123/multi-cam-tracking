@@ -81,11 +81,18 @@ def _tracklet(
 
 
 class _FakeGround:
-    """GroundMapper giả: trả khoảng cách đặt sẵn, hoặc None = cặp chưa hiệu chỉnh."""
+    """GroundMapper giả: trả khoảng cách đặt sẵn, hoặc None = cặp chưa hiệu chỉnh.
+
+    `project` luôn trả None nên đường "so quỹ đạo theo thời gian" bị tắt và affinity rơi
+    về đường một-điểm — đúng thứ các test dưới đây muốn kiểm.
+    """
 
     def __init__(self, distance: float | None) -> None:
         self.distance = distance
         self.calls: list[tuple[str, str]] = []
+
+    def project(self, cam_id, point):
+        return None
 
     def distance_m(self, cam_a, point_a, cam_b, point_b):
         self.calls.append((cam_a, cam_b))

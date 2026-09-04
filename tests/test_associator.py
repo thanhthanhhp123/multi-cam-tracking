@@ -367,3 +367,37 @@ def test_reid_tat_thi_moi_tracklet_mot_id_va_khong_no():
     assert "chưa có embedding" in second[0].reason
     assert again[0].is_update, "tracklet cũ vẫn phải được nhận ra, không sinh ID mới mỗi cửa sổ"
     assert associator.stats.created == 2
+
+
+def test_mot_global_id_nhan_duoc_nhieu_camera_trong_cung_mot_vong():
+    """Camera chồng lấn: một người xuất hiện ở nhiều camera cùng lúc là chuyện bình thường.
+
+    Hungarian gộp chung cả vòng sẽ áp ràng buộc một-một lên cả chiều liên camera và đẩy
+    những tracklet còn lại sang Global ID mới. Ghép theo TỪNG camera thì không.
+    """
+    embedding = l2_normalize(np.ones(DIM, dtype=np.float32))
+    tracklets = [
+        _tracklet(cam, idx, start_ms=1_000, embedding=embedding, tracklet_id=idx)
+        for idx, cam in enumerate(("cam01", "cam02", "cam03"), start=1)
+    ]
+
+    associator = Associator(config=AffinityConfig(max_cost=0.5))
+    results = associator.assign(tracklets)
+
+    assert len({r.global_id for r in results}) == 1
+    assert associator.stats.created == 1
+    assert associator.stats.matched == 2
+
+
+def test_hai_tracklet_cung_camera_van_bi_tach():
+    """Ràng buộc loại trừ: trong MỘT camera, hai local track khác nhau không thể là một người."""
+    embedding = l2_normalize(np.ones(DIM, dtype=np.float32))
+    tracklets = [
+        _tracklet("cam01", 1, start_ms=1_000, embedding=embedding, tracklet_id=1),
+        _tracklet("cam01", 2, start_ms=1_000, embedding=embedding, tracklet_id=2),
+    ]
+
+    associator = Associator(config=AffinityConfig(max_cost=0.5))
+    results = associator.assign(tracklets)
+
+    assert len({r.global_id for r in results}) == 2
