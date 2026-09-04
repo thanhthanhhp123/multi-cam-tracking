@@ -111,14 +111,15 @@ state store và persistence (replay được khi consumer chết).
 ```
 configs/
   pipeline/      nvinfer/nvtracker config (.txt/.yml) + streams.yaml (danh sách nguồn camera)
-  cameras/       topology.yaml (đồ thị camera + transit time), homography/*.yaml
+  cameras/       topology.yaml (đồ thị camera + transit time), homography/<cam>.yaml
+  demo/          cấu hình cho dataset MƯỢN (WildTrack) — tách khỏi cấu hình hệ thống thật
   mct.yaml       tham số association engine (ngưỡng, cửa sổ thời gian, trọng số)
 src/
   common/        schema.py, streams.py (wrapper Redis), config.py, logging.py   ← dùng chung, KHÔNG GPU
   ds_pipeline/   builder.py, probes.py, reid_meta.py, sink.py                   ← CHỈ máy GPU
   mct/           tracklet.py, gallery.py, affinity.py, associator.py,
                  topology.py, homography.py, store.py
-  dashboard/     app.py, static/, templates/
+  dashboard/     app.py, live.py, static/, templates/
   tools/         replay_metadata.py, record_metadata.py, rtsp_sim.py,
                  calibrate_homography.py, cvat_to_mot.py, export_trackeval.py
 eval/            run_trackeval.py, gt/ (ground-truth MOT format + bảng global_id)

@@ -1,0 +1,18 @@
+# Máy dev là Windows, còn `ut-hpc` và máy GPU đều là Linux. Không ghim kiểu xuống dòng thì
+# Git tự đổi sang CRLF lúc checkout, và mọi script `.sh` copy sang Linux sẽ chết ngay dòng
+# đầu với `$'\r': command not found` (đã dính 2026-09-04 với dashboard-demo.sh).
+* text=auto
+
+*.sh        text eol=lf
+*.sbatch    text eol=lf
+Dockerfile  text eol=lf
+*.Dockerfile text eol=lf
+Makefile    text eol=lf
+
+# File nhị phân: đừng đụng vào.
+*.png binary
+*.jpg binary
+*.onnx binary
+*.engine binary
+*.pt binary
+*.db binary

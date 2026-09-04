@@ -1,0 +1,35 @@
+# Tham số engine ĐÃ TINH CHỈNH cho dataset WildTrack — dùng để demo dashboard và để
+# tái lập số đo trong docs/worklog/2026-09-04-5-*.md (F1 0.929 ở chế độ online).
+#
+# KHÔNG phải cấu hình của hệ thống thật: configs/mct.yaml mới là cái đó. Khác biệt
+# chính là max_cost 0.60 và ground_gap_policy=reject — chỉ đúng khi MỌI cặp camera
+# đều chồng lấn và đã hiệu chỉnh homography, đúng đặc thù WildTrack.
+#
+#   python -m mct --config configs/demo/wildtrack.mct.yaml
+#       --source data/fixtures/wildtrack_7cam.jsonl
+#       --topology configs/demo/wildtrack.topology.yaml
+#       --homography-dir configs/cameras/homography/wildtrack --publish
+
+tracklet:
+  min_frames: 3
+  idle_timeout_ms: 2000
+  max_embeddings: 32
+  ground_path_max_points: 64
+gallery:
+  max_size: 32
+  topk_query: 8
+  ema_alpha: 0.3
+  similarity_mode: max
+association:
+  window_ms: 1000
+  max_cost: 0.60
+  homography_weight: 0.4
+  max_ground_dist_m: 1.0
+  ground_time_tol_ms: 400
+  max_speed_m_s: 2.5
+  ground_gap_policy: reject
+  global_track_ttl_ms: 120000
+store:
+  db_path: data/mct-wildtrack.db
+  batch_size: 64
+  flush_interval_ms: 1000

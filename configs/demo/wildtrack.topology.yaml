@@ -1,0 +1,47 @@
+# Topology cho dataset WildTrack: 7 camera cùng nhìn một quảng trường, đôi một chồng lấn.
+# Chỉ dùng để thử engine — KHÔNG phải hệ thống camera thật của đồ án.
+#
+# Bản dựng bằng code của cùng đồ thị này nằm ở `eval/eval_wildtrack.overlapping_topology()`;
+# file này là để chạy `python -m mct` (CLI cần một đường dẫn thật).
+# THIẾU file này thì thành phần hình học bị bỏ qua HOÀN TOÀN và im lặng —
+# 2800 message ra 42 Global ID thay vì 321. Xem worklog 2026-09-04-6.
+
+cameras:
+  cam01:
+    name: "WildTrack cam01"
+    resolution: [1920, 1080]
+    fps: 2
+    overlaps_with: [cam02, cam03, cam04, cam05, cam06, cam07]
+  cam02:
+    name: "WildTrack cam02"
+    resolution: [1920, 1080]
+    fps: 2
+    overlaps_with: [cam01, cam03, cam04, cam05, cam06, cam07]
+  cam03:
+    name: "WildTrack cam03"
+    resolution: [1920, 1080]
+    fps: 2
+    overlaps_with: [cam01, cam02, cam04, cam05, cam06, cam07]
+  cam04:
+    name: "WildTrack cam04"
+    resolution: [1920, 1080]
+    fps: 2
+    overlaps_with: [cam01, cam02, cam03, cam05, cam06, cam07]
+  cam05:
+    name: "WildTrack cam05"
+    resolution: [1920, 1080]
+    fps: 2
+    overlaps_with: [cam01, cam02, cam03, cam04, cam06, cam07]
+  cam06:
+    name: "WildTrack cam06"
+    resolution: [1920, 1080]
+    fps: 2
+    overlaps_with: [cam01, cam02, cam03, cam04, cam05, cam07]
+  cam07:
+    name: "WildTrack cam07"
+    resolution: [1920, 1080]
+    fps: 2
+    overlaps_with: [cam01, cam02, cam03, cam04, cam05, cam06]
+
+unknown_pair_policy: allow
+transitions: []
