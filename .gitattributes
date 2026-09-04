@@ -9,6 +9,12 @@ Dockerfile  text eol=lf
 *.Dockerfile text eol=lf
 Makefile    text eol=lf
 
+# Cấu hình cũng phải LF: chúng được ĐỌC trên Linux (DeepStream, engine, ut-hpc), và một
+# file CRLF tuy vẫn parse được nhưng làm mọi `sed 's/.../.../'` có neo `$` im lặng không
+# khớp — dính đúng chuyện đó 2026-09-04 khi chỉnh tham số tracker trên vast-gpu, suýt kết
+# luận sai là tham số không có tác dụng.
+configs/**  text eol=lf
+
 # File nhị phân: đừng đụng vào.
 *.png binary
 *.jpg binary

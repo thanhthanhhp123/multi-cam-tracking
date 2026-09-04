@@ -280,8 +280,21 @@ và trong worklog chỉ link tới nó.
   probe đọc ra `None`, `src/mct` không có gì để so, và pipeline chạy "thành công" mà không
   sinh ra dữ liệu nào có ích. Lại một lỗi không triệu chứng.
 - **NvMultiObjectTracker bỏ qua IM LẶNG khoá lạ hoặc khoá đặt sai khối** trong file config
-  tracker. Đặt `reidExtractionInterval` nhầm khối thì ReID vẫn "chạy" mà tham số không có
-  tác dụng. Sau mỗi lần sửa config tracker phải đọc log khởi động của nvtracker.
+  tracker. Vì vậy "không thấy cảnh báo trong log" KHÔNG chứng minh tham số có tác dụng —
+  phải kiểm bằng thí nghiệm bác bỏ được: đổi giá trị sang mức cực đoan và xem hành vi có
+  đổi không. Đã dùng cách này xác minh `reidExtractionInterval` (2026-09-04).
+- **`nvinfer` và `nvtracker` phân giải đường dẫn tương đối KHÁC NHAU.** `nvinfer` lấy gốc
+  là thư mục chứa file config (nên `config_infer_yolo11.txt` dùng `../../models/...`);
+  low-level lib của `nvtracker` lấy gốc là **thư mục làm việc** của tiến trình. Để nhầm
+  kiểu của bên kia thì nvtracker báo `!![ERROR] ONNX file does not exist` và cả pipeline
+  chết (đo 2026-09-04).
+- **Cấu hình phải là LF, không CRLF** (`.gitattributes` đã ghim `configs/**`). File CRLF
+  vẫn parse được nên không có triệu chứng, nhưng mọi `sed 's/x$/y/'` sẽ im lặng không khớp
+  — suýt dẫn tới kết luận sai rằng một tham số tracker không có tác dụng.
+- **`model-engine-file` của DeepStream-Yolo bị bỏ qua khi GHI, nhưng tôn trọng khi ĐỌC.**
+  Engine build xong nằm ở `<cwd>/model_b<N>_gpu0_fp16.engine`, không phải chỗ config khai.
+  Không chép sang đúng tên thì mỗi lần chạy lại build lại ~3 phút (xác nhận lần 2 vào
+  2026-09-04, lần đầu ở worklog 2026-09-03).
 - **Toạ độ bbox theo streammux, không phải theo camera** — xem mục 5.
 - **Đồng bộ thời gian giữa các camera là điều kiện sống còn** cho ràng buộc thời gian di chuyển.
   Bật NTP trên mọi nguồn; điện thoại Android phát RTSP thường lệch — đo và ghi lại offset.

@@ -8,16 +8,15 @@
 # Mọi khối ngoài ReID giữ y hệt config_tracker_NvDCF_perf.yml, để chênh lệch đo được
 # giữa hai file quy về đúng một biến: ReID bật hay tắt.
 #
-# ============================ CHƯA CHẠY TRÊN PHẦN CỨNG ============================
-# File này soạn trên máy dev (không có DeepStream). Checklist phải làm ở lần thuê
-# `vast-gpu` tới, theo đúng thứ tự:
-#   1. Đọc log khởi động của nvtracker. NvMultiObjectTracker BỎ QUA IM LẶNG khoá lạ
-#      hoặc khoá đặt sai khối — sai chỗ thì ReID vẫn "chạy" mà không có tác dụng.
-#      Đặc biệt xác nhận `reidExtractionInterval` được nhận (xem chú thích dưới).
-#   2. Xác nhận probe nhận được embedding: `python -m ds_pipeline --stats` rồi kiểm
-#      `embed_dim=512` trong FrameMessage. Không có `outputReidTensor: 1` thì tracker
-#      vẫn trích đặc trưng nhưng KHÔNG gắn vào metadata, và probe thấy embedding=None.
-#   3. Đo lại FPS: ReID là một mạng nữa chạy trên mọi đối tượng mỗi frame.
+# ===================== ĐÃ XÁC MINH TRÊN PHẦN CỨNG 2026-09-04 =====================
+# vast.ai RTX 3090 24GB, driver 595.84, DeepStream 7.1.0, TensorRT 10.3, pyds 1.2.0,
+# 4 luồng 1080p. Xem docs/worklog/2026-09-04-9-vast-xac-minh-m2-m3.md.
+#   - `pyds.NvDsMetaType.NVDS_TRACKER_OBJ_REID_META` tồn tại; probe đọc được embedding
+#     512 chiều từ user meta của nvtracker (đường A).
+#   - Độ phủ: 23360/23364 detection (100.0%) có embedding. Bốn cái thiếu đúng là bốn
+#     cái `confidence = -0.1` — target do tracker suy ra, không có crop để trích.
+#   - Chuẩn L2 của embedding = 1.0000 → `addFeatureNormalization: 1` hoạt động.
+#   - Chi phí: 772.2 -> 700.0 FPS gộp (−9.4%) so với bản không ReID, VRAM đỉnh 1567 MiB.
 # =================================================================================
 
 BaseConfig:
@@ -48,8 +47,11 @@ TrajectoryManagement:
   # embedding: query embedding là trung bình có trọng số top-k confidence cao nhất của
   # cả tracklet (CLAUDE.md §6), không phải embedding frame cuối. Lấy thưa đi thì
   # top-k không còn gì để chọn. Đây là tham số đầu tiên nên nới nếu FPS không đạt (M6).
-  # CẢNH BÁO: tài liệu công khai xếp khoá này trong TrajectoryManagement; phải xác nhận
-  # lại bằng log khởi động trên máy thật (xem checklist đầu file).
+  #
+  # VỊ TRÍ KHỐI ĐÃ XÁC MINH (2026-09-04): khoá này nằm trong TrajectoryManagement và
+  # ĐƯỢC ĐỌC. Kiểm bằng thí nghiệm bác bỏ được, vì nvtracker bỏ qua im lặng khoá đặt
+  # sai chỗ nên "không thấy cảnh báo" chẳng chứng minh gì: đổi 0 -> 100000 làm độ phủ
+  # embedding sập từ 100.0% xuống 0.6% (23360 -> 144, đúng bằng số tracklet).
   reidExtractionInterval: 0
 
 DataAssociator:
@@ -133,9 +135,12 @@ ReID:
   # hai để probe đúng kể cả khi chạy với model khác không tự chuẩn hoá.
   addFeatureNormalization: 1
 
-  # Đường dẫn TƯƠNG ĐỐI so với vị trí file config này, khớp cấu trúc thư mục repo —
-  # cùng quy ước với config_infer_yolo11.txt.
+  # ĐƯỜNG DẪN Ở ĐÂY TƯƠNG ĐỐI SO VỚI THƯ MỤC LÀM VIỆC (gốc repo), **KHÔNG** so với vị trí
+  # file config này. Khác hẳn quy ước của nvinfer trong config_infer_yolo11.txt
+  # (`../../models/...`, tương đối so với chính file config). Hai plugin, hai cách phân
+  # giải đường dẫn — đo được trên máy thật 2026-09-04: để `../../models/...` ở đây thì
+  # nvtracker báo "!![ERROR] ONNX file does not exist" rồi cả pipeline chết.
   # modelEngineFile chưa tồn tại ở lần chạy đầu: TensorRT dựng từ onnxFile rồi ghi ra.
   # Lần sau có sẵn engine thì nạp thẳng, không dựng lại.
-  onnxFile: "../../models/reid/osnet_x1_0_msdc_dg.onnx"
-  modelEngineFile: "../../models/reid/osnet_x1_0_msdc_dg.onnx_b100_gpu0_fp16.engine"
+  onnxFile: "models/reid/osnet_x1_0_msdc_dg.onnx"
+  modelEngineFile: "models/reid/osnet_x1_0_msdc_dg.onnx_b100_gpu0_fp16.engine"

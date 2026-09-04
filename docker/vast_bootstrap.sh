@@ -43,9 +43,23 @@ python3 -c "import pyds; print('pyds', pyds.__file__)"
 buoc "3. DeepStream-Yolo (parser bbox cho YOLO11 — DeepStream goc khong co)"
 [ -d "$YOLO_DIR" ] || git clone --depth 1 https://github.com/marcoslucianops/DeepStream-Yolo.git "$YOLO_DIR"
 
-buoc "4. deps python cho buoc export ONNX"
-python3 -c "import ultralytics, onnx" 2>/dev/null && echo "da co" \
-  || pip install --no-cache-dir ultralytics onnx onnxslim onnxscript onnxruntime
+buoc "4. deps python cho buoc export ONNX (ultralytics + torch, ~1GB)"
+# CHI can khi phai export .pt -> .onnx tren chinh may nay. Neu models/detector/ da co
+# .onnx san (day tu may dev len) thi bo qua: pipeline suy luan bang TensorRT qua nvinfer,
+# khong dung ultralytics luc chay. Tiet kiem ~1GB tai ve va mot buoc de hong.
+# Ep cai bang: FORCE_EXPORT_DEPS=1 bash vast_bootstrap.sh
+if [ "${FORCE_EXPORT_DEPS:-0}" != "1" ] && ls "$REPO"/models/detector/*.onnx >/dev/null 2>&1; then
+  echo "da co .onnx trong models/detector/, bo qua ultralytics/torch"
+elif python3 -c "import ultralytics, onnx" 2>/dev/null; then
+  echo "da co"
+else
+  # Tai lai toi 3 lan: host nay tung lam hong file tai ve (pip bao hash mismatch).
+  for lan in 1 2 3; do
+    pip install --no-cache-dir ultralytics onnx onnxslim onnxscript onnxruntime && break
+    echo "pip that bai (lan $lan/3), thu lai"
+    [ "$lan" = 3 ] && { echo "FATAL: pip that bai 3 lan"; exit 1; }
+  done
+fi
 
 buoc "5. build libnvdsinfer_custom_impl_Yolo.so (CUDA_VER=$CUDA_VER)"
 LIB="$YOLO_DIR/nvdsinfer_custom_impl_Yolo/libnvdsinfer_custom_impl_Yolo.so"

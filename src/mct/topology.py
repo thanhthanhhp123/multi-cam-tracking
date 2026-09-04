@@ -30,6 +30,9 @@ from pathlib import Path
 from typing import Any, Literal
 
 from common.config import load_yaml
+from common.logging import get_logger
+
+log = get_logger(__name__)
 
 UnknownPairPolicy = Literal["allow", "reject"]
 
@@ -83,6 +86,9 @@ class Topology:
     cameras: dict[str, CameraSpec] = field(default_factory=dict)
     transitions: dict[tuple[str, str], Transition] = field(default_factory=dict)
     unknown_pair_policy: UnknownPairPolicy = "allow"
+
+    _da_canh_bao: set[str] = field(default_factory=set, compare=False, repr=False)
+    """Camera lạ đã cảnh báo rồi — `check()` chạy trên mọi cặp của mọi cửa sổ."""
 
     # ------------------------------------------------------------------ nạp cấu hình
 
@@ -196,9 +202,33 @@ class Topology:
 
     def check(self, src: str, dst: str, elapsed_ms: float) -> FeasibilityResult:
         """`elapsed_ms` = thời gian từ lần cuối thấy ở `src` tới lúc xuất hiện ở `dst`."""
-        for cam in (src, dst):
-            if cam not in self.cameras:
-                raise TopologyError(f"camera '{cam}' không có trong topology")
+        la = [cam for cam in (src, dst) if cam not in self.cameras]
+        if la:
+            # KHÔNG ném lỗi ở đây. `check()` chạy trong vòng gán, giữa lúc pipeline đang
+            # phát: ném lỗi là giết cả engine vì một camera thiếu khai báo. Đo được trên
+            # máy thật 2026-09-04 — chạy 4 luồng với topology chỉ khai 2 camera thì engine
+            # chết ngay tracklet đầu tiên của cam03, pipeline vẫn chạy tiếp và mọi cập nhật
+            # Global ID biến mất mà không ai biết vì sao.
+            #
+            # Camera lạ là trường hợp NGẶT HƠN của cặp chưa khai báo transit (ta còn không
+            # biết camera đó ở đâu), nên áp cùng `unknown_pair_policy`. Sai cấu hình vẫn
+            # phải ồn ào: cảnh báo một lần cho mỗi camera.
+            for cam in la:
+                if cam not in self._da_canh_bao:
+                    self._da_canh_bao.add(cam)
+                    log.warning(
+                        "camera %r không có trong topology — áp unknown_pair_policy=%r. "
+                        "Thêm nó vào configs/cameras/topology.yaml, nếu không mọi ràng "
+                        "buộc không-thời gian liên quan tới camera này đều bị bỏ qua.",
+                        cam,
+                        self.unknown_pair_policy,
+                    )
+            return FeasibilityResult(
+                self.unknown_pair_policy == "allow",
+                f"camera chưa khai báo trong topology: {', '.join(sorted(la))} "
+                f"(policy={self.unknown_pair_policy})",
+                elapsed_ms,
+            )
 
         if src == dst:
             return FeasibilityResult(True, "cùng camera, không ràng buộc di chuyển", elapsed_ms)

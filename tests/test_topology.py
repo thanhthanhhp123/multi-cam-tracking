@@ -181,9 +181,45 @@ def test_cap_chua_khai_bao_theo_policy_reject():
     assert topo.is_feasible("cam01", "cam02", 5_000)
 
 
-def test_camera_la_thi_bao_loi_thay_vi_am_tham_cho_qua():
-    with pytest.raises(TopologyError, match="không có trong topology"):
-        _topo().check("cam01", "cam99", 1_000)
+def test_camera_la_thi_canh_bao_chu_khong_giet_engine():
+    """Camera lạ phải suy giảm êm theo `unknown_pair_policy`, KHÔNG được ném lỗi.
+
+    Trước 2026-09-04 chỗ này ném `TopologyError` với chủ ý "báo lỗi thay vì âm thầm cho
+    qua". Chủ ý đúng, cơ chế sai: `check()` chạy trong vòng gán khi pipeline đang phát,
+    nên ném lỗi là giết cả engine. Đo được trên vast-gpu: chạy 4 luồng với topology chỉ
+    khai 2 camera → engine chết ở tracklet đầu tiên của cam03, pipeline vẫn chạy tiếp,
+    và mọi cập nhật Global ID biến mất. Giữ chủ ý (cảnh báo tường minh), bỏ cơ chế.
+    """
+    ket_qua = _topo().check("cam01", "cam99", 1_000)
+
+    assert ket_qua.feasible  # policy mặc định là "allow"
+    assert "cam99" in ket_qua.reason
+    assert "topology" in ket_qua.reason
+
+
+def test_camera_la_theo_policy_reject():
+    assert not _topo(unknown_pair_policy="reject").check("cam01", "cam99", 1_000).feasible
+
+
+def test_camera_la_chi_canh_bao_mot_lan(caplog):
+    """`check()` chạy trên mọi cặp của mọi cửa sổ — cảnh báo mỗi lần là ngập log."""
+    topo = _topo()
+    with caplog.at_level("WARNING"):
+        for _ in range(50):
+            topo.check("cam01", "cam99", 1_000)
+
+    canh_bao = [r for r in caplog.records if "cam99" in r.getMessage()]
+    assert len(canh_bao) == 1
+
+
+def test_hai_camera_la_khac_nhau_deu_duoc_canh_bao(caplog):
+    topo = _topo()
+    with caplog.at_level("WARNING"):
+        topo.check("cam01", "cam98", 1_000)
+        topo.check("cam01", "cam99", 1_000)
+
+    assert len([r for r in caplog.records if "cam98" in r.getMessage()]) == 1
+    assert len([r for r in caplog.records if "cam99" in r.getMessage()]) == 1
 
 
 def test_ket_qua_dung_duoc_nhu_bool():
