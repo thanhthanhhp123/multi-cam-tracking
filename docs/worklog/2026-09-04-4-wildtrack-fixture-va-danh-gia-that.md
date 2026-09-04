@@ -111,13 +111,34 @@ tức `max_cost = 0.086`); DG **F1 = 0.513** (tại cosine ≥ 0.842, tức `max
 
 ## Cạm bẫy đã biết (mới)
 
-- **Zip WildTrack của EPFL lệch offset đúng 4 GiB.** File được tạo bằng công cụ macOS không
-  dùng zip64 cho archive >4 GB. Hậu quả: `7z` từ chối mở hẳn ("Can't open as archive"),
+- **Zip WildTrack của EPFL lệch offset đúng 4 GiB.** ZIP cổ điển lưu vị trí local header
+  bằng **unsigned 32 bit** (tối đa 4 GiB − 1); vượt mốc đó phải chuyển sang ZIP64. File này
+  6.34 GiB và được tạo bằng công cụ macOS **không** bật ZIP64, nên mọi offset lẽ ra ≥ 4 GiB
+  đều bị cuộn vòng modulo 2³². Đã kiểm chứng trực tiếp trên file:
+
+  ```
+  offset central directory ghi trong EOCD : 2 512 132 492
+  offset central directory THẬT           : 6 807 099 788   (chênh đúng 2³²)
+  có ZIP64 EOCD locator                   : False
+  ```
+
+  Từng entry cũng theo đúng quy luật: entry nằm dưới mốc 4 GiB (tới C4 và một phần C5) có
+  offset thô ĐÚNG, entry nằm trên mốc đó cần cộng 2³². Ranh giới rơi vào giữa C5 — vì thế
+  camera này bị tách làm đôi (291 file `unzip` lấy được, 110 file còn lại phải vá).
+
+  Cả `unzip` lẫn `zipfile` của Python đều suy đoán giống nhau khi thấy lệch: *có 4 GiB dữ
+  liệu lạ ghép vào đầu file* (kịch bản self-extracting archive) — đó chính là thông báo
+  `4294967296 extra bytes at beginning`, và biến `concat` trong Python — rồi **cộng 2³² vào
+  mọi offset**. Phép chỉnh toàn cục đó đúng cho nửa bị cuộn vòng và sai cho nửa kia, nên mỗi
+  công cụ chỉ mở được một nửa archive.
+
+  Hậu quả cụ thể: `7z` từ chối mở hẳn ("Can't open as archive"),
   `zipfile` của Python ném `BadZipFile`, `unzip` báo "4294967296 extra bytes" rồi tự
   "re-compensate" — nhưng chỉ đúng cho các entry NẰM SAU mốc 4 GiB (lấy được C5–C7, hỏng
   C1–C4), và còn chết giữa chừng vì "not enough memory for bomb detection".
-  **Cách vá đã dùng** (`src/tools/unzip_wildtrack.py`, đã đưa vào repo): với mỗi entry, thử `header_offset` ở cả ba
-  giá trị `+0`, `+2^32`, `−2^32` rồi kiểm tra kích thước giải nén — lấy đủ 2807/2807 ảnh,
+  **Cách vá đã dùng** (`src/tools/unzip_wildtrack.py`, đã đưa vào repo): không đoán một
+  hằng số chung cho cả file, mà với TỪNG entry thử `header_offset` ở cả ba giá trị `+0`,
+  `+2^32`, `−2^32` rồi nhận kết quả nào giải nén ra đúng `file_size` — lấy đủ 2807/2807 ảnh,
   0 lỗi. Nếu phải làm lại: cũng cần `UNZIP_DISABLE_ZIPBOMB_DETECTION=TRUE` khi dùng `unzip`.
 - **Checkpoint DG của torchreid không nạp được bằng `torch.load` mặc định** (torch ≥ 2.6
   đặt `weights_only=True`; pickle của checkpoint tham chiếu `numpy.core.multiarray.scalar`,
