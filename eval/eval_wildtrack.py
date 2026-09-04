@@ -250,6 +250,17 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--gt", type=Path, default=None, help="mặc định: <fixture>.gt.json")
     p.add_argument("--max-cost", type=float, default=0.30)
     p.add_argument("--min-frames", type=int, default=3, help="WildTrack chú thích ~2 fps")
+    p.add_argument(
+        "--idle-timeout-ms",
+        type=int,
+        default=2000,
+        help=(
+            "khoảng lặng bao lâu thì CẮT tracklet. Phụ thuộc frame rate: ở 2 fps, 2000 ms "
+            "chỉ là 4 khung, nên hụt vài detection là tracklet bị chẻ đôi. Đo 2026-09-04 "
+            "trên fixture DeepStream: 2000 -> 30000 ms nâng trần recall của "
+            "ground_gap_policy=reject từ 13.8% lên 34.5% (eval/diagnose_tracklets.py)"
+        ),
+    )
     p.add_argument("--mode", default="max", choices=("max", "centroid"))
     p.add_argument("--sweep", action="store_true", help="quét max_cost x similarity_mode")
     p.add_argument("--diagnose", action="store_true", help="in phân bố cosine cùng/khác danh tính")
@@ -282,7 +293,8 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     tracklets = build_tracklets(
-        messages, TrackletConfig(min_frames=args.min_frames, idle_timeout_ms=2000)
+        messages,
+        TrackletConfig(min_frames=args.min_frames, idle_timeout_ms=args.idle_timeout_ms),
     )
     print(f"gom được {len(tracklets)} tracklet (min_frames={args.min_frames})")
 

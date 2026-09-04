@@ -12,6 +12,13 @@
 
 tracklet:
   min_frames: 3
+  # idle_timeout_ms PHỤ THUỘC FRAME RATE. Ở 2 fps của WildTrack, 2000 ms chỉ là 4 khung —
+  # hụt 4 detection liên tiếp (rất thường khi người bị che) là tracklet bị chẻ đôi. Đo
+  # 2026-09-04 trên fixture do pipeline DeepStream sinh ra: 345 local track bị bộ dựng
+  # tracklet cắt thành 550 tracklet, và trần recall của ground_gap_policy=reject chỉ còn
+  # 13.8%. Nâng lên 30000 ms thì hết cắt thêm (345 -> 345) và trần lên 34.5%.
+  # Giữ 2000 ở đây để tái lập số đo phiên 5 trên fixture cũ; chốt lại ở M6 với dữ liệu
+  # 25 fps tự thu. Xem docs/worklog/2026-09-04-12-* và eval/diagnose_tracklets.py.
   idle_timeout_ms: 2000
   max_embeddings: 32
   ground_path_max_points: 64
@@ -24,6 +31,10 @@ association:
   window_ms: 1000
   max_cost: 0.60
   homography_weight: 0.4
+  # Chỉnh trên fixture có bbox GT, nơi điểm chân gần như tuyệt đối (d_ground giữa hai
+  # tracklet cùng người có trung vị 0.05 m). Với hộp của detector con số đó là 0.97 m —
+  # tức NẰM SÁT ngưỡng 1.0 này, hơn nửa số cặp đúng bị loại oan. Đo 2026-09-04: 3.0 m cho
+  # qua 53.1% cặp đúng mà chỉ lọt 2.2% cặp sai (so với 34.5% / 0.2% ở 1.0 m).
   max_ground_dist_m: 1.0
   ground_time_tol_ms: 400
   max_speed_m_s: 2.5
