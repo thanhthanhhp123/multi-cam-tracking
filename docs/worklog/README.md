@@ -42,3 +42,4 @@ Quyết định nhỏ ghi thẳng trong worklog. Quyết định lớn: tạo AD
 | [2026-09-03](2026-09-03-skill-ut-hpc.md) | chuẩn bị M2/M3 | Vọc lại ut-hpc (partition `main-gpu`, node tính toán không có mạng), skill `ut-hpc` |
 | [2026-09-03 (3)](2026-09-03-3-m1-vast-deepstream.md) | M1 | Thuê vast.ai, pipeline DeepStream 1 camera chạy thật (410.8 FPS), chốt DS 7.1/CUDA 12.6, Docker hoá |
 | [2026-09-04](2026-09-04-vast-image-pull-stuck.md) | M1 (chưa xong) | Thuê lại vast.ai để build Docker + đo FPS multi-stream — image pull kẹt ~28 phút, huỷ instance giữa chừng |
+| [2026-09-04 (2)](2026-09-04-2-m1-fps-multistream-va-m4-tracklet-gallery.md) | M1 xong + M4 | Đóng phần treo M1: Dockerfile tái lập được, 4 luồng 189 FPS/luồng, fixture thật qua Redis. Khởi động M4: tracklet + gallery + topology |
