@@ -1,12 +1,19 @@
 #!/bin/bash
-# M3 - fine-tune OSNet Re-ID. NOT YET RUN END-TO-END on the cluster (as of 2026-09-03).
+# M6 - fine-tune OSNet Re-ID on the project's OWN lab footage.
+# NOT YET RUN END-TO-END on the cluster (as of 2026-09-04).
+#
+# This is NOT part of the main pipeline. M3 ships pretrained OSNet as-is (see CLAUDE.md #9):
+# torchreid's checkpoints were already trained on Market-1501/MSMT17, so fine-tuning on those
+# same benchmarks re-learns data the model has seen. Run this ONLY after measuring a real
+# domain gap on lab data, and report it as an ablation: with vs. without fine-tuning.
+#
+# STILL MISSING for lab data: torchreid needs the lab identities registered as a custom
+# dataset (torchreid.data.register_image_dataset) inside train_reid.py. Do that first --
+# SOURCES below is a torchreid dataset NAME, not a path.
 #
 # Prerequisites, all on the HEAD NODE (compute nodes are offline):
 #   1. ~/mct/env/bin/pip install torchreid gdown
-#   2. Datasets unpacked under ~/mct/data/reid/ in torchreid layout, e.g.
-#        ~/mct/data/reid/market1501/Market-1501-v15.09.15/{bounding_box_train,query,...}
-#      Market-1501 and MSMT17 need a manual download (licence-gated); copy them up with
-#      `scp` or `rsync` from the dev machine if the direct link is dead.
+#   2. Lab crops under ~/mct/data/reid/lab/ in torchreid layout, uploaded with rsync.
 #   3. ~/mct/env/bin/python ~/mct/jobs/fetch_pretrained.py   (caches OSNet ImageNet weights)
 #
 #SBATCH --job-name=mct-reid
@@ -21,7 +28,7 @@ set -euo pipefail
 ROOT="$HOME/mct"
 PY="$ROOT/env/bin/python"
 
-SOURCES="${SOURCES:-market1501}"
+SOURCES="${SOURCES:-lab}"
 EPOCHS="${EPOCHS:-60}"
 BATCH="${BATCH:-64}"
 
@@ -37,7 +44,7 @@ nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
   --epochs "$EPOCHS" \
   --batch-size "$BATCH" \
   --save-dir "$ROOT/runs/reid" \
-  --onnx-out "$ROOT/models/reid/osnet_x1_0_ft.onnx"
+  --onnx-out "$ROOT/models/reid/osnet_x1_0_lab.onnx"
 
 ls -lh "$ROOT/models/reid/"
-echo "=== keo ve may dev: hpc.sh fetch mct/models/reid/osnet_x1_0_ft.onnx models/reid/osnet_x1_0_ft.onnx ==="
+echo "=== keo ve may dev: hpc.sh fetch mct/models/reid/osnet_x1_0_lab.onnx models/reid/osnet_x1_0_lab.onnx ==="

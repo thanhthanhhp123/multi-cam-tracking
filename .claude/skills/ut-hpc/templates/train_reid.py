@@ -1,4 +1,7 @@
-"""M3 - fine-tune OSNet for person Re-ID and export the ONNX the pipeline will consume.
+"""M6 - fine-tune OSNet for person Re-ID on LAB data, and export the ONNX the pipeline consumes.
+
+Not part of the main pipeline: M3 ships pretrained OSNet as-is (CLAUDE.md #9). Only run this
+after measuring a real domain gap on lab footage, and report it as an ablation.
 
 Runs inside an sbatch job on ut-hpc. Never touches the network: the dataset must already
 be under --data-root and the pretrained checkpoint already cached (fetch_pretrained.py).
@@ -16,7 +19,7 @@ from pathlib import Path
 def parse_args() -> argparse.Namespace:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--data-root", type=Path, default=Path.home() / "mct" / "data" / "reid")
-    p.add_argument("--sources", default="market1501", help="comma-separated torchreid dataset names")
+    p.add_argument("--sources", default="lab", help="comma-separated torchreid dataset names")
     p.add_argument("--targets", default="", help="eval datasets; defaults to --sources")
     p.add_argument("--model", default="osnet_x1_0")
     p.add_argument("--epochs", type=int, default=60)
@@ -25,7 +28,7 @@ def parse_args() -> argparse.Namespace:
     p.add_argument("--width", type=int, default=128)
     p.add_argument("--lr", type=float, default=3e-4)
     p.add_argument("--save-dir", type=Path, default=Path.home() / "mct" / "runs" / "reid")
-    p.add_argument("--onnx-out", type=Path, default=Path.home() / "mct" / "models" / "reid" / "osnet_x1_0_ft.onnx")
+    p.add_argument("--onnx-out", type=Path, default=Path.home() / "mct" / "models" / "reid" / "osnet_x1_0_lab.onnx")
     return p.parse_args()
 
 

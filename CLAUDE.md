@@ -25,7 +25,7 @@ Có ba máy, mỗi máy một vai trò. Đừng gộp việc của máy này san
 | OS | Windows 11 (Git Bash + PowerShell) | Ubuntu 22.04.5 LTS | tuỳ instance lúc thuê — kiểm tra lại mỗi lần |
 | Cách vào | local | `ssh ut-hpc`, việc nặng qua `sbatch --partition=main-gpu` — **không chạy trên head node**, và **node tính toán không có Internet**, xem mục "Cạm bẫy" | `ssh vast-gpu` (đổi `HostName`/`Port` trong `~/.ssh/config` mỗi lần thuê mới) |
 | Container | — | Không cần: conda env trong `$HOME` chạy được GPU trên node tính toán (đã đo). Có `module load singularity/3.9.5` làm dự phòng, không có Docker | Docker (kiểm tra lại — tuỳ image Vast.ai) |
-| Dùng để | soạn `src/common`, `src/mct`, `src/dashboard`, `src/tools`, `eval/`, `tests/` | fine-tune YOLO (detection) + OSNet (Re-ID) trên COCO-person/Market-1501/MSMT17, xuất `.pt`/ONNX; **và chạy `pytest`/`ruff`** (xem dưới) | `src/ds_pipeline` — pipeline DeepStream thật, đo FPS/độ trễ end-to-end |
+| Dùng để | soạn `src/common`, `src/mct`, `src/dashboard`, `src/tools`, `eval/`, `tests/` | **chạy `pytest`/`ruff`** (xem dưới); xuất ONNX; fine-tune trên dữ liệu tự thu ở M6 nếu đo được domain gap (KHÔNG fine-tune trên COCO/Market-1501/MSMT17, xem §9) | `src/ds_pipeline` — pipeline DeepStream thật, đo FPS/độ trễ end-to-end |
 | KHÔNG chạy được | `src/ds_pipeline` | `src/ds_pipeline` (không có nvstreammux/DeepStream runtime, chỉ có CUDA/TensorRT để train) | — |
 
 Quy trình thao tác chi tiết trên `ut-hpc` (SSH, `sbatch`, module load...) đóng gói trong skill
@@ -222,12 +222,24 @@ Khi báo cáo số: luôn ghi kèm cấu hình GPU, model, độ phân giải, s
 |---|---|---|---|
 | M0 | 1–2 | Khung repo, `schema.py`, wrapper Redis, `replay_metadata.py`, fixture tổng hợp, dashboard rỗng | máy dev |
 | M1 | 3–4 | Pipeline DeepStream 1 camera: file/RTSP → YOLO (weight gốc, chưa fine-tune) → nvtracker → probe in ra console | `vast-gpu` |
-| M2 | 5–7 | Fine-tune YOLO trên COCO-person → ONNX; sang `vast-gpu`: TensorRT engine, đo FPS, `nvstreammux` 3–4 luồng | `ut-hpc` → `vast-gpu` |
-| M3 | 8–10 | Fine-tune Re-ID (OSNet) trên Market-1501/MSMT17; sang `vast-gpu`: tích hợp vào pipeline, publish Redis, **ghi fixture thật** | `ut-hpc` → `vast-gpu` |
+| M2 | 5–7 | Detector: YOLO11s **pretrained COCO, không fine-tune** + lọc lớp person tại nvinfer → ONNX; trên `vast-gpu`: TensorRT engine, đo FPS, `nvstreammux` 3–4 luồng | `vast-gpu` |
+| M3 | 8–10 | Re-ID: OSNet **pretrained, không fine-tune** (ưu tiên checkpoint đa nguồn/khái quát hoá miền); trên `vast-gpu`: tích hợp vào pipeline, publish Redis, **ghi fixture thật** | `vast-gpu` |
 | M4 | 11–13 | **Module liên kết đa camera** (đóng góp chính) — phát triển bằng fixture M3 | máy dev |
 | M5 | 14–15 | SQLite store + dashboard realtime | máy dev |
-| M6 | 16–17 | Dataset tự thu + CVAT + TrackEval + sweep tham số | cả ba |
+| M6 | 16–17 | Dataset tự thu + CVAT + TrackEval + sweep tham số; **chỉ ở đây mới cân nhắc fine-tune**, và làm dưới dạng ablation có/không fine-tune trên chính dữ liệu lab | cả ba |
 | M7 | 18–20 | (tuỳ chọn) Jetson + viết báo cáo | — |
+
+**Vì sao M2/M3 không còn bước fine-tune** (chốt 2026-09-04, xem
+`docs/worklog/2026-09-04-7-m2-detector-pretrained.md`): weight pretrained của cả hai model
+đã được huấn luyện trên **chính** những bộ mà lộ trình cũ định fine-tune lại — YOLO11s trên
+COCO (lớp `person` nằm sẵn trong đó), OSNet của torchreid trên Market-1501/MSMT17. Fine-tune
+trên tập con của dữ liệu model đã thấy không tạo được uplift đáng kể, chỉ tốn GPU-hour và
+~50G đĩa cụm. Fine-tune chỉ có nghĩa khi có **domain gap đo được**, và đồ án đã có bằng chứng
+định lượng cho hướng đó: trên WildTrack, checkpoint domain-generalization vượt checkpoint
+Market-1501 chuyên biệt **+25% F1** (0.346 vs 0.277, phiên 4) — tức khái quát hoá miền ăn
+đứt chuyên biệt hoá trong miền. Nên: dùng pretrained, đo trên dữ liệu tự thu ở M6, và **nếu**
+thấy tụt rõ thì mới fine-tune trên chính dữ liệu lab — trình bày như một *ablation* (có/không
+fine-tune), không phải một bước bắt buộc của pipeline chính.
 
 Bảng trên là **kế hoạch tham chiếu**, không phải tiến độ thật.
 
@@ -293,8 +305,9 @@ và trong worklog chỉ link tới nó.
 - **`vast-gpu` thuê theo phiên** — không giả định nó đang tồn tại. `~/.ssh/config` phải cập nhật
   `HostName`/`Port` mỗi lần thuê instance mới. Kiểm tra Docker và phiên bản driver ngay khi thuê,
   đừng giả định giống lần trước.
-- **Home trên `ut-hpc` còn ~113G/1TB (2026-09-03).** COCO + MSMT17 + env torch là vừa hết chỗ.
-  Kiểm tra `df -h $HOME` trước mỗi lần tải dataset.
+- **Home trên `ut-hpc` còn ~113G/1TB (2026-09-03).** Kiểm tra `df -h $HOME` trước mỗi lần tải
+  dataset. Từ 2026-09-04 áp lực này giảm hẳn: bỏ fine-tune trên COCO/MSMT17 nghĩa là không
+  cần ~50G dataset benchmark trên cụm nữa.
 - **Trọng số model không đi qua git.** Fine-tune xong trên `ut-hpc`, chép `.onnx`/`.pt` sang
   `models/` (gitignored) rồi rsync/scp sang `vast-gpu` khi cần chạy pipeline.
 

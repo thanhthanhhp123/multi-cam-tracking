@@ -120,7 +120,8 @@ Env sẵn có của người dùng (đừng đụng vào, không phải của đ
 ## Chưa xác minh — đừng nói chắc
 
 - Chưa chạy thật một lệnh train Ultralytics hay torchreid nào trên cụm.
-- Chưa tải dataset nào (COCO-person / Market-1501 / MSMT17) về cụm.
+- Chưa tải dataset nào về cụm — và từ 2026-09-04 cũng không cần: M2/M3 dùng weight
+  pretrained, COCO-person/Market-1501/MSMT17 đã bị bỏ khỏi lộ trình (CLAUDE.md §9).
 - Chưa xuất ONNX trên cụm.
 - Chưa biết 912G trong home là của thư mục nào (`du` timeout trên NFS).
 - Chưa test `singularity exec --nv` chạy được payload GPU (mới chỉ `--version`).

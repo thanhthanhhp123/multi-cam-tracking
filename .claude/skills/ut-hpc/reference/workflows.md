@@ -24,55 +24,57 @@ Env dùng cho đồ án là `~/mct/env` — **đừng** dùng chung với `fitro
 
 ---
 
-## M2 — fine-tune YOLO cho person detection
+## M2 / M3 — KHÔNG fine-tune nữa (chốt 2026-09-04)
+
+Hai mốc này từng là "fine-tune YOLO trên COCO-person" và "fine-tune OSNet trên
+Market-1501/MSMT17". **Đã bỏ cả hai.** Weight pretrained đã được huấn luyện trên chính
+những bộ đó — YOLO11s trên COCO (có sẵn lớp `person`), OSNet của torchreid trên
+Market-1501/MSMT17 — nên fine-tune lại là học lại dữ liệu cũ: không uplift đáng kể, tốn
+GPU-hour và ~50G đĩa cụm.
+
+Việc thay thế, **không cần cụm**:
+
+- **M2 (detector):** dùng thẳng `yolo11s.pt` → ONNX, lọc lớp person bằng khối
+  `[class-attrs-*]` trong `configs/pipeline/config_infer_yolo11*.txt`. Bước
+  `.onnx` → TensorRT engine vẫn phải làm trên `vast-gpu` (engine gắn chặt với
+  driver/GPU/phiên bản TensorRT), không làm ở đây.
+- **M3 (Re-ID):** dùng OSNet pretrained, **ưu tiên checkpoint đa nguồn/khái quát hoá miền**
+  thay vì bản Market-1501 chuyên biệt — đo được trên WildTrack: +25% F1 (0.346 vs 0.277).
+
+Xem `docs/worklog/2026-09-04-7-m2-detector-pretrained.md` và CLAUDE.md §9.
+
+---
+
+## M6 — fine-tune trên dữ liệu tự thu (kịch bản DUY NHẤT còn dùng cụm để train)
+
+Chỉ làm khi **đã đo được domain gap thật**: chạy model pretrained trên dữ liệu lab, thấy
+mAP (detector) hoặc F1 liên kết (Re-ID) tụt rõ so với trên WildTrack. Không đo được gap
+thì không train — và phải trình bày dưới dạng **ablation có/không fine-tune**, không phải
+một bước bắt buộc của pipeline.
 
 ```bash
-# [HEAD] tải weight gốc + dataset. Tốn ~20G, kiểm tra df trước.
-ssh ut-hpc '~/mct/env/bin/python ~/mct/jobs/fetch_pretrained.py'
-ssh ut-hpc 'df -h $HOME | tail -1'
-ssh ut-hpc '~/mct/env/bin/python ~/mct/jobs/prepare_coco_person.py'
+S=.claude/skills/ut-hpc/scripts/hpc.sh
 
-# [JOB]
-bash $S submit train_yolo.sbatch
+# [HEAD] đẩy dữ liệu lab đã gán nhãn (CVAT -> YOLO/torchreid layout) lên cụm.
+rsync -av data/lab/ ut-hpc:mct/data/lab/
+ssh ut-hpc 'df -h $HOME | tail -1'
+
+# [JOB] — cả hai template đều nhận DATA qua biến môi trường.
+bash $S push
+bash $S submit train_yolo.sbatch     # DATA=$ROOT/data/lab/detect/lab.yaml
+bash $S submit train_reid.sbatch     # DATA=$ROOT/data/lab/reid
 bash $S watch <jobid>
 
-# về máy dev
-bash $S fetch mct/models/detector/yolo11s_person.onnx models/detector/yolo11s_person.onnx
+bash $S fetch mct/models/detector/yolo11s_lab.onnx models/detector/yolo11s_lab.onnx
 ```
 
-Điều chỉnh qua biến môi trường trong `sbatch --export`, hoặc sửa thẳng trong file rồi `push` lại:
+Điều chỉnh qua `sbatch --export`, hoặc sửa thẳng trong file rồi `push` lại:
 `MODEL`, `DATA`, `EPOCHS`, `IMGSZ`, `BATCH`, `NAME`.
 
 VRAM 46–48G nên `BATCH=32` ở `imgsz=640` là thoải mái; muốn nhanh hơn thì `--gres=gpu:2`
 và `device=0,1`.
 
-**Ghi lại cho báo cáo (chương 6):** GPU nào (A40 hay L40), số GPU, batch, imgsz, epoch,
-thời gian train, mAP50-95 trên val, kích thước `.onnx`. Không có mấy số này thì lần train
-đó coi như bỏ.
-
-Bước tiếp theo **không** làm ở đây: chuyển `.onnx` → TensorRT engine. Việc đó phải làm trên
-đúng máy sẽ chạy pipeline (`vast-gpu`), vì engine gắn chặt với driver/GPU/phiên bản TensorRT.
-
----
-
-## M3 — fine-tune Re-ID (OSNet)
-
-```bash
-# [HEAD]
-ssh ut-hpc '~/mct/env/bin/pip install torchreid gdown'
-# Dataset Market-1501 / MSMT17 phải tự tải (licence). Đặt đúng layout torchreid:
-#   ~/mct/data/reid/market1501/Market-1501-v15.09.15/{bounding_box_train,bounding_box_test,query}
-# Nếu link chết, rsync từ máy dev lên:
-#   rsync -av data/market1501/ ut-hpc:mct/data/reid/market1501/
-
-# [JOB]
-bash $S submit train_reid.sbatch
-bash $S watch <jobid>
-
-bash $S fetch mct/models/reid/osnet_x1_0_ft.onnx models/reid/osnet_x1_0_ft.onnx
-```
-
-**Ràng buộc phải khớp với phần còn lại của hệ thống:**
+**Ràng buộc Re-ID phải khớp với phần còn lại của hệ thống:**
 - Input ONNX `1×3×256×128` NCHW, chuẩn hoá ImageNet — đúng như `src/tools/reid_onnx.py`
   đang làm ở máy dev. Đổi kích thước ở đây là breaking change cho cả hai phía.
 - Output 512-d (osnet_x1_0). `embed_dim` phải khớp header message
@@ -80,8 +82,13 @@ bash $S fetch mct/models/reid/osnet_x1_0_ft.onnx models/reid/osnet_x1_0_ft.onnx
   khác `embed_dim`, đừng lẫn.
 - Embedding **L2-normalize tại producer**, không phải trong ONNX.
 
-Sau khi có `.onnx` mới: chạy lại `make wildtrack-fixture` với `REID_ONNX=` trỏ vào file mới
-để so chất lượng liên kết trước/sau fine-tune. Đó chính là số liệu cho chương 6.
+**Cách đo ablation:** chạy lại `make wildtrack-fixture` (hoặc bộ chuyển dữ liệu lab) với
+`REID_ONNX=` trỏ lần lượt vào bản pretrained và bản fine-tune, rồi so F1 liên kết. Ghi cả
+hai cột vào chương 6 — chênh lệch đó *chính là* kết quả của thí nghiệm, kể cả khi nó bằng 0.
+
+**Ghi lại cho báo cáo (chương 6):** GPU nào (A40 hay L40), số GPU, batch, imgsz, epoch,
+thời gian train, mAP50-95 / rank-1, kích thước `.onnx`. Không có mấy số này thì lần train
+đó coi như bỏ.
 
 ---
 
@@ -97,5 +104,6 @@ Sau khi có `.onnx` mới: chạy lại `make wildtrack-fixture` với `REID_ONN
 | `No space left on device` | Home 90% đầy. `df -h $HOME`; `~/miniconda3` chiếm 40G nếu cần dọn. |
 | `CUDA error: no kernel image` | Wheel torch quá cũ cho A40/L40. Cài lại bản `cu124` trở lên. |
 | Ultralytics đòi tải `yolo11s.pt` lúc train | `MODEL=` trỏ sai đường dẫn tuyệt đối, hoặc chưa chạy `fetch_pretrained.py`. |
+| `FATAL: thieu .../data/lab/...` | Chưa `rsync` dữ liệu lab lên cụm. Từ 2026-09-04 template không còn dataset benchmark mặc định. |
 
 Luôn kết thúc bằng `bash $S status` — `squeue` của mình phải rỗng.

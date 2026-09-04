@@ -1,13 +1,20 @@
 ---
 name: ut-hpc
-description: Chạy việc train/fine-tune của đồ án MTMCT trên cụm SLURM ut-hpc (ĐH Twente) — fine-tune YOLO cho detection (M2), fine-tune OSNet cho Re-ID (M3), xuất ONNX và chuyển trọng số về models/. Dùng khi cần submit/theo dõi/huỷ job SLURM, chuẩn bị dataset hoặc môi trường Python trên ut-hpc, chẩn đoán job pending/failed, hoặc khi người dùng nhắc tới ut-hpc, hpc-head1, sbatch, srun, squeue, partition, GPU cluster, train, fine-tune.
+description: Chạy việc nặng của đồ án MTMCT trên cụm SLURM ut-hpc (ĐH Twente) — chạy pytest/ruff (Python 3.10.12), xuất ONNX, sinh fixture, và fine-tune trên DỮ LIỆU TỰ THU ở M6 nếu đo được domain gap (M2/M3 đã chốt dùng weight pretrained, không fine-tune trên COCO/Market-1501/MSMT17). Dùng khi cần submit/theo dõi/huỷ job SLURM, chuẩn bị dataset hoặc môi trường Python trên ut-hpc, chẩn đoán job pending/failed, hoặc khi người dùng nhắc tới ut-hpc, hpc-head1, sbatch, srun, squeue, partition, GPU cluster, train, fine-tune.
 ---
 
 # ut-hpc — cụm train/fine-tune của đồ án
 
 `ut-hpc` = `hpc-head1.ewi.utwente.nl`, user `s3002152`, SLURM 21.08.5, Ubuntu 22.04.5.
-Vai trò trong đồ án (CLAUDE.md §2): **chỉ train/fine-tune**. Không có DeepStream runtime,
-**không bao giờ** chạy `src/ds_pipeline/` ở đây.
+Vai trò trong đồ án (CLAUDE.md §2): **chạy test/lint, xuất model, sinh fixture, và train
+khi thật sự cần**. Không có DeepStream runtime, **không bao giờ** chạy `src/ds_pipeline/` ở đây.
+
+> **Cập nhật 2026-09-04 — M2/M3 không còn bước fine-tune.** Weight pretrained (YOLO11s/COCO,
+> OSNet/torchreid) đã được huấn luyện trên chính những bộ mà lộ trình cũ định fine-tune lại,
+> nên train thêm là học lại dữ liệu cũ. Fine-tune dời sang **M6, trên dữ liệu tự thu**, và chỉ
+> khi đo được domain gap — trình bày như ablation. Chi tiết: CLAUDE.md §9 +
+> `docs/worklog/2026-09-04-7-m2-detector-pretrained.md`. `train_yolo.sbatch` / `train_reid.sbatch`
+> vẫn giữ nguyên trong `templates/` cho đúng kịch bản đó, chỉ đổi dataset mặc định.
 
 Sự thật cụ thể đã xác minh: `reference/cluster.md`.
 Quy trình từng mốc (M2 YOLO, M3 Re-ID): `reference/workflows.md`.
@@ -43,7 +50,7 @@ Mọi thứ của đồ án nằm dưới `~/mct/` trên cụm:
 ```
 ~/mct/
   env/        conda env "mct" (tạo bằng bước [1])
-  data/       dataset đã tải sẵn (coco-person/, market1501/, msmt17/)
+  data/       dataset đã tải sẵn (lab/ cho M6; wildtrack/ cho fixture)
   jobs/       file .sbatch + script train đẩy lên từ templates/
   runs/       output của Ultralytics / torchreid
   models/     .pt và .onnx đã xuất — nguồn để fetch về máy dev
@@ -90,8 +97,9 @@ Không có script nào thì gọi thẳng: `ssh ut-hpc '<lệnh>'`. Luôn `-o Ba
 
 ## Giới hạn cần nhớ
 
-- **Home còn ~113G/1TB (2026-09-03).** COCO (~20G) + MSMT17 (~30G) + env torch (~10G) là vừa hết.
-  Kiểm tra `df -h $HOME` trước mỗi lần tải dataset; `~/miniconda3` đang chiếm 40G nếu cần dọn.
+- **Home còn ~113G/1TB (2026-09-03).** Kiểm tra `df -h $HOME` trước mỗi lần tải dataset;
+  `~/miniconda3` đang chiếm 40G nếu cần dọn. Từ 2026-09-04 không còn cần COCO (~20G) và
+  MSMT17 (~30G) trên cụm nữa — bỏ fine-tune benchmark (xem khung cảnh báo đầu file).
 - Chỉ `$HOME` là nơi ghi được **và chia sẻ giữa các node**. `/local` (2.2T) ghi được nhưng
   **riêng từng node** — chỉ dùng làm scratch trong một job, đừng để dữ liệu lâu dài ở đó.
 - Không có Docker. Có `module load singularity/3.9.5` (đã test load được trên node tính toán),

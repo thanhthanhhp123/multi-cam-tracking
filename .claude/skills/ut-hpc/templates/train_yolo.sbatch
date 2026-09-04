@@ -1,10 +1,14 @@
 #!/bin/bash
-# M2 - fine-tune YOLO for person detection, then export ONNX for the DeepStream side.
-# NOT YET RUN END-TO-END on the cluster (as of 2026-09-03): treat the first run as a test.
+# M6 - fine-tune YOLO on the project's OWN lab footage, then export ONNX for DeepStream.
+# NOT YET RUN END-TO-END on the cluster (as of 2026-09-04): treat the first run as a test.
 #
-# Prerequisite (head node, has internet):
-#   ssh ut-hpc '~/mct/env/bin/python ~/mct/jobs/prepare_coco_person.py'
-# The job below must find the dataset and the pretrained .pt already on disk.
+# This is NOT part of the main pipeline. M2 ships the pretrained COCO weights as-is
+# (see CLAUDE.md #9). Only run this once a domain gap has actually been MEASURED on lab
+# data, and report it as an ablation: with vs. without fine-tuning.
+#
+# Prerequisite: labelled lab data already on disk in Ultralytics layout, uploaded from the
+# dev machine (compute nodes have no internet):
+#   rsync -av data/lab/detect/ ut-hpc:mct/data/lab/detect/
 #
 #SBATCH --job-name=mct-yolo
 #SBATCH --partition=main-gpu
@@ -19,11 +23,11 @@ ROOT="$HOME/mct"
 PY="$ROOT/env/bin/python"
 
 MODEL="${MODEL:-$ROOT/models/yolo11s.pt}"      # staged on the head node beforehand
-DATA="${DATA:-$ROOT/data/coco-person/coco_person.yaml}"
+DATA="${DATA:-$ROOT/data/lab/detect/lab.yaml}"
 EPOCHS="${EPOCHS:-50}"
 IMGSZ="${IMGSZ:-640}"
 BATCH="${BATCH:-32}"
-NAME="${NAME:-yolo11s_person}"
+NAME="${NAME:-yolo11s_lab}"
 
 export ULTRALYTICS_OFFLINE=1 HF_HUB_OFFLINE=1 TORCH_HOME="$ROOT/.torch"
 export YOLO_CONFIG_DIR="$ROOT/.ultralytics"
@@ -31,7 +35,7 @@ export YOLO_CONFIG_DIR="$ROOT/.ultralytics"
 echo "node=$(hostname) job=$SLURM_JOB_ID model=$MODEL data=$DATA"
 nvidia-smi --query-gpu=name,memory.total --format=csv,noheader
 [ -f "$MODEL" ] || { echo "FATAL: thieu $MODEL (tai tren head node truoc)"; exit 1; }
-[ -f "$DATA" ]  || { echo "FATAL: thieu $DATA (chay prepare_coco_person.py truoc)"; exit 1; }
+[ -f "$DATA" ]  || { echo "FATAL: thieu $DATA (rsync du lieu lab len cum truoc)"; exit 1; }
 
 "$PY" -m ultralytics.cfg train \
   model="$MODEL" data="$DATA" epochs="$EPOCHS" imgsz="$IMGSZ" batch="$BATCH" \
