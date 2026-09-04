@@ -116,7 +116,7 @@ tức `max_cost = 0.086`); DG **F1 = 0.513** (tại cosine ≥ 0.842, tức `max
   `zipfile` của Python ném `BadZipFile`, `unzip` báo "4294967296 extra bytes" rồi tự
   "re-compensate" — nhưng chỉ đúng cho các entry NẰM SAU mốc 4 GiB (lấy được C5–C7, hỏng
   C1–C4), và còn chết giữa chừng vì "not enough memory for bomb detection".
-  **Cách vá đã dùng** (`scratchpad/unzip_wt.py`): với mỗi entry, thử `header_offset` ở cả ba
+  **Cách vá đã dùng** (`src/tools/unzip_wildtrack.py`, đã đưa vào repo): với mỗi entry, thử `header_offset` ở cả ba
   giá trị `+0`, `+2^32`, `−2^32` rồi kiểm tra kích thước giải nén — lấy đủ 2807/2807 ảnh,
   0 lỗi. Nếu phải làm lại: cũng cần `UNZIP_DISABLE_ZIPBOMB_DETECTION=TRUE` khi dùng `unzip`.
 - **Checkpoint DG của torchreid không nạp được bằng `torch.load` mặc định** (torch ≥ 2.6
