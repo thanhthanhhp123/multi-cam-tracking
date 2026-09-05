@@ -6,13 +6,23 @@
 `common/motformat.TrackEvalLayout`, còn phần chấm điểm là của TrackEval — viết lại HOTA hay
 IDF1 bằng tay là cách chắc chắn để có một bảng điểm không ai đối chiếu được.
 
-**TrackEval không có trên PyPI dưới dạng dùng được ngay** — phải clone từ GitHub:
+**TrackEval không có trên PyPI dưới dạng dùng được ngay** — phải clone từ GitHub. Bản đã
+chạy được (2026-09-05, trên head node `ut-hpc` vì node tính toán không có mạng):
 
-    git clone https://github.com/JonathonLuiten/TrackEval ~/TrackEval
-    pip install -r ~/TrackEval/requirements.txt
+    git clone --depth 1 https://github.com/JonathonLuiten/TrackEval ~/TrackEval
+    python3 -m venv ~/mct/venv-eval
+    ~/mct/venv-eval/bin/pip install "numpy==1.23.5" "scipy==1.10.1"
     export TRACKEVAL_PATH=~/TrackEval        # hoặc dùng --trackeval-path
 
-Thiếu nó thì script báo đúng câu lệnh trên rồi thoát, chứ không đổ traceback khó hiểu.
+**Ghim `numpy==1.23.5`, không phải bản mới nhất.** TrackEval còn dùng `np.float`, thứ bị xoá
+hẳn ở numpy 1.24 — chạy với 1.26 thì nổ `AttributeError` ngay lúc nạp file GT. Ghim numpy
+thay vì vá bản clone, để ai tái lập cũng chỉ cần đúng những lệnh trên. Không cần
+`requirements.txt` đầy đủ: chỉ numpy + scipy là chấm được MotChallenge2DBox (`pycocotools`
+chỉ để cho dataset BURST, thiếu nó TrackEval in một dòng cảnh báo rồi chạy tiếp).
+
+Venv này TÁCH khỏi `~/mct/venv-test` — venv chạy pytest phải giữ nguyên độ nhẹ.
+
+Thiếu TrackEval thì script báo đúng câu lệnh trên rồi thoát, chứ không đổ traceback khó hiểu.
 
 **Đọc số cho đúng:**
 
@@ -62,6 +72,10 @@ def build_config(
     eval_cfg = trackeval.Evaluator.get_default_eval_config()
     eval_cfg["PRINT_CONFIG"] = False
     eval_cfg["DISPLAY_LESS_PROGRESS"] = True
+    # TrackEval vẽ đường cong HOTA bằng matplotlib SAU KHI đã tính xong, và lỗi import ở
+    # đó nuốt mất toàn bộ kết quả vừa tính. Không cần hình ở đây (số nằm trong CSV) nên
+    # tắt hẳn, thay vì kéo matplotlib vào venv chỉ để nó vẽ rồi vứt.
+    eval_cfg["PLOT_CURVES"] = False
 
     ds_cfg = trackeval.datasets.MotChallenge2DBox.get_default_dataset_config()
     ds_cfg.update(

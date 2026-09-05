@@ -1,0 +1,49 @@
+# Tham số engine cho fixture WildTrack do PIPELINE DEEPSTREAM THẬT sinh ra
+# (`ds_wildtrack_7cam.jsonl`: hộp của YOLO11s, local_track_id của NvDCF, embedding của
+# nvtracker). Khác `wildtrack.mct.yaml` — file đó chỉnh cho fixture bbox ground-truth
+# (`wildtrack_7cam.jsonl`), tức tracking đơn camera lý tưởng, và giá trị của nó SAI trên
+# dữ liệu thật: xem docs/worklog/2026-09-04-12-*.
+#
+# Tái lập F1 0.224 (P 0.417 / R 0.153) đo 2026-09-04, và là cấu hình dùng để xuất bộ
+# MOTA/IDF1/HOTA đầu tiên (docs/worklog/2026-09-05-15-*).
+#
+#   PYTHONPATH=src python -m mct --config configs/demo/wildtrack_ds.mct.yaml \
+#       --source data/fixtures/ds_wildtrack_7cam.jsonl \
+#       --topology configs/demo/wildtrack.topology.yaml \
+#       --homography-dir configs/cameras/homography/wildtrack --db data/mct-ds.db
+#
+# KHÔNG phải cấu hình của hệ thống thật (`configs/mct.yaml` mới là cái đó) và KHÔNG được
+# chép sang đó: mọi con số ở đây tinh chỉnh trên một dataset mượn 2 fps, mọi camera chồng
+# lấn. Chốt lại ở M6 trên dữ liệu tự thu 25 fps.
+
+tracklet:
+  min_frames: 3
+  # 30000 chứ không phải 2000: ở 2 fps thì 2000 ms chỉ là 4 khung, hụt 4 detection liên
+  # tiếp (rất thường khi người bị che) là tracklet bị chẻ đôi. Đo được: 345 local track
+  # bị cắt thành 550 tracklet, trần recall của ràng buộc hình học tụt còn 13.8%. Ở 30000:
+  # hết cắt thêm (345 -> 345), trần lên 34.5%.
+  idle_timeout_ms: 30000
+  max_embeddings: 32
+  ground_path_max_points: 64
+gallery:
+  max_size: 32
+  topk_query: 8
+  ema_alpha: 0.3
+  similarity_mode: max
+association:
+  window_ms: 1000
+  max_cost: 0.80
+  homography_weight: 0.4
+  # 5.0 m, không phải 1.0: ngưỡng 1.0 chỉnh trên bbox GT (d_ground cùng người trung vị
+  # 0.05 m). Với hộp detector con số đó là 0.74 m — sát ngay ngưỡng, hơn nửa cặp đúng bị
+  # loại oan. Nguyên nhân là điểm chân = đáy-giữa bbox nên sai số hộp thành sai số mét,
+  # KHÔNG phải do ngoại hình xấu đi (docs/worklog/2026-09-05-13-*).
+  max_ground_dist_m: 5.0
+  ground_time_tol_ms: 400
+  max_speed_m_s: 2.5
+  ground_gap_policy: reject
+  global_track_ttl_ms: 120000
+store:
+  db_path: data/mct-wildtrack-ds.db
+  batch_size: 64
+  flush_interval_ms: 1000

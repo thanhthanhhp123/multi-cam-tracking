@@ -76,6 +76,18 @@ def test_offset_tu_suy_lon_hon_camera_dai_nhat():
     assert frame_offset_for([]) > 0
 
 
+def test_offset_bam_sat_do_dai_that():
+    """TrackEval duyệt MỌI timestep của chuỗi ảo — offset thừa là thời gian chấm vứt đi.
+
+    Đo được: offset 100000 cho 400 khung/camera biến 2800 khung thật thành 700000 timestep
+    và một lần chấm mất ~1 phút; bám sát độ dài thì còn ~3 giây.
+    """
+    assert frame_offset_for([400] * 7) == 1000
+    assert frame_offset_for([1500]) == 10_000
+    assert frame_offset_for([1000]) == 10_000  # phải LỚN HƠN, không được bằng
+    assert frame_offset_for([]) == 1000
+
+
 def test_offset_va_cam_index_phai_hop_le():
     with pytest.raises(MotFormatError):
         virtual_frame(-1, 0, offset=1000)

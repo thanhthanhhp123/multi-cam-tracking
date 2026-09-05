@@ -82,10 +82,18 @@ def virtual_frame(cam_index: int, frame_id: int, *, offset: int) -> int:
 
 
 def frame_offset_for(n_frames_per_cam: Iterable[int]) -> int:
-    """Offset an toàn: lớn hơn camera dài nhất, làm tròn lên bội của 100000 cho dễ đọc log."""
+    """Offset an toàn: luỹ thừa 10 nhỏ nhất LỚN HƠN camera dài nhất, tối thiểu 1000.
+
+    Luỹ thừa 10 để đọc log không phải nhẩm (khung ảo 3001 = camera thứ 3, khung 1). Nhưng
+    phải BÁM SÁT độ dài thật: TrackEval duyệt mọi timestep của chuỗi ảo, kể cả khối rỗng,
+    nên offset 100000 cho 400 khung/camera biến 2800 khung thật thành 700000 timestep —
+    chạy một lần chấm mất ~1 phút thay vì vài giây, mà không thêm thông tin nào.
+    """
     longest = max(list(n_frames_per_cam) or [0])
-    step = 100_000
-    return max(step, ((longest // step) + 1) * step)
+    offset = 1000
+    while offset <= longest:
+        offset *= 10
+    return offset
 
 
 @dataclass(slots=True, frozen=True)

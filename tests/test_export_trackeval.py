@@ -16,7 +16,13 @@ import pytest
 from common.motformat import TrackEvalLayout, parse_mot
 from common.schema import Detection, FrameMessage
 from tools.cvat_to_mot import CvatError, assign_global_ids, parse_cvat_video, write_ground_truth
-from tools.export_trackeval import export_mct, export_sct, load_global_ids, load_gt_table
+from tools.export_trackeval import (
+    GtSource,
+    export_mct,
+    export_sct,
+    load_global_ids,
+    load_gt_table,
+)
 
 
 def msg(cam_id: str, frame_id: int, dets: list[Detection]) -> FrameMessage:
@@ -293,3 +299,62 @@ def test_cvat_ghi_ra_gt_va_bang_global_id(tmp_path, cvat_file):
     bang = json.loads((tmp_path / "gt" / "global_ids.gt.json").read_text(encoding="utf-8"))
     assert {t["local_track_id"]: t["gt_global_id"] for t in bang["tracklets"]} == {0: 2, 1: 1}
     assert bang["tracklets"][0]["n_frames"] == 2
+
+
+# --------------------------------------------------------------------------------------
+# Nguồn ground-truth độc lập (--gt-fixture)
+# --------------------------------------------------------------------------------------
+
+
+@pytest.fixture
+def annotation() -> GtSource:
+    """Chú thích của người gán nhãn: hộp KHÁC hộp của detector, id là người thật."""
+    messages = [
+        msg(
+            "cam01",
+            0,
+            [Detection(local_track_id=41, bbox=(12.0, 22.0, 28.0, 58.0), confidence=1.0)],
+        ),
+        msg(
+            "cam02",
+            0,
+            [Detection(local_track_id=42, bbox=(205.0, 21.0, 31.0, 61.0), confidence=1.0)],
+        ),
+    ]
+    return GtSource(messages=messages, table={("cam01", 41): 900, ("cam02", 42): 900})
+
+
+def test_sct_gt_rieng_lay_hop_cua_chu_thich(tmp_path, messages, annotation):
+    """GT phải là hộp của người chú thích; nếu nó lấy lại hộp của kết quả thì MOTP luôn đẹp."""
+    lay = TrackEvalLayout(root=tmp_path, benchmark="MCT", split="sct")
+    export_sct(messages, {}, lay, tracker="t", fps=2.0, gt_source=annotation)
+
+    gt_rows = parse_mot(lay.gt_file("cam01"))
+    assert [(r.track_id, r.x) for r in gt_rows] == [(900, 12.0)]
+    assert {r.track_id for r in parse_mot(lay.result_file("t", "cam01"))} == {1, 2}
+
+
+def test_mct_gt_rieng_dung_gt_global_id_cua_bang_chu_thich(tmp_path, messages, annotation):
+    lay = TrackEvalLayout(root=tmp_path, benchmark="MCT", split="mct")
+    _, stats = export_mct(
+        messages, {}, {("cam01", 1): 7}, lay, tracker="t", fps=2.0, gt_source=annotation
+    )
+
+    assert stats["n_gt"] == 2  # hai hộp chú thích, không phải hộp của kết quả
+    assert {r.track_id for r in parse_mot(lay.gt_file("all"))} == {900}
+    assert {r.track_id for r in parse_mot(lay.result_file("t", "all"))} == {7}
+
+
+def test_mct_mot_danh_tinh_khong_bao_gio_co_hai_hop_trong_MOT_khung(tmp_path, annotation):
+    """Ràng buộc cứng của MOT Challenge, và là lý do chuỗi ảo phải NỐI TIẾP các camera.
+
+    Người 900 đứng trước hai camera cùng lúc (`frame_id` 0 ở cả hai). Xếp xen kẽ thì hai
+    hộp rơi vào cùng một khung ảo và TrackEval từ chối chấm cả chuỗi.
+    """
+    lay = TrackEvalLayout(root=tmp_path, benchmark="MCT", split="mct")
+    export_mct(annotation.messages, {}, {}, lay, tracker="t", fps=2.0, gt_source=annotation)
+
+    rows = parse_mot(lay.gt_file("all"))
+    assert len(rows) == 2
+    assert len({(r.frame, r.track_id) for r in rows}) == 2
+    assert rows[0].frame != rows[1].frame
