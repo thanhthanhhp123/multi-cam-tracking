@@ -162,7 +162,10 @@ Chạy theo cửa sổ (mặc định 1s). Với mỗi tracklet cục bộ vừa
 1. **Query embedding** = trung bình có trọng số của top-k embedding có confidence cao nhất
    của tracklet (bỏ crop mờ/bị che), rồi L2-normalize. Không dùng embedding của frame cuối.
 2. **Lọc ứng viên** trong tập `GlobalTrack`:
-   - loại bỏ track đang active ở chính camera `c` với local track khác (ràng buộc loại trừ),
+   - loại bỏ track có tracklet khác ở chính camera `c` **trùng khoảng thời gian** với
+     tracklet đang xét (ràng buộc loại trừ). Là mệnh đề *đồng thời*, không phải "vừa mới
+     thấy ở đó": hai tracklet NỐI TIẾP nhau ở một camera chính là hình dạng của một lần
+     tracker đổi id, và ghép chúng lại là việc engine phải làm được (`docs/worklog/2026-09-06-17-*`),
    - **ràng buộc không–thời gian**: nếu track cuối thấy ở `c'`, yêu cầu
      `t − t_last ∈ [t_min(c'→c), t_max(c'→c)]` lấy từ `topology.yaml`
      (cặp overlap thì `t_min = 0`).

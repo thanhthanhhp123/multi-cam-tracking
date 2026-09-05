@@ -22,9 +22,11 @@ from __future__ import annotations
 import argparse
 import json
 from collections import defaultdict
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
+import yaml
 
 from common.schema import read_jsonl
 from mct.affinity import AffinityConfig
@@ -100,22 +102,61 @@ def score(results, gt: dict[tuple[str, int], int]) -> dict[str, float]:
     }
 
 
+def load_configs(path: Path | None, args) -> tuple[TrackletConfig, AffinityConfig, GalleryConfig]:
+    """Bộ tham số nền cho mọi lượt chấm: từ YAML nếu có `--config`, nếu không thì từ cờ.
+
+    **Vì sao phải đọc được YAML.** Trước đây file này dựng `AffinityConfig(...)` bằng tay,
+    liệt kê đúng những trường nó quan tâm — nên mọi trường khác âm thầm nhận giá trị mặc
+    định của dataclass thay vì giá trị trong `configs/`. Cụ thể là `exclusion_window_ms`:
+    engine lấy nó bằng `tracklet.idle_timeout_ms` (30 000 trên fixture DeepStream) còn bộ
+    chấm điểm để nguyên 2 000, và hai bên chạy hai cấu hình khác nhau suốt từ phiên 12 tới
+    16 mà không có triệu chứng gì ngoài việc F1 lệch với HOTA (0.256 so với 0.293, đo
+    2026-09-06). Đưa cả file YAML vào là cách duy nhất để chuyện đó không tái diễn với
+    tham số tiếp theo được thêm vào.
+
+    `--config` thắng cho MỌI ngưỡng; các cờ dòng lệnh chỉ còn tác dụng khi không có nó.
+    Chiều quét (`max_cost`, `mode`, `ground_gap_policy`) vẫn phủ lên trên.
+    """
+    if path is not None:
+        data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+        return (
+            TrackletConfig.from_mapping(data),
+            AffinityConfig.from_mapping(data),
+            GalleryConfig.from_mapping(data),
+        )
+    return (
+        TrackletConfig(
+            min_frames=args.min_frames,
+            idle_timeout_ms=args.idle_timeout_ms,
+            ground_path_max_points=args.ground_path_max_points,
+        ),
+        AffinityConfig(
+            homography_weight=args.lam,
+            max_ground_dist_m=args.max_ground_dist,
+            ground_smooth=args.ground_smooth,
+            ground_smooth_window=args.ground_smooth_window,
+        ),
+        GalleryConfig(),
+    )
+
+
 def evaluate(
     tracklets,
     gt: dict[tuple[str, int], int],
     cam_ids: list[str],
     *,
+    affinity: AffinityConfig,
+    gallery: GalleryConfig,
     max_cost: float,
     mode: str,
     use_topology: bool,
     ground_mapper: HomographyMapper | None = None,
-    homography_weight: float = 0.4,
-    max_ground_dist_m: float = 3.0,
     ground_gap_policy: str = "allow",
-    ground_smooth: str = "none",
-    ground_smooth_window: int = 5,
 ) -> dict[str, float]:
     """Gán trên tracklet ĐÃ dựng sẵn — dựng lại cho mỗi tổ hợp tham số là phí thời gian.
+
+    `affinity`/`gallery` là bộ tham số nền (xem `load_configs`); chỉ ba chiều quét được
+    phủ lên trên, phần còn lại giữ nguyên để không lệch với `python -m mct`.
 
     `ground_mapper` chỉ có tác dụng khi `use_topology=True`: affinity cần topology mới
     biết cặp camera nào chồng lấn, mà thành phần hình học chỉ áp cho cặp chồng lấn.
@@ -123,16 +164,13 @@ def evaluate(
     results, _ = run_offline(
         tracklets,
         topology=overlapping_topology(cam_ids) if use_topology else None,
-        config=AffinityConfig(
+        config=replace(
+            affinity,
             max_cost=max_cost,
             similarity_mode=mode,  # type: ignore[arg-type]
-            homography_weight=homography_weight,
-            max_ground_dist_m=max_ground_dist_m,
             ground_gap_policy=ground_gap_policy,
-            ground_smooth=ground_smooth,
-            ground_smooth_window=ground_smooth_window,
         ),
-        gallery_config=GalleryConfig(similarity_mode=mode),  # type: ignore[arg-type]
+        gallery_config=replace(gallery, similarity_mode=mode),  # type: ignore[arg-type]
         ground_mapper=ground_mapper,
     )
     return score(results, gt)
@@ -252,6 +290,14 @@ def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(description=__doc__)
     p.add_argument("--fixture", type=Path, required=True)
     p.add_argument("--gt", type=Path, default=None, help="mặc định: <fixture>.gt.json")
+    p.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="YAML tham số engine (vd configs/demo/wildtrack_ds.mct.yaml). CÓ thì nó quyết "
+        "định mọi ngưỡng và các cờ dưới đây bị bỏ qua — để bộ chấm điểm không chạy một cấu "
+        "hình khác với `python -m mct`",
+    )
     p.add_argument("--max-cost", type=float, default=0.30)
     p.add_argument("--min-frames", type=int, default=3, help="WildTrack chú thích ~2 fps")
     p.add_argument(
@@ -312,15 +358,19 @@ def main(argv: list[str] | None = None) -> int:
         f"{len(gt)} tracklet ground-truth, {len(set(gt.values()))} danh tính"
     )
 
-    tracklets = build_tracklets(
-        messages,
-        TrackletConfig(
-            min_frames=args.min_frames,
-            idle_timeout_ms=args.idle_timeout_ms,
-            ground_path_max_points=args.ground_path_max_points,
-        ),
+    tcfg, base_affinity, base_gallery = load_configs(args.config, args)
+    tracklets = build_tracklets(messages, tcfg)
+    # In ra bộ tham số THẬT SỰ đang chạy: cấu hình lệch âm thầm giữa bộ chấm điểm và engine
+    # là thứ đã làm hỏng bảng số của bốn phiên liền (xem `load_configs`).
+    print(
+        f"gom được {len(tracklets)} tracklet | config={args.config or '(cờ dòng lệnh)'} "
+        f"min_frames={tcfg.min_frames} idle_timeout_ms={tcfg.idle_timeout_ms} "
+        f"ground_path_max_points={tcfg.ground_path_max_points} "
+        f"max_ground_dist_m={base_affinity.max_ground_dist_m} "
+        f"lambda={base_affinity.homography_weight} "
+        f"exclusion_slack_ms={base_affinity.exclusion_slack_ms} "
+        f"ground_smooth={base_affinity.ground_smooth}"
     )
-    print(f"gom được {len(tracklets)} tracklet (min_frames={args.min_frames})")
 
     mapper = None
     if args.homography_dir is not None:
@@ -364,15 +414,13 @@ def main(argv: list[str] | None = None) -> int:
             tracklets,
             gt,
             cam_ids,
+            affinity=base_affinity,
+            gallery=base_gallery,
             max_cost=max_cost,
             mode=mode,
             use_topology=use_topology,
             ground_mapper=mapper if use_geo else None,
             ground_gap_policy=use_geo or "allow",
-            ground_smooth=args.ground_smooth,
-            ground_smooth_window=args.ground_smooth_window,
-            homography_weight=args.lam,
-            max_ground_dist_m=args.max_ground_dist,
         )
         geo_label = use_geo or "-"
         print(

@@ -152,11 +152,11 @@ def test_track_dang_o_camera_do_bi_loai_khoi_ung_vien(rng):
     gallery.create(_tracklet("cam01", 1, start_ms=0, embedding=vec, tracklet_id=1))
 
     other = _tracklet("cam01", 2, start_ms=100, embedding=vec, tracklet_id=2)
-    assert gallery.candidates(other, exclusion_window_ms=2_000) == []
+    assert gallery.candidates(other, exclusion_slack_ms=0) == []
 
     # Cũng người đó nhưng ở camera khác thì vẫn là ứng viên hợp lệ.
     cross = _tracklet("cam02", 2, start_ms=100, embedding=vec, tracklet_id=3)
-    assert [t.global_id for t in gallery.candidates(cross, exclusion_window_ms=2_000)] == [1]
+    assert [t.global_id for t in gallery.candidates(cross, exclusion_slack_ms=0)] == [1]
 
 
 def test_rang_buoc_loai_tru_khong_chan_cap_nhat_chinh_no(rng):
@@ -167,10 +167,72 @@ def test_rang_buoc_loai_tru_khong_chan_cap_nhat_chinh_no(rng):
     track = gallery.create(tracklet)
 
     longer = _tracklet("cam01", 1, start_ms=0, embedding=vec, n_frames=20, tracklet_id=11)
-    assert [t.global_id for t in gallery.candidates(longer, exclusion_window_ms=2_000)] == [
+    assert [t.global_id for t in gallery.candidates(longer, exclusion_slack_ms=0)] == [
         track.global_id
     ]
     assert gallery.find_by_tracklet(longer) is track
+
+
+def test_manh_noi_tiep_cung_camera_van_la_ung_vien(rng):
+    """Tracker đổi id giữa chừng: mảnh mới bắt đầu NGAY sau mảnh cũ, cùng camera.
+
+    Đây không phải mâu thuẫn — một người không thể là hai track *đồng thời*, nhưng nối
+    tiếp thì hoàn toàn hợp lệ, và ghép lại chính là việc engine phải làm. Bản trước chặn
+    theo `now − last ≤ idle_timeout_ms` nên cấm luôn trường hợp này.
+    """
+    gallery = Gallery()
+    vec = l2_normalize(rng.standard_normal(DIM))
+    first = _tracklet("cam01", 1, start_ms=0, embedding=vec, n_frames=6, tracklet_id=1)
+    track = gallery.create(first)
+
+    ngay_sau = _tracklet("cam01", 2, start_ms=first.end_ms + 66, embedding=vec, tracklet_id=2)
+    assert [t.global_id for t in gallery.candidates(ngay_sau)] == [track.global_id]
+
+    # Còn mảnh TRÙNG thời gian thì vẫn phải bị loại: đó mới là mâu thuẫn thật.
+    trung = _tracklet("cam01", 3, start_ms=first.end_ms - 66, embedding=vec, tracklet_id=3)
+    assert gallery.candidates(trung) == []
+
+
+def test_gallery_khong_chong_them_ban_ghi_cho_cung_mot_tracklet(rng):
+    """Tracklet dài được gán lại mỗi cửa sổ — gallery phải THAY, không APPEND.
+
+    Không có bước khử trùng lặp thì một tracklet chiếm trọn `max_size` ô và đẩy hết ngoại
+    hình của camera khác ra ngoài (worklog 2026-09-06-17).
+    """
+    gallery = Gallery(GalleryConfig(max_size=4))
+    vec = l2_normalize(rng.standard_normal(DIM))
+    khac = l2_normalize(rng.standard_normal(DIM))
+
+    track = gallery.create(_tracklet("cam02", 9, start_ms=0, embedding=khac, tracklet_id=99))
+    for n in range(2, 12):  # cùng tracklet_id, mỗi vòng dài thêm một khung
+        gallery.assign(
+            track, _tracklet("cam01", 1, start_ms=1_000, embedding=vec, n_frames=n, tracklet_id=1)
+        )
+
+    assert [e.tracklet_id for e in track.entries] == [99, 1]
+    assert {e.cam_id for e in track.entries} == {"cam01", "cam02"}
+
+
+def test_loai_tru_xet_MOI_manh_cua_camera_do_khong_chi_manh_cuoi(rng):
+    """Bất biến: một Global ID không được có hai tracklet TRÙNG thời gian ở cùng camera.
+
+    Track ôm mảnh A (sớm) rồi mảnh B (muộn) ở cùng một camera. Nếu chỉ nhớ khoảng của mảnh
+    hấp thụ SAU CÙNG thì một tracklet trùng với A vẫn lọt qua, và Global ID đó có hai hộp
+    trong cùng một khung — TrackEval từ chối chấm cả chuỗi khi gặp (đo 2026-09-06).
+    """
+    gallery = Gallery()
+    vec = l2_normalize(rng.standard_normal(DIM))
+    som = _tracklet("cam01", 1, start_ms=0, embedding=vec, tracklet_id=1)
+    track = gallery.create(som)
+    gallery.assign(track, _tracklet("cam01", 2, start_ms=10_000, embedding=vec, tracklet_id=2))
+
+    assert track.overlaps_in("cam01", som.start_ms, som.end_ms) is True
+    trung_manh_som = _tracklet("cam01", 3, start_ms=100, embedding=vec, tracklet_id=3)
+    assert gallery.candidates(trung_manh_som) == []
+
+    # Khoảng trống giữa hai mảnh thì vẫn hợp lệ.
+    xen_giua = _tracklet("cam01", 4, start_ms=5_000, embedding=vec, tracklet_id=4)
+    assert [t.global_id for t in gallery.candidates(xen_giua)] == [track.global_id]
 
 
 def test_het_cua_so_loai_tru_thi_lai_thanh_ung_vien(rng):
@@ -180,7 +242,7 @@ def test_het_cua_so_loai_tru_thi_lai_thanh_ung_vien(rng):
     gallery.create(_tracklet("cam01", 1, start_ms=0, embedding=vec, tracklet_id=1))
 
     comeback = _tracklet("cam01", 9, start_ms=30_000, embedding=vec, tracklet_id=2)
-    assert len(gallery.candidates(comeback, exclusion_window_ms=2_000)) == 1
+    assert len(gallery.candidates(comeback, exclusion_slack_ms=0)) == 1
 
 
 # --------------------------------------------------------------------------- #

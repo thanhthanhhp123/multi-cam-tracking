@@ -80,11 +80,16 @@ class AffinityConfig:
     max_ground_dist_m: float = 3.0
     """Vượt khoảng cách này trên mặt phẳng tham chiếu thì loại thẳng, không xét ngoại hình."""
 
-    exclusion_window_ms: int = 2000
-    """GlobalTrack thấy ở camera `c` trong khoảng này thì không nhận tracklet KHÁC của `c`.
+    exclusion_slack_ms: int = 0
+    """Nới hai đầu khoảng thời gian khi hỏi "hai tracklet cùng camera có trùng nhau không".
 
-    Lấy bằng `tracklet.idle_timeout_ms`: đó chính là ngưỡng mà bên gom tracklet coi một
-    track cục bộ là đã kết thúc, nên hai chỗ hiểu "còn đang hiện diện" giống nhau.
+    Ràng buộc loại trừ là mệnh đề *đồng thời* (`gallery.GlobalTrack.overlaps_in`), nên
+    mặc định 0: chỉ chồng lấn thật mới là mâu thuẫn. Nới lên khi mốc thời gian giữa các
+    luồng lệch nhau đáng kể.
+
+    Thay cho `exclusion_window_ms` cũ (lấy bằng `tracklet.idle_timeout_ms`), thứ biến
+    "hai tracklet nối tiếp nhau" thành "mâu thuẫn" và cấm luôn việc nối lại mảnh vỡ do
+    tracker đổi id — xem `docs/worklog/2026-09-06-17-*`.
     """
 
     ground_time_tol_ms: int = 400
@@ -133,7 +138,6 @@ class AffinityConfig:
     def from_mapping(cls, data: dict[str, Any]) -> AffinityConfig:
         association = dict(data.get("association", data) or {})
         gallery = dict(data.get("gallery", {}) or {})
-        tracklet = dict(data.get("tracklet", {}) or {})
         defaults = cls()
         return cls(
             max_cost=float(association.get("max_cost", defaults.max_cost)),
@@ -155,7 +159,9 @@ class AffinityConfig:
             ground_smooth_max_gap_ms=int(
                 association.get("ground_smooth_max_gap_ms", defaults.ground_smooth_max_gap_ms)
             ),
-            exclusion_window_ms=int(tracklet.get("idle_timeout_ms", defaults.exclusion_window_ms)),
+            exclusion_slack_ms=int(
+                association.get("exclusion_slack_ms", defaults.exclusion_slack_ms)
+            ),
             similarity_mode=str(  # type: ignore[arg-type]
                 gallery.get("similarity_mode", defaults.similarity_mode)
             ),
@@ -278,10 +284,16 @@ def _pair_cost(
     if track.owns_tracklet(tracklet):
         return 0.0, ""
 
-    if track.is_active_in(tracklet.cam_id, tracklet.end_ms, config.exclusion_window_ms):
+    if track.overlaps_in(
+        tracklet.cam_id,
+        tracklet.start_ms,
+        tracklet.end_ms,
+        config.exclusion_slack_ms,
+        ignore_tracklet_id=tracklet.tracklet_id,
+    ):
         return INFEASIBLE, (
-            f"GlobalTrack #{track.global_id} đang hiện diện ở chính {tracklet.cam_id} "
-            "dưới một local track khác (ràng buộc loại trừ)"
+            f"GlobalTrack #{track.global_id} có mặt ở chính {tracklet.cam_id} dưới một "
+            "local track khác TRÙNG khoảng thời gian này (ràng buộc loại trừ)"
         )
 
     if query is None:
@@ -357,9 +369,25 @@ def _ground_term(
             )
         return config.homography_weight * distance, ""
 
-    if cams and config.ground_gap_policy == "reject" and len(own):
+    # Không phải camera chồng lấn nào cũng có quyền phủ quyết. Quỹ đạo CŨ ở một camera mà
+    # track đã rời khỏi từ lâu thì vốn dĩ KHÔNG THỂ có mốc chung với tracklet này, nên vắng
+    # bằng chứng ở đó không phải bằng chứng phủ định: người đi cam01 (chồng lấn cam03) →
+    # cam02 (không chồng lấn ai) → cam03 từng bị loại vì "cam01 ↔ cam03 không có mốc chung",
+    # dù vị trí gần nhất đã là cam02 (`docs/worklog/2026-09-06-17-*`).
+    #
+    # Giữ quyền phủ quyết cho hai trường hợp mà mệnh đề của `reject` có nghĩa: camera mà
+    # track ĐANG ở (vừa thấy ở vùng chung thì bây giờ phải còn thấy), và camera có quỹ đạo
+    # TRÙNG khoảng thời gian với tracklet (đáng lẽ phải có mốc chung mà không có).
+    tol = config.ground_time_tol_ms
+    veto = [
+        cam_id
+        for cam_id in cams
+        if cam_id == track.last_cam_id
+        or track.overlaps_in(cam_id, tracklet.start_ms, tracklet.end_ms, tol)
+    ]
+    if veto and config.ground_gap_policy == "reject" and len(own):
         return 0.0, (
-            f"cặp camera chồng lấn ({', '.join(sorted(cams))} ↔ {tracklet.cam_id}) nhưng "
+            f"cặp camera chồng lấn ({', '.join(sorted(veto))} ↔ {tracklet.cam_id}) nhưng "
             "không có mốc thời gian chung để so vị trí (ground_gap_policy=reject)"
         )
 
@@ -483,16 +511,26 @@ def _synchronized_distance(a: np.ndarray, b: np.ndarray, tol_ms: int) -> float |
 
 
 def costs_for_hungarian(matrix: np.ndarray, max_cost: float) -> np.ndarray:
-    """Thay `inf` bằng một giá trị hữu hạn đủ lớn để `linear_sum_assignment` chạy được.
+    """Ma trận cho `linear_sum_assignment`: ô bất khả thi VÀ ô vượt ngưỡng đều bị chặn.
 
-    `scipy.optimize.linear_sum_assignment` ném lỗi khi ma trận có `inf` mà không tồn tại
-    phép gán hoàn chỉnh — chuyện xảy ra liên tục ở đây vì phần lớn ô bị ràng buộc loại bỏ.
-    Cách chuẩn: đổi `inf` thành hằng số lớn hơn hẳn `max_cost`, chạy Hungarian, rồi bỏ mọi
-    cặp có chi phí GỐC vượt ngưỡng. Giá trị thay thế không ảnh hưởng kết quả vì mọi cặp
-    dùng tới nó đều bị loại ở bước sau.
+    Hai việc, cùng một lý do:
+
+    1. `scipy.optimize.linear_sum_assignment` ném lỗi khi ma trận có `inf` mà không tồn tại
+       phép gán hoàn chỉnh — chuyện xảy ra liên tục ở đây vì phần lớn ô bị ràng buộc loại
+       bỏ. Nên `inf` phải thành một hằng số hữu hạn lớn hơn hẳn `max_cost`.
+    2. Ô có chi phí `>= max_cost` cũng bị chặn **trước** khi chạy Hungarian, chứ không lọc
+       sau. Bản trước lọc sau, với lập luận "Hungarian cần thấy toàn bộ ma trận mới tối ưu
+       đúng" — lập luận đó SAI: ô sẽ-bị-loại vẫn rẻ hơn ô chặn, nên Hungarian sẵn sàng đẩy
+       một hàng vào đó để hàng khác lấy ô rẻ hơn, và cặp hợp lệ bị mất. Ví dụ tối thiểu với
+       `max_cost=0.30`, ma trận `[[0.25, 0.35], [0.05, 0.28]]`: lọc sau cho (0→0.35 bị loại,
+       1→0.05) nên chỉ nhận một cặp; chặn trước cho (0→0.25, 1→0.28) nhận cả hai. Đây cũng
+       là cách SORT/DeepSORT làm (gate rồi mới ghép).
+
+    Giá trị thay thế không ảnh hưởng kết quả: mọi cặp dùng tới nó đều bị bỏ ở bước sau, vì
+    bên gọi vẫn đối chiếu với chi phí GỐC.
     """
     blocked = max_cost * 10.0 + 1.0
-    return np.where(np.isfinite(matrix), matrix, blocked)
+    return np.where(np.isfinite(matrix) & (matrix < max_cost), matrix, blocked)
 
 
 def summarize(matrix: CostMatrix, *, limit: int = 10) -> Iterable[str]:

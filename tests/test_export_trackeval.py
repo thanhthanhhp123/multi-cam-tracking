@@ -17,12 +17,22 @@ from common.motformat import TrackEvalLayout, parse_mot
 from common.schema import Detection, FrameMessage
 from tools.cvat_to_mot import CvatError, assign_global_ids, parse_cvat_video, write_ground_truth
 from tools.export_trackeval import (
+    GlobalIdIndex,
     GtSource,
     export_mct,
     export_sct,
     load_global_ids,
     load_gt_table,
 )
+
+
+def _gids(mapping: dict, *, start: int = 0, end: int = 10**12):
+    """`{(cam, local): gid}` → `GlobalIdIndex` phủ trọn thời gian.
+
+    Tra cứu Global ID có khoá thời gian (một local id có thể mang nhiều Global ID ở hai
+    khoảng khác nhau); các test dưới đây không quan tâm chiều đó nên phủ trọn dải.
+    """
+    return GlobalIdIndex({key: [(start, end, gid)] for key, gid in mapping.items()})
 
 
 def msg(cam_id: str, frame_id: int, dets: list[Detection]) -> FrameMessage:
@@ -107,7 +117,7 @@ def test_mct_dung_global_id_chu_khong_phai_local(tmp_path, messages):
     lay = TrackEvalLayout(root=tmp_path, benchmark="MCT", split="mct")
     gt = {("cam01", 1): 100, ("cam02", 7): 100}
     gids = {("cam01", 1): 55, ("cam02", 7): 55}
-    _, stats = export_mct(messages, gt, gids, lay, tracker="t", fps=25.0)
+    _, stats = export_mct(messages, gt, _gids(gids), lay, tracker="t", fps=25.0)
 
     assert {r.track_id for r in parse_mot(lay.gt_file("all"))} == {100}
     assert {r.track_id for r in parse_mot(lay.result_file("t", "all"))} == {55}
@@ -118,7 +128,7 @@ def test_mct_hai_camera_khong_dam_khung_len_nhau(tmp_path, messages):
     """Đây là chỗ thủ thuật chuỗi ảo hỏng lặng lẽ nếu offset sai."""
     lay = TrackEvalLayout(root=tmp_path, benchmark="MCT", split="mct")
     gt = {("cam01", 1): 100, ("cam02", 7): 200}
-    _, stats = export_mct(messages, gt, {}, lay, tracker="t", fps=25.0)
+    _, stats = export_mct(messages, gt, _gids({}), lay, tracker="t", fps=25.0)
 
     # Lấy khung ĐẦU của mỗi id: track 100 có mặt ở hai khung, dict comprehension thường
     # sẽ giữ khung cuối và làm test nói sai điều mình định nói.
@@ -135,7 +145,7 @@ def test_mct_detection_chua_co_global_id_tinh_la_bo_sot(tmp_path, messages):
     recall — không được lặng lẽ thêm vào kết quả bằng id bịa."""
     lay = TrackEvalLayout(root=tmp_path, benchmark="MCT", split="mct")
     gt = {("cam01", 1): 100, ("cam02", 7): 200}
-    _, stats = export_mct(messages, gt, {("cam01", 1): 55}, lay, tracker="t", fps=25.0)
+    _, stats = export_mct(messages, gt, _gids({("cam01", 1): 55}), lay, tracker="t", fps=25.0)
 
     assert {r.track_id for r in parse_mot(lay.result_file("t", "all"))} == {55}
     # cam01 track 2 (một khung) và cam02 track 7 (một khung) đều chưa có Global ID.
@@ -146,7 +156,7 @@ def test_mct_detection_chua_co_global_id_tinh_la_bo_sot(tmp_path, messages):
 def test_mct_detection_khong_co_trong_bang_gt_van_vao_ket_qua(tmp_path, messages):
     """Đối xứng với sct: hệ thống báo cáo mọi thứ nó thấy, ground-truth mới là bên lọc."""
     lay = TrackEvalLayout(root=tmp_path, benchmark="MCT", split="mct")
-    _, stats = export_mct(messages, {}, {("cam01", 2): 77}, lay, tracker="t", fps=25.0)
+    _, stats = export_mct(messages, {}, _gids({("cam01", 2): 77}), lay, tracker="t", fps=25.0)
     assert stats["n_gt"] == 0 and stats["n_result"] == 1
 
 
@@ -155,21 +165,46 @@ def test_mct_detection_khong_co_trong_bang_gt_van_vao_ket_qua(tmp_path, messages
 # --------------------------------------------------------------------------------------
 
 
-def test_doc_global_id_tu_sqlite_lay_dong_moi_nhat(tmp_path):
+def _db_hai_manh(tmp_path):
+    """Một `(cam, local_track_id)` bị cắt thành hai tracklet mang hai Global ID khác nhau."""
     db = tmp_path / "mct.db"
     con = sqlite3.connect(db)
     con.execute(
         "CREATE TABLE appearances (tracklet_id INTEGER PRIMARY KEY, global_id INTEGER, "
-        "cam_id TEXT, local_track_id INTEGER, start_ms INTEGER)"
+        "cam_id TEXT, local_track_id INTEGER, start_ms INTEGER, end_ms INTEGER)"
     )
     con.executemany(
-        "INSERT INTO appearances VALUES (?,?,?,?,?)",
-        [(1, 10, "cam01", 3, 1000), (2, 20, "cam01", 3, 5000)],
+        "INSERT INTO appearances VALUES (?,?,?,?,?,?)",
+        [(1, 10, "cam01", 3, 1000, 2000), (2, 20, "cam01", 3, 5000, 6000)],
     )
     con.commit()
     con.close()
+    return db
 
-    assert load_global_ids(db) == {("cam01", 3): 20}
+
+def test_doc_global_id_tra_theo_thoi_diem_cua_detection(tmp_path):
+    """Mảnh sau KHÔNG được ghi đè mảnh trước: tra theo `ts_ms`, không theo khoá phẳng.
+
+    Gộp hai mảnh vào một ô dict làm mọi detection của mảnh đầu mang Global ID của mảnh
+    cuối — một id-switch do chính khâu chấm điểm bịa ra (worklog 2026-09-06-17).
+    """
+    index = load_global_ids(_db_hai_manh(tmp_path))
+
+    assert index.get("cam01", 3, 1500) == 10
+    assert index.get("cam01", 3, 5500) == 20
+    assert index.n_appearances == 2
+
+
+def test_detection_ngoai_moi_khoang_khong_co_global_id(tmp_path):
+    """Rơi vào khoảng lặng giữa hai mảnh, hoặc thuộc tracklet bị `min_frames` loại → None.
+
+    Trả None là đúng: engine THẬT SỰ chưa gán Global ID nào cho detection đó, nên nó phải
+    được tính là bỏ sót chứ không phải gán cho một danh tính gần đúng.
+    """
+    index = load_global_ids(_db_hai_manh(tmp_path))
+
+    assert index.get("cam01", 3, 3000) is None
+    assert index.get("cam01", 99, 1500) is None
 
 
 def test_doc_bang_gt_dung_dinh_dang_chung(tmp_path):
@@ -337,7 +372,7 @@ def test_sct_gt_rieng_lay_hop_cua_chu_thich(tmp_path, messages, annotation):
 def test_mct_gt_rieng_dung_gt_global_id_cua_bang_chu_thich(tmp_path, messages, annotation):
     lay = TrackEvalLayout(root=tmp_path, benchmark="MCT", split="mct")
     _, stats = export_mct(
-        messages, {}, {("cam01", 1): 7}, lay, tracker="t", fps=2.0, gt_source=annotation
+        messages, {}, _gids({("cam01", 1): 7}), lay, tracker="t", fps=2.0, gt_source=annotation
     )
 
     assert stats["n_gt"] == 2  # hai hộp chú thích, không phải hộp của kết quả
@@ -352,7 +387,7 @@ def test_mct_mot_danh_tinh_khong_bao_gio_co_hai_hop_trong_MOT_khung(tmp_path, an
     hộp rơi vào cùng một khung ảo và TrackEval từ chối chấm cả chuỗi.
     """
     lay = TrackEvalLayout(root=tmp_path, benchmark="MCT", split="mct")
-    export_mct(annotation.messages, {}, {}, lay, tracker="t", fps=2.0, gt_source=annotation)
+    export_mct(annotation.messages, {}, _gids({}), lay, tracker="t", fps=2.0, gt_source=annotation)
 
     rows = parse_mot(lay.gt_file("all"))
     assert len(rows) == 2

@@ -8,8 +8,10 @@ Vòng gán của một cửa sổ:
    chạy ngon lành. Tách ra trước là cách rẻ nhất để chuyện đó không xảy ra.
 2. Phần còn lại: dựng ma trận chi phí (`affinity.build_cost_matrix`), chạy
    `scipy.optimize.linear_sum_assignment`.
-3. Cặp có chi phí `< max_cost` thì nhận; còn lại **tạo Global ID mới**. Ngưỡng đặt sau
-   Hungarian chứ không phải trước: Hungarian cần thấy toàn bộ ma trận mới tối ưu đúng.
+3. Ô vượt `max_cost` bị chặn **trước** khi chạy Hungarian (`costs_for_hungarian`), không
+   lọc sau. Lọc sau thì Hungarian còn thấy ô sẽ-bị-loại là "rẻ" so với ô chặn và sẵn sàng
+   đẩy một hàng vào đó để hàng khác lấy ô rẻ hơn — mất một cặp hợp lệ. Hàng không ghép
+   được ô nào **tạo Global ID mới**.
 4. Tracklet không khớp được ai → Global ID mới.
 
 **Online và offline khác nhau ở chỗ nào.** Không phải ở thuật toán — cùng đúng một hàm
@@ -180,10 +182,10 @@ class Associator:
             rows, cols = linear_sum_assignment(padded)
             for row, col in zip(rows, cols, strict=True):
                 cost = float(matrix.costs[row, col])
+                # Ô vượt ngưỡng đã bị chặn trước khi ghép, nhưng Hungarian vẫn phải trả về
+                # một cột cho mọi hàng — nên vẫn đối chiếu với chi phí GỐC ở đây.
                 if cost < self.config.max_cost:
                     matched_rows[int(row)] = (int(col), cost)
-                elif np.isfinite(cost):
-                    self.stats.rejected_by_threshold += 1
 
         for row, tracklet in enumerate(tracklets):
             hit = matched_rows.get(row)
@@ -199,9 +201,11 @@ class Associator:
                 )
                 continue
 
-            reason = _why_new(matrix, row, self.config.max_cost)
-            if "không còn ứng viên" in reason:
+            kind, reason = _why_new(matrix, row, self.config.max_cost)
+            if kind == "no_candidate":
                 self.stats.no_candidate += 1
+            elif kind == "threshold":
+                self.stats.rejected_by_threshold += 1
             track = self.gallery.create(tracklet)
             self.stats.created += 1
             results.append(
@@ -238,20 +242,29 @@ class Associator:
         return None if track is None else track.global_id
 
 
-def _why_new(matrix: CostMatrix, row: int, max_cost: float) -> str:
-    """Lý do một tracklet phải nhận Global ID mới — ghi vào log để truy được về sau."""
+def _why_new(matrix: CostMatrix, row: int, max_cost: float) -> tuple[str, str]:
+    """Vì sao tracklet này phải nhận Global ID mới: `(loại, mô tả)`.
+
+    Trả về `loại` chứ không để bên gọi dò chuỗi tiếng Việt: thống kê `no_candidate` và
+    `rejected_by_threshold` phân biệt hai tình huống khác hẳn nhau (ràng buộc không-thời
+    gian loại sạch ứng viên, so với ngoại hình không đủ giống), và một lần đổi chữ trong
+    câu mô tả không được phép làm hỏng bảng thống kê của chương 6.
+    """
     if not matrix.tracks:
-        return "gallery đang rỗng, đây là người đầu tiên"
+        return "empty", "gallery đang rỗng, đây là người đầu tiên"
 
     costs = matrix.costs[row]
     finite = costs[np.isfinite(costs)]
     if finite.size == 0:
         reasons = {matrix.reason(row, col) for col in range(len(matrix.tracks))}
         detail = "; ".join(sorted(r for r in reasons if r)[:3])
-        return f"không còn ứng viên khả thi sau ràng buộc ({detail})"
+        return "no_candidate", f"không còn ứng viên khả thi sau ràng buộc ({detail})"
 
     best = float(finite.min())
-    return f"ứng viên tốt nhất có cost={best:.4f} >= max_cost={max_cost}"
+    if best >= max_cost:
+        return "threshold", f"ứng viên tốt nhất có cost={best:.4f} >= max_cost={max_cost}"
+    # Còn ô rẻ hơn ngưỡng nhưng Hungarian đã trao nó cho tracklet khác của cùng camera.
+    return "taken", f"ứng viên tốt nhất (cost={best:.4f}) đã bị tracklet khác lấy mất"
 
 
 def run_offline(

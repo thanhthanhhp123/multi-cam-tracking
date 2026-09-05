@@ -38,6 +38,10 @@ gallery:
   similarity_mode: max
 association:
   window_ms: 1000
+  # 0: ràng buộc loại trừ giờ hỏi "hai tracklet có TRÙNG thời gian không" thay vì "cái kia
+  # có vừa mới xuất hiện không". Trên fixture này khác biệt là lớn nhất, vì `idle_timeout_ms`
+  # ở đây là 30 s: bản trước cấm ghép mọi mảnh nối tiếp cách nhau dưới 30 giây.
+  exclusion_slack_ms: 0
   max_cost: 0.80
   homography_weight: 0.4
   # 5.0 m, không phải 1.0: ngưỡng 1.0 chỉnh trên bbox GT (d_ground cùng người trung vị

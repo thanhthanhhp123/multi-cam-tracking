@@ -45,6 +45,11 @@ SimilarityMode = Literal["max", "centroid"]
 # SQLite (store.py) — đây chỉ là phần đủ dùng cho ràng buộc gán ở cửa sổ hiện tại.
 _MAX_MEMBERS = 32
 
+# Số khoảng thời gian giữ cho mỗi camera trong `GlobalTrack.cam_spans` (ràng buộc loại trừ).
+# Một người quay lại cùng một camera nhiều lần thì chỉ vài lượt gần nhất còn khả năng trùng
+# thời gian với tracklet đang xét; giữ tất cả là rò rỉ bộ nhớ cho một phiên chạy dài.
+_MAX_SPANS_PER_CAM = 8
+
 
 @dataclass(slots=True, frozen=True)
 class TrackletRef:
@@ -156,6 +161,20 @@ class GlobalTrack:
     cam_last_tracklet: dict[str, int] = field(default_factory=dict)
     """cam_id → tracklet_id gần nhất ở camera đó. Dùng cho ràng buộc loại trừ cùng camera."""
 
+    cam_spans: dict[str, list[tuple[int, int, int]]] = field(default_factory=dict)
+    """cam_id → [(start_ms, end_ms, tracklet_id)] của các tracklet gần đây ở camera đó.
+
+    Ràng buộc loại trừ hỏi "hai tracklet có TRÙNG THỜI GIAN không", không phải "cái kia
+    vừa mới xuất hiện gần đây không" — nên cần cả khoảng, không chỉ mốc cuối (xem
+    `overlaps_in()`).
+
+    Và phải giữ NHIỀU khoảng chứ không chỉ khoảng của tracklet mới nhất: một GlobalTrack
+    có thể ôm vài tracklet nối tiếp nhau ở cùng một camera, mà thứ tự hấp thụ không nhất
+    thiết theo thời gian. Chỉ nhớ cái cuối thì một tracklet đến muộn nhưng nằm ở khoảng
+    SỚM hơn sẽ lọt qua và Global ID đó có hai hộp trong cùng một khung — TrackEval từ chối
+    chấm cả chuỗi khi gặp chuyện này (đo 2026-09-06).
+    """
+
     cam_ground_path: dict[str, list[tuple[int, tuple[float, float]]]] = field(default_factory=dict)
     """cam_id → quỹ đạo (ts_ms, điểm chân ảnh) của tracklet gần nhất ở camera đó.
 
@@ -179,15 +198,39 @@ class GlobalTrack:
     def last_seen_in(self, cam_id: str) -> int | None:
         return self.cam_last_seen.get(cam_id)
 
-    def is_active_in(self, cam_id: str, now_ms: int, window_ms: int) -> bool:
-        """Có tracklet còn sống ở camera này không (ràng buộc loại trừ, CLAUDE.md §6 bước 2).
+    def overlaps_in(
+        self,
+        cam_id: str,
+        start_ms: int,
+        end_ms: int,
+        slack_ms: int = 0,
+        *,
+        ignore_tracklet_id: int | None = None,
+    ) -> bool:
+        """Tracklet ở camera này có TRÙNG THỜI GIAN với `[start_ms, end_ms]` không.
 
-        Một người không thể đồng thời là hai local track khác nhau trong cùng một camera,
-        nên GlobalTrack đang hiện diện ở camera `c` bị loại khỏi danh sách ứng viên của
-        một tracklet khác cũng thuộc `c`.
+        Đây là ràng buộc loại trừ (CLAUDE.md §6 bước 2), và mệnh đề của nó là *đồng thời*:
+        một người không thể là hai local track khác nhau của cùng một camera **tại cùng
+        một lúc**. Hai tracklet NỐI TIẾP nhau thì không mâu thuẫn gì — đó chính là hình
+        dạng của một lần tracker đổi id giữa chừng, và ghép chúng lại là việc engine phải
+        làm được.
+
+        Bản trước hỏi "lần cuối thấy ở camera này có gần đây không" (`now − last ≤ window`,
+        `window` lấy bằng `idle_timeout_ms`). Với `idle_timeout_ms` lớn — 30 s trên fixture
+        WildTrack — điều đó cấm luôn việc nối lại mảnh vỡ ngay sau khi tracker cắt id, tức
+        tự tay chặn đúng thứ AssA đang mất điểm. Đo 2026-09-06: 12/15 cặp mảnh nối tiếp
+        cùng camera cùng người nằm trong cửa sổ đó (`docs/worklog/2026-09-06-17-*`).
+
+        `slack_ms` nới hai đầu khoảng để chịu jitter mốc thời gian; 0 là mặc định và đúng
+        về mặt ngữ nghĩa (chồng lấn thật sự mới là mâu thuẫn). `ignore_tracklet_id` để một
+        tracklet đang được cập nhật không tự phủ quyết chính nó.
         """
-        last = self.cam_last_seen.get(cam_id)
-        return last is not None and now_ms - last <= window_ms
+        return any(
+            tracklet_id != ignore_tracklet_id
+            and start_ms <= end + slack_ms
+            and end_ms >= start - slack_ms
+            for start, end, tracklet_id in self.cam_spans.get(cam_id, ())
+        )
 
     def owns_tracklet(self, tracklet: Tracklet) -> bool:
         """Tracklet này có phải chính tracklet đang gán ở camera đó không.
@@ -269,6 +312,13 @@ class Gallery:
 
         track.cam_last_tracklet[tracklet.cam_id] = tracklet.tracklet_id
         track.cam_ground_path[tracklet.cam_id] = tracklet.ground_path
+        spans = [
+            span
+            for span in track.cam_spans.get(tracklet.cam_id, [])
+            if span[2] != tracklet.tracklet_id
+        ]
+        spans.append((tracklet.start_ms, tracklet.end_ms, tracklet.tracklet_id))
+        track.cam_spans[tracklet.cam_id] = sorted(spans)[-_MAX_SPANS_PER_CAM:]
         track.cam_last_seen[tracklet.cam_id] = max(
             tracklet.end_ms, track.cam_last_seen.get(tracklet.cam_id, tracklet.end_ms)
         )
@@ -281,6 +331,14 @@ class Gallery:
         query = tracklet.query_embedding(self.config.topk_query)
         if query is None:  # pipeline chạy với ReID tắt (M1/M2) — vẫn theo dõi được vòng đời
             return
+
+        # Cùng một tracklet được gán lại ở mỗi cửa sổ (chế độ online), nên phải THAY bản
+        # ghi cũ chứ không chồng thêm: không có bước này thì một tracklet dài chiếm trọn
+        # `max_size` ô và `_enforce_quota` đẩy hết ngoại hình của camera khác ra ngoài —
+        # đúng lúc cần chúng nhất. Đo 2026-09-06 trên fixture DeepStream: 32/32 ô thuộc về
+        # một tracklet, khử trùng lặp thì còn trung vị 3 và F1 online 0.153 → 0.163.
+        if track.entries and any(e.tracklet_id == tracklet.tracklet_id for e in track.entries):
+            track.entries = [e for e in track.entries if e.tracklet_id != tracklet.tracklet_id]
 
         track.entries.append(
             GalleryEntry(
@@ -330,7 +388,7 @@ class Gallery:
 
     # ------------------------------------------------------------------ truy vấn
 
-    def candidates(self, tracklet: Tracklet, *, exclusion_window_ms: int) -> list[GlobalTrack]:
+    def candidates(self, tracklet: Tracklet, *, exclusion_slack_ms: int = 0) -> list[GlobalTrack]:
         """Ứng viên có thể khớp với `tracklet`, sau ràng buộc loại trừ cùng camera.
 
         Chỉ lọc phần phụ thuộc camera; ràng buộc thời gian di chuyển giữa cặp camera là
@@ -340,7 +398,9 @@ class Gallery:
             track
             for track in self._tracks.values()
             if track.owns_tracklet(tracklet)
-            or not track.is_active_in(tracklet.cam_id, tracklet.end_ms, exclusion_window_ms)
+            or not track.overlaps_in(
+                tracklet.cam_id, tracklet.start_ms, tracklet.end_ms, exclusion_slack_ms
+            )
         ]
         return sorted(out, key=lambda t: t.global_id)
 

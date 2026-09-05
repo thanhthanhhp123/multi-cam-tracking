@@ -66,21 +66,54 @@ def load_gt_table(path: Path) -> dict[tuple[str, int], int]:
     }
 
 
-def load_global_ids(db_path: Path) -> dict[tuple[str, int], int]:
-    """SQLite store -> {(cam_id, local_track_id): global_id}.
+@dataclass(frozen=True)
+class GlobalIdIndex:
+    """`(cam_id, local_track_id, ts_ms)` → Global ID, tra theo THỜI ĐIỂM của detection.
 
-    Một `(cam_id, local_track_id)` có thể có nhiều dòng `appearances` nếu tracklet bị cắt
-    rồi cấp lại cùng local id; lấy dòng MỚI NHẤT theo `start_ms`, khớp với thứ dashboard
-    hiển thị.
+    Một `(cam_id, local_track_id)` có thể có nhiều dòng `appearances`: nvtracker cấp lại số
+    cũ cho người khác, hoặc `TrackletBuilder` cắt một local track thành nhiều tracklet sau
+    một khoảng lặng. Bản trước gộp chúng lại thành một ô của dict nên **mảnh cuối ghi đè
+    mọi mảnh trước**, và toàn bộ detection của các mảnh đầu bị xuất ra dưới Global ID của
+    mảnh cuối — một lỗi chỉ có ở khâu chấm điểm, nhưng nó bịa ra id-switch mà engine không
+    hề gây ra và ăn thẳng vào AssA/IDF1.
+
+    Nên khoá tra cứu phải có thời gian, và detection không rơi vào khoảng nào thì trả
+    `None`: tracklet bị `min_frames` loại thì engine THẬT SỰ chưa gán Global ID nào cho nó,
+    và tính là bỏ sót mới đúng.
     """
+
+    spans: dict[tuple[str, int], list[tuple[int, int, int]]]
+    """(cam_id, local_track_id) → [(start_ms, end_ms, global_id)] đã sắp theo start_ms."""
+
+    def get(self, cam_id: str, local_track_id: int, ts_ms: int) -> int | None:
+        for start_ms, end_ms, gid in self.spans.get((cam_id, int(local_track_id)), ()):
+            if start_ms <= ts_ms <= end_ms:
+                return gid
+        return None
+
+    @property
+    def n_appearances(self) -> int:
+        return sum(len(v) for v in self.spans.values())
+
+    def __len__(self) -> int:
+        return len(self.spans)
+
+
+def load_global_ids(db_path: Path) -> GlobalIdIndex:
+    """SQLite store -> `GlobalIdIndex` (xem docstring lớp đó về vì sao cần thời gian)."""
     con = sqlite3.connect(f"file:{db_path}?mode=ro", uri=True)
     try:
         rows = con.execute(
-            "SELECT cam_id, local_track_id, global_id FROM appearances ORDER BY start_ms"
+            "SELECT cam_id, local_track_id, start_ms, end_ms, global_id FROM appearances "
+            "ORDER BY start_ms"
         ).fetchall()
     finally:
         con.close()
-    return {(str(cam), int(local)): int(gid) for cam, local, gid in rows}
+
+    spans: dict[tuple[str, int], list[tuple[int, int, int]]] = defaultdict(list)
+    for cam, local, start_ms, end_ms, gid in rows:
+        spans[(str(cam), int(local))].append((int(start_ms), int(end_ms), int(gid)))
+    return GlobalIdIndex(spans=dict(spans))
 
 
 def _messages_by_cam(messages: list[FrameMessage]) -> dict[str, list[FrameMessage]]:
@@ -186,7 +219,7 @@ def export_sct(
 def export_mct(
     messages: list[FrameMessage],
     gt: dict[tuple[str, int], int],
-    global_ids: dict[tuple[str, int], int],
+    global_ids: GlobalIdIndex,
     layout: TrackEvalLayout,
     *,
     tracker: str,
@@ -223,7 +256,7 @@ def export_mct(
                 if gt_source is None and key in gt:
                     gt_rows.append(MotRow(frame, gt[key], *_box(det)))
                     stats["n_gt"] += 1
-                gid = global_ids.get(key)
+                gid = global_ids.get(cam_id, int(det.local_track_id), int(msg.ts_ms))
                 if gid is None:
                     stats["n_unassigned"] += 1
                     continue

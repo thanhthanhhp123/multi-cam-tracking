@@ -46,6 +46,15 @@ gallery:
 association:
   # Chu kỳ chạy vòng gán (ms).
   window_ms: 1000
+  # Ràng buộc loại trừ cùng camera: một người không thể là hai local track khác nhau của
+  # cùng một camera TẠI CÙNG MỘT LÚC. Khoá này chỉ nới hai đầu khoảng thời gian khi hỏi
+  # "hai tracklet có trùng nhau không", để chịu jitter mốc thời gian giữa các luồng.
+  #
+  # 0 là mặc định và đúng về ngữ nghĩa. Bản trước dùng `exclusion_window_ms` lấy bằng
+  # `tracklet.idle_timeout_ms`, tức coi "vừa mới thấy ở camera này" là mâu thuẫn — điều đó
+  # cấm luôn việc nối lại hai mảnh NỐI TIẾP nhau do nvtracker đổi id giữa chừng, mà ghép
+  # được chúng mới là chỗ AssA đang mất điểm nhiều nhất (docs/worklog/2026-09-06-17-*).
+  exclusion_slack_ms: 0
   # cost = 1 - cosine_similarity (+ lambda * d_ground với cặp overlap đã hiệu chỉnh).
   # Chấp nhận cặp gán nếu cost < ngưỡng, ngược lại tạo Global ID mới.
   #

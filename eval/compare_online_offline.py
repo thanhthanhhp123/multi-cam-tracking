@@ -21,7 +21,10 @@ Cùng một fixture, cùng tham số, cùng chỉ số (cặp tracklet khác cam
 from __future__ import annotations
 
 import argparse
+from dataclasses import replace
 from pathlib import Path
+
+import yaml
 
 from common.schema import read_jsonl
 from eval.eval_wildtrack import load_gt, overlapping_topology, score
@@ -71,8 +74,21 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--fixture", type=Path, required=True)
     p.add_argument("--gt", type=Path, default=None)
     p.add_argument("--homography-dir", type=Path, default=None)
+    p.add_argument(
+        "--config",
+        type=Path,
+        default=None,
+        help="YAML tham số engine. CÓ thì nó quyết định mọi ngưỡng (trừ --max-cost, "
+        "--mode, --ground-gap-policy là chiều đang so) — xem eval_wildtrack.load_configs",
+    )
     p.add_argument("--max-cost", type=float, default=0.5)
     p.add_argument("--min-frames", type=int, default=3)
+    p.add_argument(
+        "--idle-timeout-ms",
+        type=int,
+        default=2000,
+        help="chỉ dùng khi KHÔNG có --config. 2000 ms là quá ngắn cho dữ liệu 2 fps",
+    )
     p.add_argument("--window-ms", type=int, default=1000)
     p.add_argument("--mode", default="max", choices=("max", "centroid"))
     p.add_argument("--ground-gap-policy", default="reject", choices=("allow", "reject"))
@@ -85,18 +101,31 @@ def main(argv: list[str] | None = None) -> int:
     cam_ids = sorted({m.cam_id for m in messages})
     mapper = HomographyMapper.load(args.homography_dir) if args.homography_dir else None
 
-    tracklet_config = TrackletConfig(min_frames=args.min_frames, idle_timeout_ms=2000)
-    affinity = AffinityConfig(
+    # Hai chế độ phải chạy CÙNG một bộ tham số, và bộ đó phải là bộ của `python -m mct`:
+    # dựng cấu hình bằng tay ở đây từng làm bộ chấm điểm lệch khỏi engine (worklog 17).
+    if args.config is not None:
+        data = yaml.safe_load(args.config.read_text(encoding="utf-8")) or {}
+        tracklet_config = TrackletConfig.from_mapping(data)
+        base_affinity = AffinityConfig.from_mapping(data)
+        base_gallery = GalleryConfig.from_mapping(data)
+    else:
+        tracklet_config = TrackletConfig(
+            min_frames=args.min_frames, idle_timeout_ms=args.idle_timeout_ms
+        )
+        base_affinity = AffinityConfig(max_ground_dist_m=args.max_ground_dist)
+        base_gallery = GalleryConfig()
+
+    affinity = replace(
+        base_affinity,
         max_cost=args.max_cost,
         similarity_mode=args.mode,  # type: ignore[arg-type]
-        max_ground_dist_m=args.max_ground_dist,
         ground_gap_policy=args.ground_gap_policy,
     )
 
     def _associator() -> Associator:
         return Associator(
             topology=overlapping_topology(cam_ids),
-            gallery=Gallery(GalleryConfig(similarity_mode=args.mode)),  # type: ignore[arg-type]
+            gallery=Gallery(replace(base_gallery, similarity_mode=args.mode)),  # type: ignore[arg-type]
             config=affinity,
             ground_mapper=mapper,
         )
@@ -117,7 +146,7 @@ def main(argv: list[str] | None = None) -> int:
         build_tracklets(messages, tracklet_config),
         topology=overlapping_topology(cam_ids),
         config=affinity,
-        gallery_config=GalleryConfig(similarity_mode=args.mode),  # type: ignore[arg-type]
+        gallery_config=replace(base_gallery, similarity_mode=args.mode),  # type: ignore[arg-type]
         ground_mapper=mapper,
         window_ms=args.window_ms,
     )

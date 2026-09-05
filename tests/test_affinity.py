@@ -226,9 +226,7 @@ def test_rang_buoc_loai_tru_cung_camera(rng):
     track = gallery.create(_tracklet("cam01", 1, start_ms=0, embedding=vec, tracklet_id=1))
 
     other = _tracklet("cam01", 2, start_ms=100, embedding=vec, tracklet_id=2)
-    matrix = build_cost_matrix(
-        [other], [track], topology=TOPO, config=AffinityConfig(exclusion_window_ms=2_000)
-    )
+    matrix = build_cost_matrix([other], [track], topology=TOPO, config=AffinityConfig())
 
     assert matrix.costs[0, 0] == INFEASIBLE
     assert "ràng buộc loại trừ" in matrix.reason(0, 0)
@@ -241,9 +239,7 @@ def test_het_cua_so_loai_tru_thi_khop_lai_duoc(rng):
     track = gallery.create(_tracklet("cam01", 1, start_ms=0, embedding=vec, tracklet_id=1))
 
     comeback = _tracklet("cam01", 9, start_ms=60_000, embedding=vec, tracklet_id=2)
-    matrix = build_cost_matrix(
-        [comeback], [track], topology=TOPO, config=AffinityConfig(exclusion_window_ms=2_000)
-    )
+    matrix = build_cost_matrix([comeback], [track], topology=TOPO, config=AffinityConfig())
 
     assert np.isfinite(matrix.costs[0, 0])
 
@@ -332,6 +328,35 @@ def test_costs_for_hungarian_thay_inf_bang_gia_tri_lon_hon_nguong():
     assert (padded[0, 1] > 0.3) and (padded[1, 1] > 0.3)
 
 
+def test_costs_for_hungarian_chan_luon_o_vuot_nguong():
+    """Ô >= max_cost phải bị chặn TRƯỚC khi ghép, không phải lọc sau."""
+    raw = np.array([[0.25, 0.35], [0.05, 0.28]])
+    padded = costs_for_hungarian(raw, max_cost=0.30)
+
+    assert padded[0, 1] > 0.30  # 0.35 bị chặn
+    assert padded[0, 0] == pytest.approx(0.25)
+    assert padded[1, 1] == pytest.approx(0.28)
+
+
+def test_gate_truoc_hungarian_giu_duoc_cap_ma_gate_sau_lam_mat():
+    """Ma trận tối thiểu chứng minh vì sao ngưỡng phải đặt trước Hungarian.
+
+    Lọc SAU: Hungarian thấy 0.35 rẻ hơn ô chặn nên đẩy hàng 0 vào đó để hàng 1 lấy 0.05,
+    và hàng 0 mất cặp hợp lệ 0.25. Chặn TRƯỚC: ghép (0→0.25, 1→0.28), nhận cả hai.
+    """
+    from scipy.optimize import linear_sum_assignment
+
+    raw = np.array([[0.25, 0.35], [0.05, 0.28]])
+    max_cost = 0.30
+
+    gate_sau = np.where(np.isfinite(raw), raw, max_cost * 10.0 + 1.0)
+    rows, cols = linear_sum_assignment(gate_sau)
+    assert sum(raw[r, c] < max_cost for r, c in zip(rows, cols, strict=True)) == 1
+
+    rows, cols = linear_sum_assignment(costs_for_hungarian(raw, max_cost))
+    assert sum(raw[r, c] < max_cost for r, c in zip(rows, cols, strict=True)) == 2
+
+
 def test_ma_tran_rong_khong_no():
     matrix = build_cost_matrix([], [], topology=TOPO)
     assert matrix.shape == (0, 0)
@@ -348,7 +373,7 @@ def test_config_doc_duoc_tu_mct_yaml(repo_root):
     assert config.max_cost == data["association"]["max_cost"]
     assert config.homography_weight == data["association"]["homography_weight"]
     assert config.max_ground_dist_m == data["association"]["max_ground_dist_m"]
-    assert config.exclusion_window_ms == data["tracklet"]["idle_timeout_ms"]
+    assert config.exclusion_slack_ms == data["association"]["exclusion_slack_ms"]
     assert config.topk_query == data["gallery"]["topk_query"]
 
 
@@ -518,3 +543,66 @@ def test_ground_smooth_la_khoa_doc_duoc_tu_yaml_va_kiem_gia_tri():
         AffinityConfig(ground_smooth="savgol")
     with pytest.raises(ValueError, match="ground_smooth_max_gap_ms"):
         AffinityConfig(ground_smooth_max_gap_ms=0)
+
+
+# --------------------------------------------------------------------------- #
+# `ground_gap_policy=reject` chỉ được áp khi hai bên CÙNG TỒN TẠI một lúc
+# --------------------------------------------------------------------------- #
+
+_THREE_CAM_TOPO = Topology.from_mapping(
+    {
+        "cameras": {
+            "cam01": {"overlaps_with": ["cam03"]},
+            "cam02": {},
+            "cam03": {"overlaps_with": ["cam01"]},
+        }
+    }
+)
+
+
+def test_reject_khong_bi_kich_hoat_boi_quy_dao_cu_o_camera_chong_lan(rng):
+    """cam01 (chồng lấn cam03) → cam02 → cam03: quỹ đạo cam01 đã CŨ, không được dùng để loại.
+
+    Hai quỹ đạo cách nhau hàng chục giây thì vốn dĩ không thể có mốc thời gian chung, nên
+    "không có mốc chung" ở đây không phải bằng chứng phủ định — chỉ khi hai bên cùng tồn
+    tại một lúc thì mệnh đề của `reject` mới có nghĩa (worklog 2026-09-06-17).
+    """
+    vec = l2_normalize(rng.standard_normal(DIM))
+    gallery = Gallery()
+    track = gallery.create(_tracklet("cam01", 1, start_ms=0, embedding=vec, tracklet_id=1))
+    gallery.assign(track, _tracklet("cam02", 1, start_ms=10_000, embedding=vec, tracklet_id=2))
+
+    muon = _tracklet("cam03", 1, start_ms=20_000, embedding=vec, tracklet_id=3)
+    matrix = build_cost_matrix(
+        [muon],
+        [track],
+        topology=_THREE_CAM_TOPO,
+        config=AffinityConfig(ground_gap_policy="reject", max_cost=0.9),
+        ground_mapper=_MetricGround(),
+    )
+    assert np.isfinite(matrix.costs[0, 0]), matrix.reason(0, 0)
+
+
+def test_reject_van_loai_khi_hai_quy_dao_trung_thoi_gian_ma_khong_khop_moc(rng):
+    """Đối chứng: cùng khoảng thời gian, camera chồng lấn, nhưng lệch pha mốc lấy mẫu."""
+    vec = l2_normalize(rng.standard_normal(DIM))
+    gallery = Gallery()
+    track = gallery.create(
+        _walking_tracklet("cam01", 1, vec, tracklet_id=1, n_frames=9, step_ms=500)
+    )
+    # Dịch NỬA bước lấy mẫu: hai quỹ đạo phủ cùng khoảng thời gian nhưng không mốc nào
+    # trùng nhau trong dung sai. Dịch trọn một bước (bội của 500 ms) thì chúng lại khớp
+    # mốc y như cũ và test không kiểm được gì.
+    lech_pha = _walking_tracklet("cam03", 1, vec, tracklet_id=2, n_frames=9, step_ms=500)
+    lech_pha.ground_path = [(ts + 250, p) for ts, p in lech_pha.ground_path]
+    lech_pha.start_ms, lech_pha.end_ms = lech_pha.start_ms + 250, lech_pha.end_ms + 250
+
+    matrix = build_cost_matrix(
+        [lech_pha],
+        [track],
+        topology=_THREE_CAM_TOPO,
+        config=AffinityConfig(ground_gap_policy="reject", max_cost=0.9, ground_time_tol_ms=100),
+        ground_mapper=_MetricGround(),
+    )
+    assert matrix.costs[0, 0] == INFEASIBLE
+    assert "mốc thời gian chung" in matrix.reason(0, 0)
