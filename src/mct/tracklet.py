@@ -13,7 +13,16 @@ Hai điểm dễ sai, đã xử lý sẵn ở đây:
    có `tracklet_id` nội bộ tăng dần, và khoảng lặng dài hơn `idle_timeout_ms` sẽ cắt
    sang tracklet mới.
 
-2. **Query embedding không phải embedding frame cuối.** Lấy trung bình có trọng số của
+2. **Điểm chân là số ĐO, không phải sự thật.** `ground_path` giữ nguyên toạ độ thô của
+   từng khung; muốn dùng cho hình học thì lọc nhiễu trước bằng `smooth_ground_path()`
+   (hàm ở cuối file). Đáy-giữa bbox rung theo sai số hộp của detector, và qua homography
+   một vài pixel thành hàng chục cm — đo được: d_ground trung vị giữa hai tracklet cùng
+   người là 0.74 m với hộp detector so với 0.21 m với hộp ground-truth
+   (`docs/worklog/2026-09-05-13-*`). Lọc ở chỗ ĐỌC chứ không ghi đè lúc gom: quan sát thô
+   còn nguyên nên cùng một fixture chấm lại được cả hai cách, và ở chế độ online điểm mới
+   nhất không bị lệch pha vì bộ lọc.
+
+3. **Query embedding không phải embedding frame cuối.** Lấy trung bình có trọng số của
    top-k detection có confidence cao nhất rồi L2-normalize (CLAUDE.md §6 bước 1). Giữ
    toàn bộ embedding của một tracklet dài là phí bộ nhớ, nên chỉ giữ `max_embeddings`
    cái tốt nhất bằng một min-heap theo confidence.
@@ -26,7 +35,7 @@ from __future__ import annotations
 
 import heapq
 from collections import deque
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -414,6 +423,101 @@ class TrackletBuilder:
 
         self.n_closed += 1
         return tracklet
+
+
+GroundPath = Sequence[tuple[int, tuple[float, float]]]
+"""(ts_ms, điểm chân trong ảnh) — kiểu của `Tracklet.ground_path` và của
+`GlobalTrack.cam_ground_path[cam_id]`."""
+
+SMOOTH_METHODS = ("none", "median", "mean", "linear")
+
+
+def smooth_ground_path(
+    path: GroundPath,
+    *,
+    method: str = "median",
+    window: int = 5,
+    max_gap_ms: int = 1000,
+) -> list[tuple[int, tuple[float, float]]]:
+    """Lọc nhiễu quỹ đạo điểm chân, giữ nguyên mốc thời gian của từng điểm.
+
+    Cửa sổ ĐỐI XỨNG quanh mỗi điểm (thu hẹp ở hai đầu), không phải cửa sổ trượt một
+    phía: bộ lọc một phía làm vị trí trễ nửa cửa sổ, mà ở 2 fps thì nửa cửa sổ 5 điểm
+    là 1 s ≈ 1.5 m — tự tay tạo ra đúng loại sai số đang muốn khử.
+
+    `method`:
+      none   — trả về nguyên trạng (đường đối chứng của mọi phép đo).
+      median — trung vị theo từng trục. Chịu được ĐUÔI DÀI của sai số điểm chân: một khung
+               bị che hoặc hộp trượt xuống chân người khác cho điểm lệch hàng mét, trung
+               bình bị kéo theo còn trung vị thì không.
+      mean   — trung bình. Khử nhiễu Gauss mạnh nhất trong ba cách nhưng không chịu được
+               đuôi; giữ lại làm mốc so sánh.
+      linear — khớp đường thẳng theo THỜI GIAN trong cửa sổ rồi lấy giá trị tại đúng mốc
+               của điểm đang xét.
+
+    Vì sao có `linear` chứ không chỉ `median`: cả trung vị và trung bình đều giả định người
+    ĐỨNG YÊN trong cửa sổ. Với người đang đi, hai cách đó kéo điểm về phía giữa cửa sổ —
+    vô hại ở giữa quỹ đạo (cửa sổ đối xứng nên hai phía triệt tiêu) nhưng ở HAI ĐẦU thì cửa
+    sổ bị cắt một bên, và điểm đầu/cuối lệch tới nửa cửa sổ theo hướng di chuyển. Đúng hai
+    điểm đó là thứ `affinity._ground_term` dùng ở đường dự phòng khi hai quỹ đạo không có
+    mốc thời gian chung. Khớp đường thẳng thì tốc độ nằm trong mô hình nên không lệch, đổi
+    lại là mất tính bền với ngoại lai. Không đoán bên nào thắng — đo bằng
+    `eval/diagnose_tracklets.py --ground-smooth`.
+
+    `max_gap_ms` cắt quỹ đạo ở chỗ tracker mất dấu lâu hơn ngưỡng đó. Không có nó thì với
+    `idle_timeout_ms` lớn (30 s trên fixture WildTrack), hai điểm cách nhau 20 s vẫn nằm
+    cùng cửa sổ và bộ lọc trộn hai vị trí chẳng liên quan gì nhau thành một.
+
+    Trả về list mới, KHÔNG sửa `path` — bên gọi có thể là `Tracklet.ground_path` đang
+    dùng chung tham chiếu với `GlobalTrack.cam_ground_path`.
+    """
+    if method not in SMOOTH_METHODS:
+        raise ValueError(f"method phải thuộc {SMOOTH_METHODS}, nhận {method!r}")
+    window = int(window)
+    if method == "none" or window < 3 or len(path) < 3:
+        return list(path)
+
+    # Message có thể tới lệch thứ tự (xem Tracklet.add) nên phải sắp lại: cửa sổ đối
+    # xứng theo chỉ số chỉ có nghĩa khi chỉ số cũng là thứ tự thời gian.
+    ordered = sorted(path, key=lambda item: item[0])
+    stamps = np.array([item[0] for item in ordered], dtype=np.int64)
+    points = np.array([item[1] for item in ordered], dtype=np.float64)
+
+    half = window // 2
+    cuts = np.flatnonzero(np.diff(stamps) > int(max_gap_ms)) + 1
+    smoothed = np.empty_like(points)
+    for start, stop in zip(
+        np.concatenate(([0], cuts)), np.concatenate((cuts, [len(stamps)])), strict=True
+    ):
+        seg_ts = stamps[start:stop].astype(np.float64)
+        seg_xy = points[start:stop]
+        for i in range(len(seg_xy)):
+            lo, hi = max(0, i - half), min(len(seg_xy), i + half + 1)
+            smoothed[start + i] = _reduce_window(method, seg_ts[lo:hi] - seg_ts[i], seg_xy[lo:hi])
+
+    return [
+        (int(ts), (float(point[0]), float(point[1])))
+        for ts, point in zip(stamps, smoothed, strict=True)
+    ]
+
+
+def _reduce_window(method: str, offsets: np.ndarray, points: np.ndarray) -> np.ndarray:
+    """Một cửa sổ → một điểm. `offsets` là Δt (ms) so với điểm đang xét, nên nó có số 0."""
+    if method == "median":
+        return np.median(points, axis=0)
+    if method == "mean":
+        return points.mean(axis=0)
+
+    # linear: khớp points ≈ a + b·Δt rồi lấy a (giá trị tại Δt = 0). Tự tính thay vì gọi
+    # np.polyfit — cửa sổ 5 điểm mà dựng ma trận Vandermonde thì phần đắt nhất là chi phí
+    # gọi hàm, và vòng lặp này chạy cho từng điểm của từng quỹ đạo.
+    variance = float(np.dot(offsets, offsets)) - float(offsets.sum()) ** 2 / len(offsets)
+    mean_xy = points.mean(axis=0)
+    if variance <= 0.0:  # mọi điểm cùng một mốc thời gian: không có gì để khớp
+        return mean_xy
+    mean_dt = float(offsets.mean())
+    slope = (offsets - mean_dt) @ (points - mean_xy) / variance
+    return mean_xy - slope * mean_dt
 
 
 def _ordered(tracklets: Iterable[Tracklet]) -> list[Tracklet]:

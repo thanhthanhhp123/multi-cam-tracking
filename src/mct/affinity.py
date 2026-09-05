@@ -32,9 +32,18 @@ import numpy as np
 
 from mct.gallery import GlobalTrack, SimilarityMode
 from mct.topology import Topology
-from mct.tracklet import Tracklet
+from mct.tracklet import SMOOTH_METHODS, GroundPath, Tracklet, smooth_ground_path
 
 INFEASIBLE = float("inf")
+
+GroundCache = dict[tuple[Any, ...], Any]
+"""Bộ nhớ đệm dùng trong ĐÚNG một lần dựng ma trận chi phí.
+
+Hai loại khoá: `("smooth", id(path))` → quỹ đạo ảnh đã lọc nhiễu, và
+`("world", cam_id, id(path))` → mảng (n, 3) đã chiếu về mặt phẳng chung. Khoá theo
+`id()` của list quỹ đạo chỉ an toàn vì cache không sống lâu hơn một lần dựng ma trận —
+lúc đó không tracklet nào đang dài ra.
+"""
 
 
 @runtime_checkable
@@ -103,6 +112,20 @@ class AffinityConfig:
     `max_ground_dist_m + max_speed_m_s · Δt`.
     """
 
+    ground_smooth: str = "none"
+    """Lọc nhiễu quỹ đạo điểm chân trước khi chiếu về mặt phẳng chung: none | median | mean.
+
+    Vì sao lọc ở đây mà không lọc lúc gom tracklet: `ground_path` là số ĐO thô, còn thành
+    phần hình học là bên DÙNG nó. Để thô ở chỗ ghi thì cùng một fixture chấm lại được cả
+    hai cách (xem `mct.tracklet.smooth_ground_path`).
+    """
+
+    ground_smooth_window: int = 5
+    """Số điểm của cửa sổ lọc (đối xứng quanh điểm đang xét). < 3 là tắt lọc."""
+
+    ground_smooth_max_gap_ms: int = 1000
+    """Hai điểm liên tiếp cách nhau quá ngưỡng này thì CẮT quỹ đạo, không lọc xuyên qua."""
+
     similarity_mode: SimilarityMode = "max"
     topk_query: int = 8
 
@@ -125,6 +148,13 @@ class AffinityConfig:
             ),
             max_speed_m_s=float(association.get("max_speed_m_s", defaults.max_speed_m_s)),
             ground_gap_policy=str(association.get("ground_gap_policy", defaults.ground_gap_policy)),
+            ground_smooth=str(association.get("ground_smooth", defaults.ground_smooth)),
+            ground_smooth_window=int(
+                association.get("ground_smooth_window", defaults.ground_smooth_window)
+            ),
+            ground_smooth_max_gap_ms=int(
+                association.get("ground_smooth_max_gap_ms", defaults.ground_smooth_max_gap_ms)
+            ),
             exclusion_window_ms=int(tracklet.get("idle_timeout_ms", defaults.exclusion_window_ms)),
             similarity_mode=str(  # type: ignore[arg-type]
                 gallery.get("similarity_mode", defaults.similarity_mode)
@@ -146,6 +176,14 @@ class AffinityConfig:
         if self.ground_gap_policy not in ("allow", "reject"):
             raise ValueError(
                 f"ground_gap_policy phải là 'allow' hoặc 'reject', nhận {self.ground_gap_policy!r}"
+            )
+        if self.ground_smooth not in SMOOTH_METHODS:
+            raise ValueError(
+                f"ground_smooth phải thuộc {SMOOTH_METHODS}, nhận {self.ground_smooth!r}"
+            )
+        if self.ground_smooth_max_gap_ms <= 0:
+            raise ValueError(
+                f"ground_smooth_max_gap_ms phải > 0, nhận {self.ground_smooth_max_gap_ms}"
             )
 
 
@@ -206,9 +244,9 @@ def build_cost_matrix(
     tracks = list(tracks)
     costs = np.full((len(tracklets), len(tracks)), INFEASIBLE, dtype=np.float64)
     reasons: dict[tuple[int, int], str] = {}
-    # Chiếu quỹ đạo về mặt phẳng chung là phần đắt nhất của vòng lặp và lặp lại y hệt cho
-    # mọi cột — nhớ lại trong đúng một lần dựng ma trận.
-    cache: dict[tuple[str, int], np.ndarray] = {}
+    # Lọc nhiễu rồi chiếu quỹ đạo về mặt phẳng chung là phần đắt nhất của vòng lặp và lặp
+    # lại y hệt cho mọi cột — nhớ lại trong đúng một lần dựng ma trận.
+    cache: GroundCache = {}
 
     for i, tracklet in enumerate(tracklets):
         query = tracklet.query_embedding(config.topk_query)
@@ -230,7 +268,7 @@ def _pair_cost(
     topology: Topology | None,
     config: AffinityConfig,
     ground_mapper: GroundMapper | None,
-    cache: dict[tuple[str, int], np.ndarray] | None = None,
+    cache: GroundCache | None = None,
 ) -> tuple[float, str]:
     if track.closed:
         return INFEASIBLE, f"GlobalTrack #{track.global_id} đã đóng"
@@ -276,7 +314,7 @@ def _ground_term(
     topology: Topology,
     config: AffinityConfig,
     ground_mapper: GroundMapper,
-    cache: dict[tuple[str, int], np.ndarray] | None = None,
+    cache: GroundCache | None = None,
 ) -> tuple[float, str]:
     """Thành phần hình học, CHỈ cho cặp camera chồng lấn.
 
@@ -302,10 +340,10 @@ def _ground_term(
     if not topology.is_overlapping(track.last_cam_id, tracklet.cam_id) and not cams:
         return 0.0, ""
 
-    own = _world_path(tracklet.cam_id, tracklet.ground_path, ground_mapper, cache)
+    own = _world_path(tracklet.cam_id, tracklet.ground_path, ground_mapper, cache, config)
     matched: list[float] = []
     for cam_id in cams:
-        other = _world_path(cam_id, track.cam_ground_path[cam_id], ground_mapper, cache)
+        other = _world_path(cam_id, track.cam_ground_path[cam_id], ground_mapper, cache, config)
         distance = _synchronized_distance(own, other, config.ground_time_tol_ms)
         if distance is not None:
             matched.append(distance)
@@ -329,11 +367,14 @@ def _ground_term(
         return 0.0, ""
 
     # Không có mốc thời gian chung: so một điểm với một điểm, ngưỡng nới theo Δt.
+    # Điểm đầu/cuối lấy từ quỹ đạo ĐÃ LỌC khi có — đây là chỗ nhiễu điểm chân gây hại
+    # nhất, vì chỉ còn đúng một cặp điểm chứ không có trung vị trên nhiều mốc để đỡ.
     distance = ground_mapper.distance_m(
         track.last_cam_id,
-        track.last_ground_point,
+        _edge_point(track.cam_ground_path.get(track.last_cam_id), -1, config, cache)
+        or track.last_ground_point,
         tracklet.cam_id,
-        tracklet.first_ground_point,
+        _edge_point(tracklet.ground_path, 0, config, cache) or tracklet.first_ground_point,
     )
     if distance is None:  # cặp chưa hiệu chỉnh homography
         return 0.0, ""
@@ -348,24 +389,66 @@ def _ground_term(
     return config.homography_weight * min(distance, config.max_ground_dist_m), ""
 
 
+def _edge_point(
+    path: GroundPath | None,
+    index: int,
+    config: AffinityConfig | None,
+    cache: GroundCache | None,
+) -> tuple[float, float] | None:
+    """Điểm đầu (`index=0`) hoặc điểm cuối (`index=-1`) của quỹ đạo đã lọc; None nếu rỗng."""
+    if not path:
+        return None
+    return _smoothed(path, config, cache)[index][1]
+
+
+def _smoothed(
+    path: GroundPath,
+    config: AffinityConfig | None,
+    cache: GroundCache | None,
+) -> GroundPath:
+    """Quỹ đạo điểm chân đã lọc nhiễu (nguyên trạng nếu `ground_smooth=none`).
+
+    Lọc TRONG toạ độ ảnh, trước homography: sai số cần khử sinh ra ở đó (đáy-giữa bbox
+    rung theo sai số hộp của detector) và ở đó nó gần như đẳng hướng. Với dịch chuyển nhỏ
+    thì homography là ánh xạ affine cục bộ, nên lọc trước hay sau khi chiếu gần như trùng
+    nhau; lọc trước thì không phải bỏ điểm chiếu ra vô cực giữa cửa sổ.
+    """
+    if config is None or config.ground_smooth == "none":
+        return path
+    key = ("smooth", id(path))
+    if cache is not None and key in cache:
+        return cache[key]
+    out = smooth_ground_path(
+        path,
+        method=config.ground_smooth,
+        window=config.ground_smooth_window,
+        max_gap_ms=config.ground_smooth_max_gap_ms,
+    )
+    if cache is not None:
+        cache[key] = out
+    return out
+
+
 def _world_path(
     cam_id: str,
-    path: Sequence[tuple[int, tuple[float, float]]],
+    path: GroundPath,
     ground_mapper: GroundMapper,
-    cache: dict[tuple[str, int], np.ndarray] | None,
+    cache: GroundCache | None,
+    config: AffinityConfig | None = None,
 ) -> np.ndarray:
     """Quỹ đạo (ts_ms, điểm ảnh) → mảng (n, 3) [ts_ms, X, Y] đã sắp theo thời gian.
 
-    Điểm chiếu ra vô cực bị bỏ. Cache theo `id()` của list quỹ đạo — an toàn vì cache chỉ
-    sống trong đúng một lần dựng ma trận, lúc đó không tracklet nào đang dài ra.
+    Đây là CHỖ DUY NHẤT chuyển quỹ đạo sang mét, nên cũng là chỗ đặt bộ lọc nhiễu: cả
+    quỹ đạo của tracklet lẫn quỹ đạo từng camera của GlobalTrack đều đi qua đây, không
+    phải xử lý hai lần ở hai nơi. Điểm chiếu ra vô cực bị bỏ.
     """
-    key = (cam_id, id(path))
+    key = ("world", cam_id, id(path))
     if cache is not None and key in cache:
         return cache[key]
 
     rows = [
         (float(ts), point[0], point[1])
-        for ts, image_point in path
+        for ts, image_point in _smoothed(path, config, cache)
         if (point := ground_mapper.project(cam_id, image_point)) is not None
     ]
     world = np.array(sorted(rows), dtype=np.float64) if rows else np.empty((0, 3), dtype=np.float64)

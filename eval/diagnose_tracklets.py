@@ -41,9 +41,9 @@ from pathlib import Path
 import numpy as np
 
 from common.schema import read_jsonl
-from mct.affinity import AffinityConfig, _synchronized_distance, _world_path
+from mct.affinity import AffinityConfig, _edge_point, _synchronized_distance, _world_path
 from mct.homography import HomographyMapper
-from mct.tracklet import Tracklet, TrackletConfig, build_tracklets
+from mct.tracklet import SMOOTH_METHODS, Tracklet, TrackletConfig, build_tracklets
 
 PERCENTILES = (5, 25, 50, 75, 95)
 
@@ -117,14 +117,19 @@ def _pair_geometry(
     Khoảng cách đồng bộ là `None` khi hai quỹ đạo không có mốc thời gian chung — đúng điều
     kiện mà `ground_gap_policy` xử lý.
     """
-    path_a = _world_path(a.cam_id, a.ground_path, mapper, cache)
-    path_b = _world_path(b.cam_id, b.ground_path, mapper, cache)
+    path_a = _world_path(a.cam_id, a.ground_path, mapper, cache, config)
+    path_b = _world_path(b.cam_id, b.ground_path, mapper, cache, config)
     synced = _synchronized_distance(path_a, path_b, config.ground_time_tol_ms)
 
-    # Đường dự phòng của `_ground_term`: điểm cuối của cái sớm hơn với điểm đầu của cái muộn hơn.
+    # Đường dự phòng của `_ground_term`: điểm cuối của cái sớm hơn với điểm đầu của cái muộn
+    # hơn — lấy qua `_edge_point` để bộ lọc nhiễu áp giống hệt bên affinity, nếu không con
+    # số ở đây sẽ không nói về hệ thống thật.
     first, second = (a, b) if a.end_ms <= b.end_ms else (b, a)
     endpoint = mapper.distance_m(
-        first.cam_id, first.last_ground_point, second.cam_id, second.first_ground_point
+        first.cam_id,
+        _edge_point(first.ground_path, -1, config, cache) or first.last_ground_point,
+        second.cam_id,
+        _edge_point(second.ground_path, 0, config, cache) or second.first_ground_point,
     )
     gap_ms = max(0, second.start_ms - first.end_ms)
     return synced, endpoint, gap_ms
@@ -224,6 +229,31 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--ground-time-tol-ms", type=int, default=400)
     p.add_argument("--max-ground-dist", type=float, default=1.0)
     p.add_argument("--max-speed", type=float, default=2.5)
+    p.add_argument(
+        "--ground-smooth",
+        default="none",
+        choices=SMOOTH_METHODS,
+        help=(
+            "lọc nhiễu quỹ đạo điểm chân trước khi chiếu về mặt phẳng chung. `none` là "
+            "đường đối chứng; xem mct.tracklet.smooth_ground_path"
+        ),
+    )
+    p.add_argument("--ground-smooth-window", type=int, default=5, help="số điểm của cửa sổ lọc")
+    p.add_argument(
+        "--ground-smooth-max-gap-ms",
+        type=int,
+        default=1000,
+        help="hai điểm cách nhau quá ngưỡng này thì CẮT quỹ đạo, không lọc xuyên qua",
+    )
+    p.add_argument(
+        "--ground-path-max-points",
+        type=int,
+        default=64,
+        help=(
+            "trần số điểm quỹ đạo giữ cho mỗi tracklet. Đầy trần thì tỉa một nửa, nên trần "
+            "thấp làm quỹ đạo thưa ra và giảm cơ hội có mốc thời gian chung"
+        ),
+    )
     p.add_argument("--max-negative-pairs", type=int, default=20000)
     p.add_argument("--seed", type=int, default=0)
     p.add_argument("--json", type=Path, default=None, help="ghi toàn bộ số liệu ra file JSON")
@@ -238,7 +268,11 @@ def main(argv: list[str] | None = None) -> int:
 
     tracklets = build_tracklets(
         messages,
-        TrackletConfig(min_frames=args.min_frames, idle_timeout_ms=args.idle_timeout_ms),
+        TrackletConfig(
+            min_frames=args.min_frames,
+            idle_timeout_ms=args.idle_timeout_ms,
+            ground_path_max_points=args.ground_path_max_points,
+        ),
     )
     mapper = HomographyMapper.load(args.homography_dir)
     print(f"homography: {len(mapper.calibrated)} camera đã hiệu chỉnh")
@@ -247,6 +281,9 @@ def main(argv: list[str] | None = None) -> int:
         ground_time_tol_ms=args.ground_time_tol_ms,
         max_ground_dist_m=args.max_ground_dist,
         max_speed_m_s=args.max_speed,
+        ground_smooth=args.ground_smooth,
+        ground_smooth_window=args.ground_smooth_window,
+        ground_smooth_max_gap_ms=args.ground_smooth_max_gap_ms,
     )
 
     report = {
@@ -259,6 +296,10 @@ def main(argv: list[str] | None = None) -> int:
             "ground_time_tol_ms": args.ground_time_tol_ms,
             "max_ground_dist_m": args.max_ground_dist,
             "max_speed_m_s": args.max_speed,
+            "ground_smooth": args.ground_smooth,
+            "ground_smooth_window": args.ground_smooth_window,
+            "ground_smooth_max_gap_ms": args.ground_smooth_max_gap_ms,
+            "ground_path_max_points": args.ground_path_max_points,
         },
         "fragmentation": fragmentation(tracklets, gt),
         "pairs": temporal_overlap_and_ceiling(

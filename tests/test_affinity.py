@@ -350,3 +350,171 @@ def test_config_doc_duoc_tu_mct_yaml(repo_root):
     assert config.max_ground_dist_m == data["association"]["max_ground_dist_m"]
     assert config.exclusion_window_ms == data["tracklet"]["idle_timeout_ms"]
     assert config.topk_query == data["gallery"]["topk_query"]
+
+
+# --------------------------------------------------------------------------- #
+# Lọc nhiễu điểm chân (ground_smooth)
+# --------------------------------------------------------------------------- #
+
+
+class _MetricGround:
+    """GroundMapper giả nhưng CÓ chiếu thật: 100 px = 1 m, hai camera cùng hệ toạ độ.
+
+    Khác `_FakeGround` (luôn trả None ở `project`, nên chỉ chạm đường một-điểm): ở đây
+    đường "so quỹ đạo tại cùng mốc thời gian" mới hoạt động — đúng chỗ bộ lọc nhiễu tác động.
+    """
+
+    def project(self, cam_id, point):
+        return (point[0] / 100.0, point[1] / 100.0)
+
+    def distance_m(self, cam_a, point_a, cam_b, point_b):
+        a, b = self.project(cam_a, point_a), self.project(cam_b, point_b)
+        return float(np.hypot(a[0] - b[0], a[1] - b[1]))
+
+
+def _walking_tracklet(
+    cam_id: str,
+    local_track_id: int,
+    embedding: np.ndarray,
+    *,
+    tracklet_id: int,
+    y_offsets: list[float] | None = None,
+    n_frames: int = 9,
+    step_ms: int = 500,
+) -> Tracklet:
+    """Người đi ngang với tốc độ không đổi; `y_offsets` thêm nhiễu vào đáy bbox từng khung."""
+    builder = TrackletBuilder(TrackletConfig(min_frames=1))
+    for i in range(n_frames):
+        dy = 0.0 if y_offsets is None else y_offsets[i]
+        builder.update(
+            FrameMessage(
+                cam_id=cam_id,
+                frame_id=i,
+                ts_ms=i * step_ms,
+                frame_pts_ns=i * step_ms * 1_000_000,
+                frame_width=1920,
+                frame_height=1080,
+                detections=[
+                    Detection(
+                        local_track_id=local_track_id,
+                        bbox=(100.0 + 20.0 * i, 200.0 + dy, 80.0, 200.0),
+                        confidence=0.9,
+                        embedding=embedding,
+                        class_id=CLASS_PERSON,
+                    )
+                ],
+                embed_dim=embedding.shape[0],
+            )
+        )
+    tracklet = builder.flush()[0]
+    tracklet.tracklet_id = tracklet_id
+    return tracklet
+
+
+def _ground_cost(tracklet, track, config) -> float:
+    matrix = build_cost_matrix(
+        [tracklet],
+        [track],
+        topology=OVERLAP_TOPO,
+        config=config,
+        ground_mapper=_MetricGround(),
+    )
+    return float(matrix.costs[0, 0])
+
+
+@pytest.fixture
+def _noisy_pair(rng):
+    """Cùng một người ở hai camera chồng lấn; camera 2 có hộp rung như hộp của detector."""
+    vec = l2_normalize(rng.standard_normal(DIM))
+    gallery = Gallery(GalleryConfig())
+    clean = _walking_tracklet("cam01", 1, vec, tracklet_id=1)
+    track = gallery.create(clean)
+    # Nhiễu ở MỌI khung, biên độ khác nhau (100 px = 1 m) — đúng dạng sai số đáy bbox của
+    # detector. Không phải vài khung lệch hẳn: xem test_nhieu_dot_bien_...
+    jitter = [200.0, 120.0, -80.0, 160.0, -140.0, 60.0, 240.0, -100.0, 80.0]
+    noisy = _walking_tracklet("cam02", 1, vec, tracklet_id=2, y_offsets=jitter)
+    return track, noisy, vec
+
+
+def test_loc_diem_chan_keo_khoang_cach_mat_dat_xuong(_noisy_pair):
+    """Cùng dữ liệu, chỉ bật bộ lọc: d_ground phải nhỏ đi (chi phí = base + λ·d_ground)."""
+    track, noisy, vec = _noisy_pair
+    base = 1.0 - float(track.similarity(vec, "max"))
+
+    raw = _ground_cost(noisy, track, AffinityConfig(ground_smooth="none", max_ground_dist_m=9.0))
+    smoothed = _ground_cost(
+        noisy, track, AffinityConfig(ground_smooth="median", max_ground_dist_m=9.0)
+    )
+
+    d_raw = (raw - base) / 0.4
+    d_smoothed = (smoothed - base) / 0.4
+    assert d_raw > 1.0, "kịch bản phải có nhiễu đáng kể để phép so có nghĩa"
+    assert d_smoothed < d_raw * 0.7
+
+
+def test_loc_diem_chan_cuu_duoc_cap_dung_bi_nguong_hinh_hoc_loai_oan(_noisy_pair):
+    """Đây mới là lý do làm việc này: nhiễu điểm chân đẩy cặp ĐÚNG vượt ngưỡng.
+
+    Ngưỡng 1.0 m là giá trị của `configs/mct.yaml`; với hộp detector, d_ground trung vị
+    đo được là 0.74 m — sát ngưỡng, nên nhiễu điểm chân là đủ để loại oan
+    (docs/worklog/2026-09-05-13-*).
+    """
+    track, noisy, _ = _noisy_pair
+
+    raw = _ground_cost(noisy, track, AffinityConfig(ground_smooth="none", max_ground_dist_m=1.0))
+    smoothed = _ground_cost(
+        noisy, track, AffinityConfig(ground_smooth="median", max_ground_dist_m=1.0)
+    )
+
+    assert raw == INFEASIBLE, "kịch bản phải vượt ngưỡng khi chưa lọc"
+    assert np.isfinite(smoothed)
+
+
+def test_nhieu_dot_bien_da_co_median_theo_thoi_gian_lo_va_mean_lam_te_di(rng):
+    """Giới hạn của việc lọc: `_synchronized_distance` vốn đã lấy TRUNG VỊ theo thời gian.
+
+    Vài khung lệch hẳn (bị che một lúc) không ảnh hưởng gì tới d_ground kể cả khi không
+    lọc — và bộ lọc `mean` còn làm TỆ ĐI vì nó rải sai số của khung xấu sang các khung
+    lành. Lọc điểm chân chỉ có nghĩa với nhiễu xuất hiện ở MỌI khung; ghi lại ở đây để
+    không ai kết luận rằng bật lọc thì mọi loại nhiễu đều giảm.
+    """
+    vec = l2_normalize(rng.standard_normal(DIM))
+    gallery = Gallery(GalleryConfig())
+    track = gallery.create(_walking_tracklet("cam01", 1, vec, tracklet_id=1))
+    spikes = [0.0, 0.0, 300.0, 0.0, 0.0, -300.0, 0.0, 0.0, 0.0]
+    noisy = _walking_tracklet("cam02", 1, vec, tracklet_id=2, y_offsets=spikes)
+    base = 1.0 - float(track.similarity(vec, "max"))
+
+    def d_ground(method: str) -> float:
+        config = AffinityConfig(ground_smooth=method, max_ground_dist_m=9.0)
+        return (_ground_cost(noisy, track, config) - base) / 0.4
+
+    assert d_ground("none") == pytest.approx(0.0, abs=1e-9)
+    assert d_ground("median") == pytest.approx(0.0, abs=1e-9)
+    assert d_ground("mean") > 0.5
+
+
+def test_loc_diem_chan_khong_doi_ket_qua_khi_quy_dao_sach(rng):
+    """Bộ lọc không được tự tạo ra chênh lệch trên dữ liệu vốn đã sạch."""
+    vec = l2_normalize(rng.standard_normal(DIM))
+    gallery = Gallery(GalleryConfig())
+    track = gallery.create(_walking_tracklet("cam01", 1, vec, tracklet_id=1))
+    other = _walking_tracklet("cam02", 1, vec, tracklet_id=2)
+
+    raw = _ground_cost(other, track, AffinityConfig(ground_smooth="none"))
+    for method in ("median", "mean", "linear"):
+        assert _ground_cost(other, track, AffinityConfig(ground_smooth=method)) == pytest.approx(
+            raw, abs=1e-9
+        )
+
+
+def test_ground_smooth_la_khoa_doc_duoc_tu_yaml_va_kiem_gia_tri():
+    config = AffinityConfig.from_mapping(
+        {"association": {"ground_smooth": "linear", "ground_smooth_window": 7}}
+    )
+    assert (config.ground_smooth, config.ground_smooth_window) == ("linear", 7)
+
+    with pytest.raises(ValueError, match="ground_smooth"):
+        AffinityConfig(ground_smooth="savgol")
+    with pytest.raises(ValueError, match="ground_smooth_max_gap_ms"):
+        AffinityConfig(ground_smooth_max_gap_ms=0)

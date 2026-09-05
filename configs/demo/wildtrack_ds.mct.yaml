@@ -24,7 +24,13 @@ tracklet:
   # hết cắt thêm (345 -> 345), trần lên 34.5%.
   idle_timeout_ms: 30000
   max_embeddings: 32
-  ground_path_max_points: 64
+  # 256, không phải 64: đầy trần thì bộ gom TỈA MỘT NỬA quỹ đạo, và quỹ đạo thưa đi thì
+  # hai camera ít có mốc thời gian chung hơn — mà đó là điều kiện sống còn của thành phần
+  # hình học. Đo 2026-09-05 trên fixture này: 64 -> 256 nâng tỉ lệ cặp đúng có mốc chung
+  # 66.7% -> 74.7% và trần recall của ràng buộc hình học 60.2% -> 66.5%; F1 0.224 -> 0.240.
+  # Bão hoà ở 256 (tracklet dài nhất của WildTrack ~400 khung). Giá trị đúng phụ thuộc
+  # fps × thời lượng tracklet, không phải hằng số phổ quát.
+  ground_path_max_points: 256
 gallery:
   max_size: 32
   topk_query: 8
@@ -38,9 +44,22 @@ association:
   # 0.05 m). Với hộp detector con số đó là 0.74 m — sát ngay ngưỡng, hơn nửa cặp đúng bị
   # loại oan. Nguyên nhân là điểm chân = đáy-giữa bbox nên sai số hộp thành sai số mét,
   # KHÔNG phải do ngoại hình xấu đi (docs/worklog/2026-09-05-13-*).
-  max_ground_dist_m: 5.0
+  # 2.0, không phải 5.0: 5.0 là giá trị đúng khi quỹ đạo bị tỉa còn 64 điểm — lúc đó ít
+  # mốc chung nên trung vị d_ground bị vài mốc xấu chi phối và phải nới ngưỡng. Với quỹ đạo
+  # đầy đủ (256), d_ground của cặp ĐÚNG có trung vị 0.81 m và siết ngưỡng lấy lại được
+  # precision. Quét 2026-09-05 (offline, max_cost 0.80, geo=reject): 1.0 -> F1 0.206,
+  # 1.5 -> 0.253, 2.0 -> 0.256, 2.5 -> 0.253, 3.0 -> 0.248, 5.0 -> 0.240. Đỉnh PHẲNG quanh
+  # 1.5-2.5 nên 2.0 không phải điểm khớp riêng cho một dataset.
+  max_ground_dist_m: 2.0
   ground_time_tol_ms: 400
   max_speed_m_s: 2.5
+  # none: đã hiện thực và đo bộ lọc điểm chân ở phiên 16 — median/mean/linear đều KHÔNG
+  # cải thiện được gì trên fixture này (d_ground trung vị 0.94 -> 0.86 m, F1 0.224 -> 0.229,
+  # trần recall còn tụt nhẹ). Lý do ở docs/worklog/2026-09-05-16-*: `_synchronized_distance`
+  # vốn đã lấy trung vị theo thời gian, tức đã là một bộ lọc.
+  ground_smooth: none
+  ground_smooth_window: 5
+  ground_smooth_max_gap_ms: 1000
   ground_gap_policy: reject
   global_track_ttl_ms: 120000
 store:

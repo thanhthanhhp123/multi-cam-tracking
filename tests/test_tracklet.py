@@ -16,7 +16,12 @@ import numpy as np
 import pytest
 
 from common.schema import CLASS_PERSON, Detection, FrameMessage, l2_normalize
-from mct.tracklet import TrackletBuilder, TrackletConfig, build_tracklets
+from mct.tracklet import (
+    TrackletBuilder,
+    TrackletConfig,
+    build_tracklets,
+    smooth_ground_path,
+)
 from tools.make_synthetic_fixture import BASE_TS_MS, build_scenario
 
 SEED = 42
@@ -382,3 +387,97 @@ def test_online_va_offline_cho_cung_bo_tracklet(scenario):
 
 def _sort_key(t):
     return (t.cam_id, t.local_track_id, t.start_ms)
+
+
+# --------------------------------------------------------------------------- lọc điểm chân
+
+
+def _walk(n: int = 9, step_ms: int = 500, speed_px: float = 2.0) -> list:
+    """Người đi thẳng với tốc độ không đổi — quỹ đạo SẠCH, chưa có nhiễu."""
+    return [(i * step_ms, (100.0 + speed_px * i, 200.0)) for i in range(n)]
+
+
+@pytest.mark.parametrize("method", ["median", "mean", "linear"])
+def test_loc_diem_chan_khu_duoc_gai_nhieu(method):
+    """Một khung lệch hẳn (bbox bị che) không được kéo được quỹ đạo đi theo."""
+    clean = _walk()
+    noisy = list(clean)
+    noisy[4] = (noisy[4][0], (noisy[4][1][0], 205.0))  # lệch 5 px theo trục y
+
+    out = smooth_ground_path(noisy, method=method, window=5)
+    raw_error = abs(noisy[4][1][1] - 200.0)
+    smoothed_error = abs(out[4][1][1] - 200.0)
+    assert smoothed_error < raw_error / 2, f"{method}: {smoothed_error} không nhỏ hơn hẳn"
+    assert [ts for ts, _ in out] == [ts for ts, _ in noisy], "mốc thời gian phải giữ nguyên"
+
+
+def test_median_ben_hon_mean_truoc_ngoai_lai():
+    """Lý do median là mặc định: trung bình rải sai số của một khung ra cả cửa sổ."""
+    noisy = _walk()
+    noisy[4] = (noisy[4][0], (noisy[4][1][0], 205.0))
+
+    by_median = smooth_ground_path(noisy, method="median", window=5)
+    by_mean = smooth_ground_path(noisy, method="mean", window=5)
+
+    # Median: khung lệch bị thay hẳn, các khung LÀNH bên cạnh không hề nhiễm.
+    assert [y for _, (_, y) in by_median] == [200.0] * len(noisy)
+    assert sum(1 for _, (_, y) in by_mean if y != 200.0) == 5
+
+
+def test_linear_khong_lam_lech_hai_dau_quy_dao():
+    """`linear` giữ đúng vị trí người đang đi; `median`/`mean` lệch ở hai đầu.
+
+    Đúng hai điểm đầu/cuối là thứ `affinity._ground_term` dùng khi hai quỹ đạo không có
+    mốc thời gian chung, nên độ lệch ở đó không phải chuyện nhỏ.
+    """
+    clean = _walk(speed_px=2.0)
+
+    by_linear = smooth_ground_path(clean, method="linear", window=5)
+    assert [x for _, (x, _) in by_linear] == pytest.approx([x for _, (x, _) in clean])
+
+    for method in ("median", "mean"):
+        out = smooth_ground_path(clean, method=method, window=5)
+        assert out[0][1][0] > clean[0][1][0], f"{method}: điểm đầu phải lệch theo hướng đi"
+        assert out[-1][1][0] < clean[-1][1][0]
+        # ...nhưng chỉ ở hai đầu: giữa quỹ đạo cửa sổ đối xứng nên hai phía triệt tiêu.
+        assert out[4][1][0] == pytest.approx(clean[4][1][0])
+
+
+def test_khong_loc_xuyen_qua_khoang_lang():
+    """`idle_timeout_ms` lớn cho phép tracklet có lỗ 30 s — không được trộn hai bên lỗ."""
+    path = [(0, (10.0, 0.0)), (500, (11.0, 0.0)), (1_000, (12.0, 0.0))]
+    path += [(31_000, (90.0, 0.0)), (31_500, (91.0, 0.0)), (32_000, (92.0, 0.0))]
+
+    out = smooth_ground_path(path, method="median", window=5, max_gap_ms=1_000)
+
+    assert all(x < 50.0 for _, (x, _) in out[:3]), "nửa đầu bị kéo sang vị trí của nửa sau"
+    assert all(x > 50.0 for _, (x, _) in out[3:])
+
+
+def test_loc_khong_sua_du_lieu_goc_va_none_la_dong_nhat():
+    """`ground_path` dùng chung tham chiếu với GlobalTrack.cam_ground_path — không được sửa."""
+    path = _walk(5)
+    before = list(path)
+
+    assert smooth_ground_path(path, method="none") == before
+    smooth_ground_path(path, method="median", window=5)
+    assert path == before
+
+    # Cửa sổ < 3 điểm thì không có gì để lọc, và quỹ đạo quá ngắn cũng vậy.
+    assert smooth_ground_path(path, method="median", window=1) == before
+    assert smooth_ground_path(path[:2], method="median", window=5) == list(path[:2])
+
+
+def test_loc_chap_nhan_quy_dao_lech_thu_tu_thoi_gian():
+    """Message tới lệch thứ tự (Redis consumer group) — đầu ra vẫn phải sắp theo thời gian."""
+    path = _walk(7)
+    shuffled = [path[3], path[0], path[6], path[1], path[5], path[2], path[4]]
+
+    out = smooth_ground_path(shuffled, method="median", window=3)
+
+    assert [ts for ts, _ in out] == sorted(ts for ts, _ in path)
+
+
+def test_phuong_phap_la_thi_bao_loi():
+    with pytest.raises(ValueError, match="method"):
+        smooth_ground_path(_walk(), method="savgol")

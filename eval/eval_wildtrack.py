@@ -32,7 +32,7 @@ from mct.associator import run_offline
 from mct.gallery import GalleryConfig
 from mct.homography import HomographyMapper
 from mct.topology import Topology
-from mct.tracklet import TrackletConfig, build_tracklets
+from mct.tracklet import SMOOTH_METHODS, TrackletConfig, build_tracklets
 
 # Hai đầu của dải, vì hai chế độ cần hai vùng ngưỡng khác hẳn nhau:
 #   - CHỈ ngoại hình: trên embedding thật (khác domain) cosine giữa hai người khác nhau đã
@@ -112,6 +112,8 @@ def evaluate(
     homography_weight: float = 0.4,
     max_ground_dist_m: float = 3.0,
     ground_gap_policy: str = "allow",
+    ground_smooth: str = "none",
+    ground_smooth_window: int = 5,
 ) -> dict[str, float]:
     """Gán trên tracklet ĐÃ dựng sẵn — dựng lại cho mỗi tổ hợp tham số là phí thời gian.
 
@@ -127,6 +129,8 @@ def evaluate(
             homography_weight=homography_weight,
             max_ground_dist_m=max_ground_dist_m,
             ground_gap_policy=ground_gap_policy,
+            ground_smooth=ground_smooth,
+            ground_smooth_window=ground_smooth_window,
         ),
         gallery_config=GalleryConfig(similarity_mode=mode),  # type: ignore[arg-type]
         ground_mapper=ground_mapper,
@@ -270,6 +274,22 @@ def main(argv: list[str] | None = None) -> int:
         default=None,
         help="thư mục file hiệu chỉnh homography (mct.homography). Có thì sweep thêm cột `geo`",
     )
+    p.add_argument(
+        "--ground-smooth",
+        default="none",
+        choices=SMOOTH_METHODS,
+        help=(
+            "lọc nhiễu quỹ đạo điểm chân trước homography (mct.tracklet.smooth_ground_path). "
+            "`both` không có ở đây — chạy lại với từng giá trị để so"
+        ),
+    )
+    p.add_argument("--ground-smooth-window", type=int, default=5)
+    p.add_argument(
+        "--ground-path-max-points",
+        type=int,
+        default=64,
+        help="trần số điểm quỹ đạo mỗi tracklet (trần thấp -> quỹ đạo thưa -> ít mốc chung)",
+    )
     p.add_argument("--lambda", dest="lam", type=float, default=0.4, help="trọng số d_ground")
     p.add_argument("--max-ground-dist", type=float, default=3.0, help="mét, vượt là loại thẳng")
     p.add_argument(
@@ -294,7 +314,11 @@ def main(argv: list[str] | None = None) -> int:
 
     tracklets = build_tracklets(
         messages,
-        TrackletConfig(min_frames=args.min_frames, idle_timeout_ms=args.idle_timeout_ms),
+        TrackletConfig(
+            min_frames=args.min_frames,
+            idle_timeout_ms=args.idle_timeout_ms,
+            ground_path_max_points=args.ground_path_max_points,
+        ),
     )
     print(f"gom được {len(tracklets)} tracklet (min_frames={args.min_frames})")
 
@@ -345,6 +369,8 @@ def main(argv: list[str] | None = None) -> int:
             use_topology=use_topology,
             ground_mapper=mapper if use_geo else None,
             ground_gap_policy=use_geo or "allow",
+            ground_smooth=args.ground_smooth,
+            ground_smooth_window=args.ground_smooth_window,
             homography_weight=args.lam,
             max_ground_dist_m=args.max_ground_dist,
         )
