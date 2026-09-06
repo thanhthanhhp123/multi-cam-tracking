@@ -366,3 +366,25 @@ def test_gallery_phan_biet_dung_danh_tinh_tren_fixture():
         assert best.global_id == gid_of_identity[gt[tracklet.key]], (
             f"tracklet {tracklet.key} khớp nhầm GlobalTrack {best.global_id}"
         )
+
+
+def test_chi_muc_chu_so_huu_khong_phinh_theo_so_tracklet(rng):
+    """`find_by_tracklet` tra bảng chỉ mục, và bảng đó phải bị chặn kích thước.
+
+    Chỉ mục giữ tracklet ĐANG được sở hữu, nên nó lớn theo số track đang mở chứ không
+    theo tổng số tracklet từng đi qua engine.
+    """
+    gallery = Gallery(GalleryConfig(global_track_ttl_ms=1_000))
+    vec = l2_normalize(rng.standard_normal(DIM))
+    track = gallery.create(_tracklet("cam01", 1, start_ms=0, embedding=vec, tracklet_id=1))
+
+    for n in range(2, 40):  # cùng camera, mảnh nối tiếp nhau
+        moi = _tracklet("cam01", n, start_ms=n * 5_000, embedding=vec, tracklet_id=n)
+        gallery.assign(track, moi)
+        assert gallery.find_by_tracklet(moi) is track
+
+    assert len(gallery._owner_of) == 1
+
+    # Track hết TTL thì chỉ mục cũng phải sạch.
+    gallery.prune(now_ms=10_000_000)
+    assert gallery._owner_of == {}

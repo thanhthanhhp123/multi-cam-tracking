@@ -41,6 +41,7 @@ from common.logging import get_logger
 from mct.affinity import (
     AffinityConfig,
     CostMatrix,
+    GroundCache,
     GroundMapper,
     build_cost_matrix,
     costs_for_hungarian,
@@ -100,6 +101,11 @@ class Associator:
         self.config = config or AffinityConfig()
         self.ground_mapper = ground_mapper
         self.stats = AssociatorStats()
+        # Cache quỹ đạo đã chiếu, DÙNG CHUNG qua mọi cửa sổ: quỹ đạo của một GlobalTrack
+        # gần như không đổi giữa hai cửa sổ liên tiếp, nhưng bản trước tạo cache mới cho
+        # mỗi ma trận nên chiếu lại từ đầu mỗi lần. Xem `affinity.GroundCache` về vì sao
+        # khoá theo `id()` vẫn an toàn khi cache sống lâu.
+        self._ground_cache: GroundCache = {}
 
     @classmethod
     def from_mapping(
@@ -229,6 +235,7 @@ class Associator:
             topology=self.topology,
             config=self.config,
             ground_mapper=self.ground_mapper,
+            cache=self._ground_cache,
         )
 
     def prune(self, now_ms: int) -> list[GlobalTrack]:

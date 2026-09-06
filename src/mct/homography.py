@@ -476,6 +476,21 @@ class HomographyMapper:
         cam = self.cameras.get(cam_id)
         return None if cam is None else cam.project(point)
 
+    def project_many(self, cam_id: str, points: np.ndarray) -> np.ndarray | None:
+        """Chiếu cả một mảng điểm ảnh (n, 2) → (n, 2) mét bằng MỘT phép nhân ma trận.
+
+        Đường nhanh của `affinity._project_path`: gọi `project()` cho từng điểm tốn 42%
+        thời gian vòng gán của engine (đo 2026-09-06) mà toàn bộ phép tính chỉ là một
+        phép nhân 3x3 — thứ numpy làm theo lô gần như miễn phí.
+
+        Điểm suy biến (chiếu ra vô cực) trả `nan`, khớp với `project_points`; bên gọi lọc
+        bằng `isfinite`. `None` khi camera chưa hiệu chỉnh, giống `project()`.
+        """
+        cam = self.cameras.get(cam_id)
+        if cam is None:
+            return None
+        return project_points(cam.matrix, np.asarray(points, dtype=np.float64).reshape(-1, 2))
+
     def distance_m(self, cam_a: str, point_a: Point, cam_b: str, point_b: Point) -> float | None:
         """Giao thức `GroundMapper`: khoảng cách hai điểm chân trên mặt phẳng chung.
 

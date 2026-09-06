@@ -272,6 +272,9 @@ class Gallery:
     def __init__(self, config: GalleryConfig | None = None) -> None:
         self.config = config or GalleryConfig()
         self._tracks: dict[int, GlobalTrack] = {}
+        self._owner_of: dict[int, int] = {}
+        """tracklet_id → global_id đang giữ nó. Chỉ mục cho `find_by_tracklet`."""
+
         self._next_id = 1
         self.n_created = 0
         self.n_closed = 0
@@ -311,6 +314,12 @@ class Gallery:
             track.members[-1] = TrackletRef.of(tracklet)
 
         track.cam_last_tracklet[tracklet.cam_id] = tracklet.tracklet_id
+        # Chỉ mục chỉ giữ tracklet ĐANG được sở hữu: tracklet cũ của chính camera này vừa
+        # bị thay nên bỏ khỏi chỉ mục, nếu không nó phình theo tổng số tracklet từng thấy
+        # thay vì theo số track đang mở.
+        if previous is not None and previous != tracklet.tracklet_id:
+            self._owner_of.pop(previous, None)
+        self._owner_of[tracklet.tracklet_id] = track.global_id
         track.cam_ground_path[tracklet.cam_id] = tracklet.ground_path
         spans = [
             span
@@ -383,6 +392,8 @@ class Gallery:
         for track in expired:
             track.closed = True
             self._tracks.pop(track.global_id, None)
+            for tracklet_id in track.cam_last_tracklet.values():
+                self._owner_of.pop(tracklet_id, None)
             self.n_closed += 1
         return sorted(expired, key=lambda t: t.global_id)
 
@@ -408,11 +419,19 @@ class Gallery:
         return self._tracks.get(global_id)
 
     def find_by_tracklet(self, tracklet: Tracklet) -> GlobalTrack | None:
-        """GlobalTrack đang giữ tracklet này (None nếu tracklet chưa được gán)."""
-        for track in self._tracks.values():
-            if track.owns_tracklet(tracklet):
-                return track
-        return None
+        """GlobalTrack đang giữ tracklet này (None nếu tracklet chưa được gán).
+
+        Tra bảng chỉ mục chứ không quét gallery: hàm này chạy cho mọi tracklet của mọi
+        cửa sổ, nên quét tuyến tính biến vòng gán thành bậc hai theo số GlobalTrack đang
+        mở (2,9 triệu lời gọi `owns_tracklet` trong một lượt chạy 2800 message).
+        """
+        global_id = self._owner_of.get(tracklet.tracklet_id)
+        if global_id is None:
+            return None
+        track = self._tracks.get(global_id)
+        # Chỉ mục có thể trỏ tới track đã bị `prune` đóng, hoặc tới một tracklet mà camera
+        # đó đã gán cho tracklet khác — `owns_tracklet` vẫn là nguồn sự thật.
+        return track if track is not None and track.owns_tracklet(tracklet) else None
 
     def open_tracks(self) -> list[GlobalTrack]:
         return sorted(self._tracks.values(), key=lambda t: t.global_id)

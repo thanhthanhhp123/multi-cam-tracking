@@ -7,6 +7,8 @@ metadata thật từ máy GPU rồi phát lại trên máy không GPU để phá
 
 from __future__ import annotations
 
+import queue
+import threading
 from collections.abc import Iterable
 from types import TracebackType
 from typing import Any
@@ -73,11 +75,157 @@ class FramePublisher:
         )
         return entry_id.decode() if isinstance(entry_id, bytes) else str(entry_id)
 
+    def publish_many(self, messages: Iterable[FrameMessage]) -> int:
+        """Gửi cả lô bằng một pipeline — một vòng mạng thay vì một vòng cho mỗi khung."""
+        pipe = self._client.pipeline(transaction=False)
+        count = 0
+        for msg in messages:
+            pipe.xadd(
+                self.stream,
+                {_FIELD: encode_msgpack(msg)},
+                maxlen=self.maxlen,
+                approximate=True,
+            )
+            count += 1
+        if count:
+            pipe.execute()
+        return count
+
     def close(self) -> None:
         if self._owns_client:
             self._client.close()
 
     def __enter__(self) -> FramePublisher:
+        return self
+
+    def __exit__(self, *exc: Any) -> None:
+        self.close()
+
+
+class QueuedFramePublisher:
+    """Đẩy FrameMessage lên Redis từ MỘT LUỒNG NỀN, qua hàng đợi có trần.
+
+    **Vấn đề nó giải quyết.** Probe của DeepStream chạy trên luồng streaming của GStreamer:
+    mọi thứ làm trong đó đều nằm chắn ngang đường đi của khung hình. Bản trước gọi thẳng
+    `FramePublisher.publish()` trong probe, tức mỗi khung của mỗi camera là một vòng gọi
+    mạng đồng bộ; Redis khựng một nhịp (đang lưu RDB, mạng nghẽn) là cả pipeline suy luận
+    khựng theo, và pipeline lại không có phần tử `queue` nào để hấp thụ.
+
+    **Vì sao hàng đợi phải CÓ TRẦN.** Hàng đợi không trần chỉ đổi một chỗ hỏng ồn ào (khung
+    hình đứng) lấy một chỗ hỏng im lặng (RAM phình tới khi bị kill). Có trần thì khi bên
+    tiêu thụ không theo kịp, ta **biết** mình mất gì và mất bao nhiêu.
+
+    **Đầy thì bỏ cái CŨ nhất.** Hệ thống này trả lời "người đó đang ở đâu", nên khung mới
+    có giá trị hơn khung cũ; đã tụt lại thì giữ dữ liệu tươi mới là đúng. Mất một khung chỉ
+    tạo một lỗ trong quỹ đạo, thứ mà `TrackletBuilder` vốn đã phải chịu được (detector bỏ
+    sót 44.9% ở mức đo hiện tại).
+
+    Số khung rơi được ĐẾM và log định kỳ, không log từng cái — log mỗi lần rơi thì chính
+    nó thành chỗ nghẽn mới.
+    """
+
+    def __init__(
+        self,
+        publisher: FramePublisher | None = None,
+        *,
+        url: str | None = None,
+        maxsize: int = 2000,
+        batch: int = 32,
+        log_every: int = 500,
+    ) -> None:
+        if maxsize < 1:
+            raise ValueError(f"maxsize phải >= 1, nhận {maxsize}")
+        if batch < 1:
+            raise ValueError(f"batch phải >= 1, nhận {batch}")
+        self.publisher = publisher or FramePublisher(url)
+        self.batch = int(batch)
+        self.log_every = int(log_every)
+        self._queue: queue.Queue[FrameMessage] = queue.Queue(maxsize=int(maxsize))
+        self._stop = threading.Event()
+        self.n_published = 0
+        self.n_dropped = 0
+        self.n_failed = 0
+        self.max_depth = 0
+        self._thread = threading.Thread(
+            target=self._run, name="frame-publisher", daemon=True
+        )
+        self._thread.start()
+
+    @property
+    def stream(self) -> str:
+        return self.publisher.stream
+
+    def publish(self, msg: FrameMessage) -> bool:
+        """Xếp hàng, KHÔNG BAO GIỜ chặn và không bao giờ ném lỗi. True = đã nhận."""
+        depth = self._queue.qsize()
+        if depth > self.max_depth:
+            self.max_depth = depth
+        try:
+            self._queue.put_nowait(msg)
+            return True
+        except queue.Full:
+            pass
+
+        # Đầy: nhả một chỗ bằng cách bỏ cái cũ nhất rồi thử lại đúng một lần. Thất bại lần
+        # nữa nghĩa là luồng nền vừa lấy mất chỗ đó — bỏ khung này, không quay vòng.
+        try:
+            self._queue.get_nowait()
+            self.n_dropped += 1
+        except queue.Empty:
+            pass
+        try:
+            self._queue.put_nowait(msg)
+            return True
+        except queue.Full:
+            self.n_dropped += 1
+            if self.n_dropped % self.log_every == 0:
+                log.warning(
+                    "hàng đợi Redis đầy: đã bỏ %d khung (trần %d). Engine hoặc Redis "
+                    "không theo kịp pipeline.",
+                    self.n_dropped,
+                    self._queue.maxsize,
+                )
+            return False
+
+    def _run(self) -> None:
+        while True:
+            try:
+                first = self._queue.get(timeout=0.1)
+            except queue.Empty:
+                if self._stop.is_set():
+                    return
+                continue
+            chunk = [first]
+            while len(chunk) < self.batch:
+                try:
+                    chunk.append(self._queue.get_nowait())
+                except queue.Empty:
+                    break
+            try:
+                self.n_published += self.publisher.publish_many(chunk)
+            # Bắt rộng là CÓ CHỦ Ý: luồng nền chết nghĩa là mất im lặng cả luồng dữ liệu,
+            # tệ hơn nhiều so với bỏ một lô và chạy tiếp.
+            except Exception:
+                self.n_failed += len(chunk)
+                log.exception("đẩy %d khung lên Redis thất bại, bỏ lô này", len(chunk))
+
+    def close(self, timeout: float = 5.0) -> None:
+        """Vét nốt hàng đợi rồi đóng. Quá `timeout` thì bỏ phần còn lại và ghi log."""
+        self._stop.set()
+        self._thread.join(timeout=timeout)
+        remaining = self._queue.qsize()
+        if remaining:
+            log.warning("còn %d khung chưa đẩy được khi đóng", remaining)
+        log.info(
+            "publisher: %d khung đã đẩy, %d bỏ vì hàng đợi đầy, %d lỗi, sâu nhất %d",
+            self.n_published,
+            self.n_dropped,
+            self.n_failed,
+            self.max_depth,
+        )
+        self.publisher.close()
+
+    def __enter__(self) -> QueuedFramePublisher:
         return self
 
     def __exit__(self, *exc: Any) -> None:

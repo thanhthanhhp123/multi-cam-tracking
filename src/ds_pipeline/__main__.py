@@ -17,7 +17,9 @@ import signal
 import sys
 import time
 from collections import Counter
+from collections.abc import Callable
 from pathlib import Path
+from typing import Any
 
 import gi
 
@@ -109,16 +111,22 @@ class _StatsSink:
             )
 
 
-def _redis_sink():
-    from common.streams import FramePublisher
+def _redis_sink() -> tuple[Callable[[FrameMessage], None], Any]:
+    """Sink đẩy Redis qua hàng đợi CÓ TRẦN chạy ở luồng nền.
 
-    publisher = FramePublisher()
-    log.info("publish vào Redis stream '%s'", publisher.stream)
+    Không gọi thẳng `FramePublisher.publish()` trong probe: probe chạy trên luồng streaming
+    của GStreamer, nên một vòng gọi mạng đồng bộ ở đó nằm chắn ngang đường đi của khung
+    hình, và pipeline không có phần tử `queue` nào để hấp thụ. Xem
+    `common.streams.QueuedFramePublisher` về chính sách bỏ khung khi đầy.
 
-    def sink(msg: FrameMessage) -> None:
-        publisher.publish(msg)
+    Trả về cả publisher để `main()` đóng đúng cách và in thống kê khung bị bỏ — con số đó
+    là thứ cho biết engine hay Redis có theo kịp pipeline không.
+    """
+    from common.streams import QueuedFramePublisher
 
-    return sink
+    publisher = QueuedFramePublisher()
+    log.info("publish vào Redis stream '%s' (hàng đợi nền)", publisher.stream)
+    return publisher.publish, publisher
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -142,12 +150,16 @@ def main(argv: list[str] | None = None) -> int:
         pass
 
     cfg = load_pipeline_config(args.config)
-    sink = _redis_sink() if args.publish else _print_sink
+    publisher = None
+    if args.publish:
+        sink, publisher = _redis_sink()
+    else:
+        sink = _print_sink
     stats: _StatsSink | None = None
     if args.stats:
         # --stats bỏ hẳn phần in từng frame: ở vài trăm FPS, chi phí ghi log lớn hơn
         # chi phí suy luận và sẽ trở thành thứ đang đo.
-        stats = _StatsSink(_redis_sink() if args.publish else None)
+        stats = _StatsSink(sink if args.publish else None)
         sink = stats
 
     geometries = {
@@ -194,6 +206,10 @@ def main(argv: list[str] | None = None) -> int:
         pipeline.set_state(Gst.State.NULL)
         if stats is not None:
             stats.report()
+        # Đóng SAU khi pipeline dừng: luồng nền còn phải vét nốt hàng đợi, và thống kê
+        # khung bị bỏ chỉ đầy đủ ở thời điểm này.
+        if publisher is not None:
+            publisher.close()
 
     return 0
 

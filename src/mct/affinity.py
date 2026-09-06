@@ -37,13 +37,27 @@ from mct.tracklet import SMOOTH_METHODS, GroundPath, Tracklet, smooth_ground_pat
 INFEASIBLE = float("inf")
 
 GroundCache = dict[tuple[Any, ...], Any]
-"""Bộ nhớ đệm dùng trong ĐÚNG một lần dựng ma trận chi phí.
+"""Bộ nhớ đệm quỹ đạo đã lọc nhiễu / đã chiếu về mét, dùng lại qua NHIỀU cửa sổ.
 
-Hai loại khoá: `("smooth", id(path))` → quỹ đạo ảnh đã lọc nhiễu, và
-`("world", cam_id, id(path))` → mảng (n, 3) đã chiếu về mặt phẳng chung. Khoá theo
-`id()` của list quỹ đạo chỉ an toàn vì cache không sống lâu hơn một lần dựng ma trận —
-lúc đó không tracklet nào đang dài ra.
+Hai loại khoá: `("smooth", cam_id, id(path))` và `("world", cam_id, id(path))`. Mỗi ô
+lưu `(chính list quỹ đạo, số điểm lúc tính, kết quả)`, và một lần đọc chỉ được nhận khi
+`cached_path is path` **và** số điểm không đổi. Hai điều kiện đó là bắt buộc:
+
+  - giữ tham chiếu MẠNH tới list nên `id()` của nó không thể bị cấp lại cho list khác
+    trong lúc còn nằm trong cache — thứ duy nhất làm khoá `id()` trở nên an toàn khi
+    cache sống lâu hơn một lần dựng ma trận;
+  - quỹ đạo của tracklet đang chạy DÀI RA theo từng khung, nên số điểm đổi là tín hiệu
+    "tính lại", không phải "vẫn dùng được".
+
+Trước đây cache chỉ sống trong đúng một `build_cost_matrix`, nên cùng một quỹ đạo của
+một GlobalTrack bị chiếu lại ở mọi cửa sổ: 7,8 triệu lần chiếu điểm cho một lượt chạy
+2800 message (`docs/worklog/2026-09-06-19-*`).
 """
+
+_GROUND_CACHE_MAX = 8192
+"""Trần số ô của `GroundCache`. Đầy thì xoá sạch chứ không đuổi từng ô: cache này chỉ để
+tăng tốc, mất nó không đổi kết quả, và một `dict.clear()` rẻ hơn nhiều so với việc giữ
+thêm thứ tự truy cập cho một chính sách đuổi tinh vi."""
 
 
 @runtime_checkable
@@ -57,6 +71,10 @@ class GroundMapper(Protocol):
     def project(self, cam_id: str, point: tuple[float, float]) -> tuple[float, float] | None:
         """Điểm chân trong ảnh → toạ độ mét trên mặt phẳng chung. `None` = chưa hiệu chỉnh."""
         ...
+
+    # Tuỳ chọn: `project_many(cam_id, points) -> ndarray | None` chiếu cả mảng (n, 2) một
+    # lần. Không khai trong giao thức vì không bắt buộc — `_project_path` dò bằng
+    # `getattr` và tự lùi về `project()` từng điểm khi mapper không có.
 
     def distance_m(
         self,
@@ -250,20 +268,27 @@ def build_cost_matrix(
     topology: Topology | None = None,
     config: AffinityConfig | None = None,
     ground_mapper: GroundMapper | None = None,
+    cache: GroundCache | None = None,
 ) -> CostMatrix:
     """Chi phí gán từng tracklet vào từng GlobalTrack.
 
     `topology=None` thì bỏ qua ràng buộc thời gian di chuyển (chỉ còn ngoại hình) — chỉ
     dùng khi cố tình muốn đo phần đóng góp riêng của đặc trưng Re-ID.
+
+    `cache` nên là cache DÙNG CHUNG của `Associator` để quỹ đạo đã chiếu sống qua nhiều
+    cửa sổ (xem `GroundCache`); không truyền thì tự tạo một cái sống trong lần gọi này.
     """
     config = config or AffinityConfig()
     tracklets = list(tracklets)
     tracks = list(tracks)
     costs = np.full((len(tracklets), len(tracks)), INFEASIBLE, dtype=np.float64)
     reasons: dict[tuple[int, int], str] = {}
-    # Lọc nhiễu rồi chiếu quỹ đạo về mặt phẳng chung là phần đắt nhất của vòng lặp và lặp
-    # lại y hệt cho mọi cột — nhớ lại trong đúng một lần dựng ma trận.
-    cache: GroundCache = {}
+    # Lọc nhiễu rồi chiếu quỹ đạo về mét là phần đắt nhất của cả engine (82% thời gian
+    # vòng gán, đo 2026-09-06) và lặp lại y hệt cho mọi cột, mọi cửa sổ.
+    if cache is None:
+        cache = {}
+    elif len(cache) > _GROUND_CACHE_MAX:
+        cache.clear()
 
     for i, tracklet in enumerate(tracklets):
         query = tracklet.query_embedding(config.topk_query)
@@ -500,6 +525,24 @@ def _edge_point(
     return _smoothed(path, config, cache)[index][1]
 
 
+def _cache_get(cache: GroundCache | None, key: tuple, path: GroundPath) -> Any | None:
+    """Đọc cache; chỉ nhận khi ĐÚNG list đó và số điểm chưa đổi (xem `GroundCache`)."""
+    if cache is None:
+        return None
+    hit = cache.get(key)
+    if hit is None:
+        return None
+    cached_path, n_points, value = hit
+    if cached_path is not path or n_points != len(path):
+        return None
+    return value
+
+
+def _cache_put(cache: GroundCache | None, key: tuple, path: GroundPath, value: Any) -> None:
+    if cache is not None:
+        cache[key] = (path, len(path), value)
+
+
 def _smoothed(
     path: GroundPath,
     config: AffinityConfig | None,
@@ -515,16 +558,16 @@ def _smoothed(
     if config is None or config.ground_smooth == "none":
         return path
     key = ("smooth", id(path))
-    if cache is not None and key in cache:
-        return cache[key]
+    hit = _cache_get(cache, key, path)
+    if hit is not None:
+        return hit
     out = smooth_ground_path(
         path,
         method=config.ground_smooth,
         window=config.ground_smooth_window,
         max_gap_ms=config.ground_smooth_max_gap_ms,
     )
-    if cache is not None:
-        cache[key] = out
+    _cache_put(cache, key, path, out)
     return out
 
 
@@ -542,18 +585,49 @@ def _world_path(
     phải xử lý hai lần ở hai nơi. Điểm chiếu ra vô cực bị bỏ.
     """
     key = ("world", cam_id, id(path))
-    if cache is not None and key in cache:
-        return cache[key]
+    hit = _cache_get(cache, key, path)
+    if hit is not None:
+        return hit
 
-    rows = [
+    smoothed = _smoothed(path, config, cache)
+    world = _project_path(cam_id, smoothed, ground_mapper)
+    _cache_put(cache, key, path, world)
+    return world
+
+
+def _project_path(cam_id: str, path: GroundPath, ground_mapper: GroundMapper) -> np.ndarray:
+    """Chiếu cả quỹ đạo một lần bằng numpy nếu mapper cho phép, không thì từng điểm.
+
+    `project_many` là đường nhanh: một phép nhân ma trận cho cả quỹ đạo thay vì một lời
+    gọi Python cho mỗi điểm. Đo 2026-09-06: đường từng điểm chiếm 42% thời gian của cả
+    vòng gán (7,8 triệu lời gọi `apply_homography`).
+
+    Mapper không có `project_many` — các mapper giả trong test, hoặc bản cài đặt khác của
+    giao thức `GroundMapper` — vẫn chạy đúng qua đường cũ. Giao thức không đổi, nên đây là
+    tối ưu hoá chứ không phải breaking change.
+    """
+    if not len(path):
+        return np.empty((0, 3), dtype=np.float64)
+
+    project_many = getattr(ground_mapper, "project_many", None)
+    if project_many is not None:
+        stamps = np.fromiter((ts for ts, _ in path), dtype=np.float64, count=len(path))
+        points = np.array([point for _, point in path], dtype=np.float64)
+        world = project_many(cam_id, points)
+        if world is None:  # camera chưa hiệu chỉnh
+            return np.empty((0, 3), dtype=np.float64)
+        keep = np.isfinite(world).all(axis=1)
+        rows = np.column_stack([stamps[keep], world[keep]])
+        return rows[np.argsort(rows[:, 0], kind="stable")] if len(rows) else rows
+
+    plain = [
         (float(ts), point[0], point[1])
-        for ts, image_point in _smoothed(path, config, cache)
+        for ts, image_point in path
         if (point := ground_mapper.project(cam_id, image_point)) is not None
     ]
-    world = np.array(sorted(rows), dtype=np.float64) if rows else np.empty((0, 3), dtype=np.float64)
-    if cache is not None:
-        cache[key] = world
-    return world
+    if not plain:
+        return np.empty((0, 3), dtype=np.float64)
+    return np.array(sorted(plain), dtype=np.float64)
 
 
 def _synchronized_distance(a: np.ndarray, b: np.ndarray, tol_ms: int) -> float | None:
@@ -566,9 +640,19 @@ def _synchronized_distance(a: np.ndarray, b: np.ndarray, tol_ms: int) -> float |
     if len(a) == 0 or len(b) == 0:
         return None
 
+    # Hai quỹ đạo không giao nhau về thời gian thì chắc chắn không có mốc chung — kiểm
+    # bằng bốn phép so sánh trước khi đụng tới `searchsorted` trên cả mảng. Cả hai đã sắp
+    # theo thời gian nên hai đầu là đủ.
+    if a[0, 0] > b[-1, 0] + tol_ms or b[0, 0] > a[-1, 0] + tol_ms:
+        return None
+
+    # `np.maximum`/`np.minimum` thay cho `np.clip`: cùng kết quả, nhưng `clip` dựng một
+    # đối tượng `finfo` cho mỗi lời gọi và riêng nó tốn 5.4 s / 32 s của cả lượt chạy
+    # (đo 2026-09-06). Chỉ số từ `searchsorted` nằm sẵn trong [0, len(b)] nên hai phép
+    # chặn một phía là đủ.
     idx = np.searchsorted(b[:, 0], a[:, 0])
-    left = np.clip(idx - 1, 0, len(b) - 1)
-    right = np.clip(idx, 0, len(b) - 1)
+    left = np.maximum(idx - 1, 0)
+    right = np.minimum(idx, len(b) - 1)
     d_left = np.abs(b[left, 0] - a[:, 0])
     d_right = np.abs(b[right, 0] - a[:, 0])
     nearest = np.where(d_left <= d_right, left, right)
