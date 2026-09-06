@@ -42,7 +42,21 @@ association:
   # có vừa mới xuất hiện không". Trên fixture này khác biệt là lớn nhất, vì `idle_timeout_ms`
   # ở đây là 30 s: bản trước cấm ghép mọi mảnh nối tiếp cách nhau dưới 30 giây.
   exclusion_slack_ms: 0
-  max_cost: 0.80
+  # 0.90, không phải 0.80: `same_camera_stitch` cộng thêm `lambda * d` vào chi phí của mọi
+  # cặp cùng camera, nên THANG chi phí đổi và ngưỡng cũ trở nên quá chặt (381 cặp bị ngưỡng
+  # loại, 468 Global ID cho 313 danh tính). Quét lại 2026-09-06 trên đường online + TrackEval:
+  #   0.80 -> HOTA 15.194 / IDF1 19.206 / 468 gid
+  #   0.90 -> HOTA 16.210 / IDF1 20.918 / 433 gid   <-- IDF1 tốt nhất
+  #   1.00 -> HOTA 16.144 / IDF1 20.075 / 349 gid
+  #   1.10 -> HOTA 16.350 / IDF1 19.681 / 216 gid
+  #   1.20 -> HOTA 16.530 / IDF1 20.098 / 176 gid   <-- HOTA tốt nhất
+  #   1.30 -> HOTA 16.230 / IDF1 19.489 / 169 gid
+  #   1.40 -> HOTA 16.236 / IDF1 19.496 / 167 gid
+  # HOTA đi ngang trong cả dải 0.90-1.40 (biên độ 0.39, KHÔNG đơn điệu) nên 1.20 là đỉnh
+  # nhọn của nhiễu chứ không phải một điểm làm việc. Chọn 0.90: IDF1 cao nhất, HOTA nằm
+  # trong cao nguyên, và 433 > 313 danh tính nghĩa là nghiêng về TÁCH thay vì GỘP — gộp sai
+  # thì không có đường quay lại, còn tách thì còn sửa được.
+  max_cost: 0.90
   homography_weight: 0.4
   # 5.0 m, không phải 1.0: ngưỡng 1.0 chỉnh trên bbox GT (d_ground cùng người trung vị
   # 0.05 m). Với hộp detector con số đó là 0.74 m — sát ngay ngưỡng, hơn nửa cặp đúng bị
@@ -56,6 +70,12 @@ association:
   # 1.5-2.5 nên 2.0 không phải điểm khớp riêng cho một dataset.
   max_ground_dist_m: 2.0
   ground_time_tol_ms: 400
+  # Nối hai mảnh tracklet của CÙNG một camera (nvtracker đổi id giữa chừng) bằng liên
+  # tục vị trí + tốc độ đi bộ: ngân sách max_ground_dist_m + max_speed_m_s * dt, đo trên
+  # mặt phẳng mặt đất của CHÍNH camera đó nên không cộng thêm sai số hiệu chỉnh chéo.
+  # Đây là ràng buộc thay thế cho phần mà ràng buộc loại trừ theo thời gian bỏ lại khi
+  # phiên 17 sửa nó về đúng mệnh đề "trùng thời gian" (docs/worklog/2026-09-06-18-*).
+  same_camera_stitch: true
   max_speed_m_s: 2.5
   # none: đã hiện thực và đo bộ lọc điểm chân ở phiên 16 — median/mean/linear đều KHÔNG
   # cải thiện được gì trên fixture này (d_ground trung vị 0.94 -> 0.86 m, F1 0.224 -> 0.229,

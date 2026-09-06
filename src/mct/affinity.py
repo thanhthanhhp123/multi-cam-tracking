@@ -117,6 +117,14 @@ class AffinityConfig:
     `max_ground_dist_m + max_speed_m_s · Δt`.
     """
 
+    same_camera_stitch: bool = True
+    """Nối hai mảnh tracklet của cùng một camera bằng liên tục vị trí + tốc độ đi bộ.
+
+    Cần homography của camera đó (chỉ camera đó, không cần hiệu chỉnh chéo). Xem
+    `_same_camera_term` về vì sao đây là ràng buộc thay thế đúng cho ràng buộc loại trừ
+    theo thời gian đã bỏ ở phiên 17.
+    """
+
     ground_smooth: str = "none"
     """Lọc nhiễu quỹ đạo điểm chân trước khi chiếu về mặt phẳng chung: none | median | mean.
 
@@ -152,6 +160,9 @@ class AffinityConfig:
             ),
             max_speed_m_s=float(association.get("max_speed_m_s", defaults.max_speed_m_s)),
             ground_gap_policy=str(association.get("ground_gap_policy", defaults.ground_gap_policy)),
+            same_camera_stitch=bool(
+                association.get("same_camera_stitch", defaults.same_camera_stitch)
+            ),
             ground_smooth=str(association.get("ground_smooth", defaults.ground_smooth)),
             ground_smooth_window=int(
                 association.get("ground_smooth_window", defaults.ground_smooth_window)
@@ -311,6 +322,12 @@ def _pair_cost(
 
     cost = 1.0 - float(similarity)
 
+    if ground_mapper is not None and config.same_camera_stitch:
+        stitch_cost, reason = _same_camera_term(tracklet, track, config, ground_mapper, cache)
+        if reason:
+            return INFEASIBLE, reason
+        cost += stitch_cost
+
     if ground_mapper is not None and topology is not None:
         ground_cost, reason = _ground_term(tracklet, track, topology, config, ground_mapper, cache)
         if reason:
@@ -318,6 +335,60 @@ def _pair_cost(
         cost += ground_cost
 
     return cost, ""
+
+
+def _same_camera_term(
+    tracklet: Tracklet,
+    track: GlobalTrack,
+    config: AffinityConfig,
+    ground_mapper: GroundMapper,
+    cache: GroundCache | None = None,
+) -> tuple[float, str]:
+    """Nối hai mảnh tracklet của CÙNG một camera: liên tục về vị trí, hợp lý về tốc độ.
+
+    Đây là chỗ bằng chứng mạnh nhất mà hệ thống có, và nó gần như miễn phí: hai mảnh nằm
+    trong **cùng một mặt phẳng ảnh**, nên so vị trí không phải đi qua hiệu chỉnh chéo giữa
+    hai camera — sai số duy nhất là sai số điểm chân, không cộng thêm sai số ghép camera.
+    So với ngoại hình xuyên camera (cosine giữa hai người khác nhau đã ~0.69 trên embedding
+    thật, phiên 11) thì đây là tín hiệu tách người tốt hơn hẳn.
+
+    **Vì sao cần đến nó bây giờ.** Ràng buộc loại trừ cũ chặn mọi tracklet "vừa thấy ở camera
+    này gần đây", nên nó vô tình cũng chặn luôn việc ghép nhầm hai người khác nhau ở cùng một
+    camera. Phiên 17 sửa mệnh đề đó cho đúng (chỉ chặn khi TRÙNG thời gian) và bỏ trống chỗ
+    lọc: từ đó bất kỳ mảnh nào không chồng thời gian cũng ghép được chỉ bằng ngoại hình, và
+    engine ghép quá tay (194 Global ID cho 313 danh tính, HOTA 14.374 → 14.167). Ràng buộc
+    thay thế đúng đắn không phải là "vừa mới thấy" mà là "người ta có kịp đi từ đó tới đây
+    không" — cùng dạng ngân sách `max_ground_dist_m + max_speed_m_s · Δt` mà cặp camera
+    không trùng thời gian đang dùng.
+
+    Chỉ xét hai mảnh **rời nhau về thời gian**; chồng thời gian là việc của ràng buộc loại
+    trừ và đã bị chặn trước khi tới đây.
+    """
+    path = track.cam_ground_path.get(tracklet.cam_id)
+    if not path:
+        return 0.0, ""
+
+    own = _world_path(tracklet.cam_id, tracklet.ground_path, ground_mapper, cache, config)
+    other = _world_path(tracklet.cam_id, path, ground_mapper, cache, config)
+    if len(own) == 0 or len(other) == 0:  # camera chưa hiệu chỉnh
+        return 0.0, ""
+
+    if other[-1, 0] <= own[0, 0]:  # mảnh của track ở TRƯỚC
+        gap_ms = float(own[0, 0] - other[-1, 0])
+        distance = float(np.hypot(*(own[0, 1:] - other[-1, 1:])))
+    elif own[-1, 0] <= other[0, 0]:  # mảnh của track ở SAU
+        gap_ms = float(other[0, 0] - own[-1, 0])
+        distance = float(np.hypot(*(other[0, 1:] - own[-1, 1:])))
+    else:
+        return 0.0, ""
+
+    budget = config.max_ground_dist_m + config.max_speed_m_s * gap_ms / 1000.0
+    if distance > budget:
+        return 0.0, (
+            f"cùng {tracklet.cam_id}: hai mảnh cách nhau {distance:.2f} m sau {gap_ms / 1000:.1f}s "
+            f"> ngân sách {budget:.2f} m (đi nhanh nhất {config.max_speed_m_s} m/s)"
+        )
+    return config.homography_weight * min(distance, config.max_ground_dist_m), ""
 
 
 def _ground_term(

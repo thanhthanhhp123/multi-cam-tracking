@@ -606,3 +606,89 @@ def test_reject_van_loai_khi_hai_quy_dao_trung_thoi_gian_ma_khong_khop_moc(rng):
     )
     assert matrix.costs[0, 0] == INFEASIBLE
     assert "mốc thời gian chung" in matrix.reason(0, 0)
+
+
+# --------------------------------------------------------------------------- #
+# Nối hai mảnh tracklet của CÙNG một camera
+# --------------------------------------------------------------------------- #
+
+_SAME_CAM_TOPO = Topology.from_mapping({"cameras": {"cam01": {}}})
+
+
+def _stitch_cost(track, tracklet, config) -> tuple[float, str]:
+    matrix = build_cost_matrix(
+        [tracklet],
+        [track],
+        topology=_SAME_CAM_TOPO,
+        config=config,
+        ground_mapper=_MetricGround(),
+    )
+    return float(matrix.costs[0, 0]), matrix.reason(0, 0)
+
+
+def _shifted(tracklet, *, dt_ms: int, dx_px: float):
+    """Cùng một mảnh nhưng dời theo thời gian và theo trục x (100 px = 1 m)."""
+    tracklet.ground_path = [(ts + dt_ms, (x + dx_px, y)) for ts, (x, y) in tracklet.ground_path]
+    tracklet.start_ms += dt_ms
+    tracklet.end_ms += dt_ms
+    return tracklet
+
+
+def test_hai_manh_lien_tuc_cung_camera_duoc_noi(rng):
+    """Mảnh sau bắt đầu ngay cạnh chỗ mảnh trước dừng → khả thi, và có thưởng khoảng cách."""
+    vec = l2_normalize(rng.standard_normal(DIM))
+    gallery = Gallery()
+    track = gallery.create(_walking_tracklet("cam01", 1, vec, tracklet_id=1))
+
+    # Mảnh trước kết thúc ở x = 100 + 20*8 = 260 px; mảnh sau bắt đầu 50 px (0.5 m) sau đó,
+    # 1 giây sau — thừa sức đi được.
+    tiep = _shifted(_walking_tracklet("cam01", 2, vec, tracklet_id=2), dt_ms=5_000, dx_px=210.0)
+    cost, reason = _stitch_cost(track, tiep, AffinityConfig(max_cost=0.9))
+
+    assert reason == ""
+    assert np.isfinite(cost)
+
+
+def test_hai_manh_cung_camera_cach_xa_qua_toc_do_di_bo_bi_loai(rng):
+    """Cùng ngoại hình, cùng camera, nhưng nhảy 60 m trong 1 giây → không phải một người."""
+    vec = l2_normalize(rng.standard_normal(DIM))
+    gallery = Gallery()
+    track = gallery.create(_walking_tracklet("cam01", 1, vec, tracklet_id=1))
+
+    nhay_xa = _shifted(
+        _walking_tracklet("cam01", 2, vec, tracklet_id=2), dt_ms=5_000, dx_px=6_000.0
+    )
+    cost, reason = _stitch_cost(track, nhay_xa, AffinityConfig(max_cost=0.9))
+
+    assert cost == INFEASIBLE
+    assert "ngân sách" in reason and "cùng cam01" in reason
+
+
+def test_tat_noi_manh_thi_khoang_cach_khong_con_loai_duoc(rng):
+    """Cờ `same_camera_stitch: false` phải trả về đúng hành vi cũ (chỉ ngoại hình)."""
+    vec = l2_normalize(rng.standard_normal(DIM))
+    gallery = Gallery()
+    track = gallery.create(_walking_tracklet("cam01", 1, vec, tracklet_id=1))
+    nhay_xa = _shifted(
+        _walking_tracklet("cam01", 2, vec, tracklet_id=2), dt_ms=5_000, dx_px=6_000.0
+    )
+
+    cost, reason = _stitch_cost(
+        track, nhay_xa, AffinityConfig(max_cost=0.9, same_camera_stitch=False)
+    )
+
+    assert np.isfinite(cost)
+    assert reason == ""
+
+
+def test_noi_manh_khong_dung_cho_hai_manh_chong_thoi_gian(rng):
+    """Chồng thời gian là việc của ràng buộc loại trừ; nối mảnh không được nói gì thêm."""
+    vec = l2_normalize(rng.standard_normal(DIM))
+    gallery = Gallery()
+    track = gallery.create(_walking_tracklet("cam01", 1, vec, tracklet_id=1))
+    chong = _walking_tracklet("cam01", 2, vec, tracklet_id=2)
+
+    cost, reason = _stitch_cost(track, chong, AffinityConfig(max_cost=0.9))
+
+    assert cost == INFEASIBLE
+    assert "ràng buộc loại trừ" in reason
