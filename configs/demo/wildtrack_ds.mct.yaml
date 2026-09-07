@@ -53,9 +53,14 @@ association:
   #   1.30 -> HOTA 16.230 / IDF1 19.489 / 169 gid
   #   1.40 -> HOTA 16.236 / IDF1 19.496 / 167 gid
   # HOTA đi ngang trong cả dải 0.90-1.40 (biên độ 0.39, KHÔNG đơn điệu) nên 1.20 là đỉnh
-  # nhọn của nhiễu chứ không phải một điểm làm việc. Chọn 0.90: IDF1 cao nhất, HOTA nằm
-  # trong cao nguyên, và 433 > 313 danh tính nghĩa là nghiêng về TÁCH thay vì GỘP — gộp sai
-  # thì không có đường quay lại, còn tách thì còn sửa được.
+  # nhọn của nhiễu chứ không phải một điểm làm việc. Chọn 0.90: IDF1 cao nhất và HOTA nằm
+  # trong cao nguyên.
+  # Sửa lập luận 2026-09-07 (docs/worklog/2026-09-07-20-*): bản trước lấy "433 > 313 danh
+  # tính" làm bằng chứng rằng engine nghiêng về TÁCH thay vì GỘP. Sai — 433 là HIỆU của hai
+  # hiện tượng xảy ra cùng lúc, và phân rã ra thì 24.1% Global ID có nhãn vẫn ôm >= 2 người.
+  # Bằng chứng ĐÚNG cho cùng kết luận là so khối lượng: 43.7% số khung mất vì vỡ so với
+  # 13.9% mất vì gộp, tức đánh đổi vẫn đúng chiều (gộp sai không có đường quay lại, tách
+  # thì còn sửa được) — chỉ là phải đo bằng khung chứ không bằng số đếm Global ID.
   max_cost: 0.90
   homography_weight: 0.4
   # 5.0 m, không phải 1.0: ngưỡng 1.0 chỉnh trên bbox GT (d_ground cùng người trung vị

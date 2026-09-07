@@ -220,7 +220,7 @@ class Associator:
                     global_id=track.global_id,
                     cost=float("inf"),
                     is_new=True,
-                    reason=reason,
+                    reason=f"{kind}: {reason}",
                 )
             )
         return results
@@ -249,6 +249,22 @@ class Associator:
         return None if track is None else track.global_id
 
 
+NEW_TRACK_KINDS = ("empty", "no_candidate", "threshold", "taken")
+"""Vì sao một tracklet phải nhận Global ID mới. Xem `_why_new`."""
+
+
+def reason_kind(reason: str) -> str:
+    """Lấy lại `loại` từ chuỗi `Assignment.reason` đã lưu xuống SQLite.
+
+    `Assignment.reason` được ghép theo dạng `"<loại>: <mô tả>"` ngay tại chỗ gọi `_why_new`,
+    nên hàm này chỉ cắt tiền tố chứ KHÔNG đoán nghĩa câu tiếng Việt phía sau — chính là điều
+    docstring của `_why_new` cấm. Tiền tố lạ (hoặc chuỗi rỗng của tracklet được ghép vào
+    track có sẵn) trả về `""`.
+    """
+    kind, sep, _ = reason.partition(": ")
+    return kind if sep and kind in NEW_TRACK_KINDS else ""
+
+
 def _why_new(matrix: CostMatrix, row: int, max_cost: float) -> tuple[str, str]:
     """Vì sao tracklet này phải nhận Global ID mới: `(loại, mô tả)`.
 
@@ -256,6 +272,10 @@ def _why_new(matrix: CostMatrix, row: int, max_cost: float) -> tuple[str, str]:
     `rejected_by_threshold` phân biệt hai tình huống khác hẳn nhau (ràng buộc không-thời
     gian loại sạch ứng viên, so với ngoại hình không đủ giống), và một lần đổi chữ trong
     câu mô tả không được phép làm hỏng bảng thống kê của chương 6.
+
+    Chỗ gọi ghép `loại` vào đầu `mô tả` trước khi ghi xuống SQLite, vì bảng `appearances`
+    chỉ có một cột `reason`: không có tiền tố đó thì hậu kiểm (`eval/diagnose_global_ids.py`)
+    buộc phải dò chuỗi, đúng thứ vừa cấm.
     """
     if not matrix.tracks:
         return "empty", "gallery đang rỗng, đây là người đầu tiên"

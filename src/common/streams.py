@@ -146,9 +146,7 @@ class QueuedFramePublisher:
         self.n_dropped = 0
         self.n_failed = 0
         self.max_depth = 0
-        self._thread = threading.Thread(
-            target=self._run, name="frame-publisher", daemon=True
-        )
+        self._thread = threading.Thread(target=self._run, name="frame-publisher", daemon=True)
         self._thread.start()
 
     @property
