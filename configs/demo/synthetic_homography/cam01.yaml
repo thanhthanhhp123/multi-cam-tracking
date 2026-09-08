@@ -1,0 +1,11 @@
+# Homography giả lập cho fixture tổng hợp two_cam_walk (chỉ dùng để chụp demo dashboard).
+# KHÔNG phải hiệu chỉnh camera thật — xem configs/cameras/homography/README.md.
+cam_id: cam01
+plane: synthetic_corridor
+unit: m
+matrix:
+- [0.003125, 0.0, 0.0]
+- [0.0, -0.00027777, 1.65]
+- [0.0, 0.0, 1.0]
+image_size: [1920, 1080]
+source: giả lập từ mô hình đi bộ 1D của make_synthetic_fixture

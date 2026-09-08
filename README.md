@@ -5,11 +5,10 @@
 overlapping fields of view *and* pairs with none.
 
 <p align="center">
-  <img src="docs/assets/dashboard.png" alt="Live dashboard: ground-plane map with camera footprints and current positions" width="90%">
-</p>
-
-<p align="center">
-  <img src="docs/assets/cross_camera.gif" alt="One person tracked across three cameras, keeping the same Global ID" width="90%">
+  <img src="docs/assets/cross_camera.gif" alt="Live dashboard: three people tracked across two cameras, each keeping one Global ID" width="90%">
+  <br><em>Live dashboard — ground-plane map with camera footprints, live positions and per-Global-ID
+  trajectory trails. Three identities, each seen in both cameras, each holding a single Global ID
+  across the hand-off. (Replayed metadata; see <a href="#demo">Demo</a>.)</em>
 </p>
 
 > Graduation thesis project. Every technical decision is written up with its rationale in
@@ -122,17 +121,32 @@ Thesis targets (3–4 streams, ≥15 FPS/stream, <1 s latency) are met with head
 
 ## Demo
 
-The images at the top of this README are captured from the live dashboard running on replayed
-fixture data. To reproduce them:
+The clip above is the real dashboard driven by the association engine on replayed metadata —
+no GPU, no cameras. Reproduce it in three shells:
 
 ```bash
-make up                                     # Redis
-make engine-fixture FIXTURE=tests/fixtures/ds_4cam_reid_realtime.jsonl DB=data/demo.db
-MCT_DB_PATH=data/demo.db make dashboard      # http://localhost:8000
-make replay FIXTURE=tests/fixtures/ds_4cam_reid_realtime.jsonl   # in another shell
+docker compose -f docker/compose.yml up -d redis
+python -m tools.make_synthetic_fixture --out tests/fixtures/two_cam_walk.jsonl
+
+# shell 1 — engine: Redis frames → Global IDs → mct:global + SQLite
+python -m mct --source redis --db data/demo.db \
+    --topology configs/cameras/topology.yaml \
+    --homography-dir configs/demo/synthetic_homography --publish
+
+# shell 2 — dashboard
+MCT_DB_PATH=data/demo.db MCT_HOMOGRAPHY_DIR=configs/demo/synthetic_homography \
+    uvicorn dashboard.app:app --port 8000        # http://localhost:8000
+
+# shell 3 — replay the metadata into Redis at original timing
+python -m tools.replay_metadata --fixture tests/fixtures/two_cam_walk.jsonl
 ```
 
-See [`docs/assets/README.md`](docs/assets/README.md) for the exact shots used.
+The demo runs on the **synthetic 2-camera fixture** (`make_synthetic_fixture` — a controllable
+Re-ID model, documented in [`tests/fixtures/README.md`](tests/fixtures/README.md)); the
+ground-plane calibration under `configs/demo/synthetic_homography/` is a stand-in for that
+scene, not a real camera calibration. The WildTrack numbers in [Results](#results) use the
+real 7-camera dataset. See [`docs/assets/README.md`](docs/assets/README.md) for how the
+capture was made.
 
 ## Quickstart (no GPU, no cameras)
 
