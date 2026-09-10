@@ -1,9 +1,12 @@
 ---
 name: ut-hpc
-description: Chạy việc nặng của đồ án MTMCT trên cụm SLURM ut-hpc (ĐH Twente) — chạy pytest/ruff (Python 3.10.12), xuất ONNX, sinh fixture, và fine-tune trên DỮ LIỆU TỰ THU ở M6 nếu đo được domain gap (M2/M3 đã chốt dùng weight pretrained, không fine-tune trên COCO/Market-1501/MSMT17). Dùng khi cần submit/theo dõi/huỷ job SLURM, chuẩn bị dataset hoặc môi trường Python trên ut-hpc, chẩn đoán job pending/failed, hoặc khi người dùng nhắc tới ut-hpc, hpc-head1, sbatch, srun, squeue, partition, GPU cluster, train, fine-tune.
+description: "[LỊCH SỬ — tài khoản ut-hpc bị khoá từ 2026-09-10, cụm KHÔNG còn dùng được; test/lint chạy bằng venv 3.10 trên máy dev, xem CLAUDE.md §2. Chỉ đọc skill này để hiểu các quyết định cũ.] Chạy việc nặng của đồ án MTMCT trên cụm SLURM ut-hpc (ĐH Twente) — chạy pytest/ruff (Python 3.10.12), xuất ONNX, sinh fixture, và fine-tune trên DỮ LIỆU TỰ THU ở M6 nếu đo được domain gap (M2/M3 đã chốt dùng weight pretrained, không fine-tune trên COCO/Market-1501/MSMT17). Dùng khi cần submit/theo dõi/huỷ job SLURM, chuẩn bị dataset hoặc môi trường Python trên ut-hpc, chẩn đoán job pending/failed, hoặc khi người dùng nhắc tới ut-hpc, hpc-head1, sbatch, srun, squeue, partition, GPU cluster, train, fine-tune.
 ---
 
 # ut-hpc — cụm train/fine-tune của đồ án
+
+> **2026-09-10: KHÔNG CÒN DÙNG ĐƯỢC — tài khoản bị khoá.** Mọi lệnh `ssh ut-hpc` sẽ timeout.
+> Test/lint: venv Python 3.10 trên máy dev (CLAUDE.md §2). Phần dưới giữ làm tư liệu lịch sử.
 
 `ut-hpc` = `hpc-head1.ewi.utwente.nl`, user `s3002152`, SLURM 21.08.5, Ubuntu 22.04.5.
 Vai trò trong đồ án (CLAUDE.md §2): **chạy test/lint, xuất model, sinh fixture, và train

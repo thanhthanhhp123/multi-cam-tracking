@@ -7,9 +7,13 @@
 # và wildtrack.topology.yaml).
 #
 # CHUẨN BỊ TRƯỚC KHI CHẠY (trên vast-gpu, cwd = gốc repo /workspace/mct-repo):
-#   1. Đóng video trên ut-hpc:  python -m tools.wildtrack_to_video \
-#          --wildtrack-dir ~/mct/data/wildtrack --out-dir ~/mct/data/wildtrack_video
-#   2. Chép sang máy GPU:       rsync -av wildtrack_video/ vast-gpu:/workspace/mct-repo/data/wildtrack_video/
+#   1. Video: bản đã đóng sẵn nằm ở data/wildtrack_video/ trên máy dev (từ 2026-09-10) —
+#      đẩy lên:  tar cf - data/wildtrack_video | ssh vast-gpu 'tar xf - -C /workspace/mct-repo'
+#      Chưa có thì đóng ngay trên máy GPU (ut-hpc đã mất):  python -m tools.unzip_wildtrack
+#      --zip Wildtrack_dataset_full.zip  rồi  python -m tools.wildtrack_to_video \
+#          --wildtrack-dir data/wildtrack --out-dir data/wildtrack_video
+#      (ffmpeg trong image DeepStream thiếu thư viện codec — xem CLAUDE.md §11)
+#   2. (bỏ — trước đây là bước chép từ ut-hpc sang)
 #   3. Chạy:                    make ds-run-wildtrack
 #   4. Ghi fixture:             python -m tools.record_metadata --out tests/fixtures/ds_wildtrack_7cam.jsonl
 #   5. Gán ground-truth (máy dev/ut-hpc): python -m tools.ds_wildtrack_gt --fixture ... --wildtrack-dir ...

@@ -66,6 +66,15 @@ def extract(
             out.parent.mkdir(parents=True, exist_ok=True)
 
             base = info.header_offset
+            # Bản vá CVE-2024-0450 của `zipfile` (có trong Python 3.10.12 của Ubuntu 22.04 từ
+            # 2024) ghi `_end_offset` = offset của entry KẾ TIẾP rồi từ chối entry nào vượt quá
+            # nó ("Overlapped entries ... possible zip bomb"). Offset của zip này cuộn vòng qua
+            # mốc 4 GiB, nên "entry kế tiếp" tính sai và mọi entry sau mốc đó bị từ chối ngay ở
+            # offset ĐÚNG — đo 2026-09-10: 971/2807 entry (C5 một phần, C6, C7). Tắt phép kiểm
+            # tra đó cho từng entry là an toàn vì dưới đây vẫn đòi kích thước giải nén khớp
+            # `file_size`. `unzip` hệ thống cũng từ chối cùng lý do ("overlapped components").
+            if hasattr(info, "_end_offset"):
+                info._end_offset = None
             for delta in (0, SKEW, -SKEW):
                 info.header_offset = base + delta
                 try:

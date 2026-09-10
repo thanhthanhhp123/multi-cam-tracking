@@ -17,6 +17,12 @@ Detector và Re-ID dùng model có sẵn (fine-tune nếu cần), không train f
 
 ## 2. Ràng buộc môi trường — ĐỌC KỸ
 
+> **2026-09-10: `ut-hpc` ĐÃ MẤT — tài khoản cụm bị khoá.** Cột `ut-hpc` trong bảng dưới và
+> mọi mục `ut-hpc` ở §11 giờ là ngữ cảnh lịch sử. Test/lint chuyển về venv Python 3.10 trên
+> máy dev (xem ngay dưới bảng). Fixture WildTrack của pipeline thật (`ds_wildtrack_7cam*`)
+> chỉ nằm trên cụm, coi như mất cho tới khi tìm được bản sao hoặc sinh lại trên `vast-gpu`.
+> Chỗ fine-tune ở M6 (nếu cần) CHƯA CHỐT.
+
 Có ba máy, mỗi máy một vai trò. Đừng gộp việc của máy này sang máy khác.
 
 | | máy dev (hiện tại: Windows) | `ut-hpc` (train/fine-tune + test) | `vast-gpu` (chạy pipeline, thuê khi cần) |
@@ -31,21 +37,25 @@ Có ba máy, mỗi máy một vai trò. Đừng gộp việc của máy này san
 Quy trình thao tác chi tiết trên `ut-hpc` (SSH, `sbatch`, module load...) đóng gói trong skill
 `.claude/skills/ut-hpc/` — đọc trước khi thao tác lần đầu, đừng đoán cú pháp.
 
-**Chạy test và lint ở `ut-hpc`, không phải máy dev** (chốt 2026-09-04). Máy dev hiện tại là
-Windows và chỉ có Python 3.13, trong khi repo nhắm 3.10 — test chạy ở đó không bao giờ bắt
-được vi phạm quy tắc phiên bản. Head node `ut-hpc` có sẵn Python 3.10.12, **đúng bằng bản
-trong container DeepStream 7.1**, nên vừa là chỗ chạy test vừa là chỗ kiểm chứng ràng buộc đó:
+**Chạy test và lint bằng venv Python 3.10 trên máy dev** (chốt 2026-09-10, thay cho
+`ut-hpc` đã mất). Python hệ thống của máy dev là 3.13, trong khi repo nhắm 3.10 — test chạy
+bằng 3.13 không bao giờ bắt được vi phạm quy tắc phiên bản. Nên dùng một venv 3.10 riêng
+dựng bằng `uv` (tự tải CPython 3.10, không đụng Python hệ thống), NHẸ như `venv-test` cũ
+trên cụm (numpy/scipy/msgpack/redis/PyYAML/dotenv/pytest/ruff/fastapi, không có torch):
 
 ```bash
-tar czf - src tests configs pyproject.toml | ssh ut-hpc 'tar xzf - -C ~/mct/repo'
-ssh ut-hpc 'cd ~/mct/repo && PYTHONPATH=src ~/mct/venv-test/bin/python -m pytest -q'
-ssh ut-hpc 'cd ~/mct/repo && ~/mct/venv-test/bin/ruff check src tests eval'
+# dựng một lần
+uv venv --python 3.10 ~/.venvs/mct-test
+uv pip install --python ~/.venvs/mct-test/Scripts/python.exe numpy scipy msgpack PyYAML \
+    python-dotenv redis pytest pytest-asyncio ruff fastapi httpx jinja2 "uvicorn[standard]"
+# mỗi lần (Linux/macOS: bin/ thay cho Scripts/)
+PYTHONPATH=src ~/.venvs/mct-test/Scripts/python.exe -m pytest -q
+~/.venvs/mct-test/Scripts/ruff.exe check src tests eval
+~/.venvs/mct-test/Scripts/ruff.exe format --check src tests eval
 ```
 
-`~/mct/venv-test` là venv NHẸ (numpy/scipy/msgpack/redis/PyYAML/dotenv/pytest/ruff/fastapi,
-không có torch) — chạy hết bộ test trong ~1.3 s nên không vi phạm quy tắc "không chạy gì
-nặng trên head node". `ut-hpc` cần VPN vào mạng ĐH Twente; `ssh` timeout thì kiểm tra VPN
-trước khi đoán là cụm hỏng.
+Bản vá là 3.10.20 chứ không phải 3.10.12 của container DeepStream 7.1 — cùng nhánh 3.10 nên
+bắt được đúng loại vi phạm cần bắt (cú pháp/thư viện chỉ có từ 3.11 trở lên).
 
 `vast-gpu` là **thuê theo phiên, không thường trực** — instance bị huỷ khi ngừng thuê, IP đổi
 mỗi lần thuê lại. Đừng giả định nó đang chạy; luôn xác minh (`ssh vast-gpu echo ok`) trước khi
@@ -71,9 +81,10 @@ vào venv của máy dev, và đừng viết test cần GPU mà không đánh d�
    cũng không cần GPU. Fixture nằm ở `tests/fixtures/*.jsonl`.
 4. **Nhắm Python 3.10** (bằng phiên bản trong container DeepStream 7.x / Ubuntu 22.04).
    Máy dev đang có 3.13 — không dùng cú pháp/thư viện chỉ có từ 3.11 trở lên trong code dùng
-   chung; test chạy ở `ut-hpc` (3.10.12) mới là chỗ bắt được vi phạm.
-5. **Trọng số model train trên `ut-hpc` phải chuyển sang `vast-gpu` qua `models/`** (gitignored,
-   không qua git). `ut-hpc` không bao giờ chạy pipeline; `vast-gpu` không bao giờ train.
+   chung; test chạy bằng venv 3.10 (`~/.venvs/mct-test`) mới là chỗ bắt được vi phạm.
+5. **Trọng số model không đi qua git** — nằm ở `models/` (gitignored), rsync/scp sang
+   `vast-gpu` khi cần chạy pipeline. (Trước 2026-09-10 quy tắc là "train trên `ut-hpc`,
+   `vast-gpu` không bao giờ train". `ut-hpc` đã mất; chỗ fine-tune ở M6, nếu cần, CHƯA CHỐT.)
 
 ## 3. Kiến trúc
 
@@ -314,6 +325,8 @@ và trong worklog chỉ link tới nó.
   Giảm `batch-size` của SGIE trước, rồi mới giảm độ phân giải suy luận.
 - **Quyền riêng tư** (đề cương mục 4.3.3): dữ liệu người thật chỉ dùng cho học thuật, có đồng thuận,
   không commit vào git (`data/` đã ignore), làm mờ mặt trước khi đưa vào báo cáo/slide.
+- *(Các mục `ut-hpc` dưới đây là LỊCH SỬ — tài khoản cụm bị khoá từ 2026-09-10. Giữ lại vì
+  chúng giải thích các quyết định đã ghi trong worklog phiên 1–21.)*
 - **`ut-hpc`: node tính toán KHÔNG có Internet, head node CÓ.** Đã đo 2026-09-03: từ `ctit091`,
   `curl` tới pypi/github/docker registry đều không phản hồi; từ `hpc-head1` đều 200. Mọi thứ
   chạm mạng (pip, tải dataset, weight tự tải của Ultralytics, `singularity pull`) phải làm trên
@@ -344,6 +357,22 @@ và trong worklog chỉ link tới nó.
   Máy tốt in `PREROLLED → PLAYING → EOS`. Không tương quan với phiên bản driver; card
   datacenter (T4) chạy được, hai card tiêu dùng thì không. Bỏ qua bước 30 giây này đã tốn
   ~30 phút tiền thuê một lần rồi.
+- **Image DeepStream 7.1 có `/usr/bin/ffmpeg` nhưng binary KHÔNG chạy** — thiếu
+  `libFLAC.so.8`, `libmp3lame.so.0`, `libxvidcore.so.4` (image gỡ codec vì bản quyền).
+  `command -v ffmpeg` vẫn thấy nên `apt install ffmpeg` bị bỏ qua. Sửa:
+  `apt-get install -y libflac8 libmp3lame0 libxvidcore4` (tên gói chữ thường), rồi kiểm
+  `ffmpeg -encoders` có `libx264` (đo 2026-09-10).
+- **Zip WildTrack của EPFL + Python đã vá CVE-2024-0450 = 971/2807 ảnh không giải nén
+  được.** Bản vá thêm phép kiểm "Overlapped entries (possible zip bomb)", mà offset của zip
+  này cuộn vòng qua mốc 4 GiB nên mọi entry sau mốc bị từ chối — cả `unzip` hệ thống.
+  `tools/unzip_wildtrack.py` đã tắt phép kiểm đó cho từng entry (vẫn đòi đúng `file_size`).
+  Trên `ut-hpc` hồi 2026-09-04 Python chưa có bản vá nên không lộ ra.
+- **`pgrep -f`/`pkill -f` khớp luôn dòng lệnh của CHÍNH shell đang gọi nó** khi mẫu nằm trong
+  chuỗi `ssh host '...'`. Vòng `while pgrep -f X` treo mãi; `pkill -f X` tự giết phiên ssh
+  (đã dính cả hai, 2026-09-10). Dùng mẫu `[x]` (`pgrep -f "tools.unzip_wildtrac[k]"`) và gửi
+  script qua `ssh host 'bash -s' <<'EOF'` để dòng lệnh phía xa chỉ là `bash -s`.
+- **`cmd | grep -q X` dưới `set -o pipefail` báo lỗi GIẢ**: `grep -q` thoát ngay khi khớp,
+  `cmd` nhận SIGPIPE, pipeline trả mã khác 0. Dùng `grep -c X >/dev/null`.
 - **Đừng kill pipeline trong lúc build engine TensorRT.** Build batch 7 mất ~5 phút và GPU
   util có lúc về 0% — im lặng KHÔNG có nghĩa là treo. Kiểm bằng `ls` xem file `.engine` có
   đang lớn dần không, đừng đoán.

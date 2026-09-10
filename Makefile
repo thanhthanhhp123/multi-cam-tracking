@@ -28,7 +28,7 @@ dev: $(VENV)  ## Tạo venv + cài dependencies phía CPU (editable)
 test:  ## Chạy pytest (tự bỏ qua test có mark gpu)
 	$(VENV)/bin/pytest
 
-lint:  ## ruff check + kiểm tra format  (LƯU Ý: chỗ chạy chuẩn là ut-hpc, xem CLAUDE.md §2)
+lint:  ## ruff check + kiểm tra format  (LƯU Ý: chỗ chạy chuẩn là venv Python 3.10, CLAUDE.md §2)
 	$(VENV)/bin/ruff check src tests eval
 	$(VENV)/bin/ruff format --check src tests eval
 
