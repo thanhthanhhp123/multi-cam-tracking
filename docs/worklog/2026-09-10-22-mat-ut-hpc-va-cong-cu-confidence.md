@@ -42,6 +42,10 @@ lại, gộp luôn phép quét ngưỡng thật vào cùng chuyến.
   (lớp person) = **0.25 / 0.40 / 0.55**, rồi lặp **0.25 và 0.40 thêm 2 lần** (người dùng duyệt)
   để đo nhiễu giữa các lần chạy. 7 fixture × 2800 message, kéo về `data/fixtures/`.
 - Kéo 7 video về `data/wildtrack_video/` (1.1 GB) để lần sau khỏi đóng lại.
+- Zip WildTrack gốc (6 807 496 358 byte) tải thẳng từ EPFL về `data/` trên máy dev (nối qua
+  3 lần đứt kết nối bằng `curl -C -`), giải nén ra `data/wildtrack/Image_subsets`: 2807 ảnh,
+  0 lỗi (CRC từng entry khớp) — bản sửa `unzip_wildtrack.py` chạy đúng cả trên Python
+  3.10.20 của máy dev (1714 entry phải vá offset).
 - Toàn bộ các bước chạy trên instance gom vào **`docker/vast_wildtrack.sh`** (`nvdec` /
   `data` / `run <ngưỡng>`), cạnh `vast_bootstrap.sh` — tái lập được chuyến này bằng 4 lệnh.
 - Sinh lại `data/fixtures/wildtrack_7cam.jsonl` (ground-truth, `--no-reid`) trên máy dev:
@@ -177,10 +181,8 @@ khung): AUC `mean` **0.789**, `median` 0.787, `max` 0.748.
 
 ## Vướng mắc / chưa xong
 
-- Zip WildTrack gốc về máy dev mới được ~0.77/6.8 GB (tạm dừng để nhường băng thông cho
-  instance). Nối lại: `curl -C - -o data/Wildtrack_dataset_full.zip.part <URL EPFL>`.
-- `ds_wildtrack_7cam_onnx_gtbox.jsonl` (phiên 13/21) CHƯA sinh lại — cần ảnh WildTrack +
-  onnxruntime; làm được trên máy dev khi zip về đủ (`tools/reembed_fixture.py`).
+- `ds_wildtrack_7cam_onnx_gtbox.jsonl` (phiên 13/21) CHƯA sinh lại. Ảnh đã có trên máy dev;
+  còn thiếu `pip install -e ".[reid]"` (onnxruntime + opencv) rồi `tools/reembed_fixture.py`.
 - Mọi con số phiên 12–21 nay đã có nền dữ liệu mới nhưng **không khớp từng chữ số** với bản cũ
   (QĐ 1). Số của chương 6 nên lấy từ fixture mới + báo cáo kèm độ lệch giữa các lần chạy.
 - Chỗ fine-tune ở M6 (nếu cần) chưa chốt — quy tắc cũ dựa trên việc có `ut-hpc`.
@@ -190,6 +192,6 @@ khung): AUC `mean` **0.789**, `median` 0.787, `max` 0.748.
 1. Chương 6: báo cáo mọi so sánh cấu hình PIPELINE bằng trung bình ± độ lệch trên ≥3 lần
    chạy (bảng 1 là mẫu). So sánh chỉ trong `src/mct` (cùng fixture) thì một lần là đủ — engine
    tất định.
-2. Nối lại tải zip, sinh lại `onnx_gtbox` trên máy dev.
+2. Sinh lại `onnx_gtbox` trên máy dev (ảnh đã sẵn ở `data/wildtrack/Image_subsets`).
 3. Chuẩn bị M6: kịch bản thu dữ liệu 25 fps có đồng thuận; ở đó mới quét lại
    `pre-cluster-threshold` (0.25 / 0.40) với ≥3 lần chạy mỗi mức.
