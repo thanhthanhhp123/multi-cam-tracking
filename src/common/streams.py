@@ -17,6 +17,7 @@ import redis
 from redis.exceptions import ResponseError
 
 from common.config import redis_url
+from common.latency import T1B_DEQUEUE, T2_XADD, T3A_RECV, entry_id_to_ms, now_ms
 from common.logging import get_logger
 from common.schema import (
     FrameMessage,
@@ -199,6 +200,15 @@ class QueuedFramePublisher:
                     chunk.append(self._queue.get_nowait())
                 except queue.Empty:
                     break
+
+            # t1b: đóng dấu NGAY trước khi gửi, cho cả lô. Hiệu `t1b - t1` chính là thời
+            # gian message nằm chờ trong hàng đợi này — nghi can số một của đuôi trễ khi
+            # Redis hoặc engine không theo kịp pipeline (xem docstring lớp).
+            dequeue_ms = now_ms()
+            for msg in chunk:
+                if msg.stamps:
+                    msg.stamps[T1B_DEQUEUE] = dequeue_ms
+
             try:
                 self.n_published += self.publisher.publish_many(chunk)
             # Bắt rộng là CÓ CHỦ Ý: luồng nền chết nghĩa là mất im lặng cả luồng dữ liệu,
@@ -274,6 +284,10 @@ class FrameConsumer:
         return self._parse(response)
 
     def _parse(self, response: Any) -> list[tuple[str, FrameMessage]]:
+        # t3a đóng một lần cho cả lô đọc được: giải mã msgpack của 64 message mất vài ms
+        # và phần đó thuộc về engine, không thuộc về Redis — đóng dấu trong vòng lặp thì
+        # message cuối lô tự nhiên "đến muộn" hơn message đầu lô dù cùng một lần XREAD.
+        recv_ms = now_ms()
         out: list[tuple[str, FrameMessage]] = []
         for _stream, entries in response or []:
             for entry_id, fields in entries:
@@ -281,7 +295,14 @@ class FrameConsumer:
                 if raw is None:
                     log.warning("Entry %s thiếu field %r, bỏ qua", entry_id, _FIELD)
                     continue
-                out.append((entry_id.decode(), decode_msgpack(raw)))
+                msg = decode_msgpack(raw)
+                # t2 = thời điểm Redis ghi entry, đọc thẳng từ entry ID `<ms>-<seq>`.
+                # Không cần producer gắn thêm gì, và đây là đồng hồ của server Redis.
+                xadd_ms = entry_id_to_ms(entry_id)
+                if xadd_ms is not None:
+                    msg.stamps[T2_XADD] = xadd_ms
+                msg.stamps[T3A_RECV] = recv_ms
+                out.append((entry_id.decode(), msg))
         return out
 
     def ack(self, entry_ids: list[str]) -> int:

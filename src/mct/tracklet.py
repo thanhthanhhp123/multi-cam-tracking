@@ -58,6 +58,13 @@ class Observation:
     confidence: float
     ground_point: tuple[float, float]
     embedding: np.ndarray | None = None
+    stamps: dict[str, float] = field(default_factory=dict)
+    """Mốc đo độ trễ của FRAME chứa detection này (`common/latency.py`).
+
+    Đi kèm theo observation chứ không sao chép giá trị ra: mọi detection trong một frame
+    dùng chung một dict, nên không tốn thêm bộ nhớ. CHỈ để đo — không có đường nào từ
+    đây vào quyết định gán, xem `FrameMessage.stamps`.
+    """
 
     @classmethod
     def from_detection(cls, msg: FrameMessage, det: Detection) -> Observation:
@@ -70,6 +77,7 @@ class Observation:
             confidence=float(det.confidence),
             ground_point=det.ground_point,
             embedding=det.embedding,
+            stamps=msg.stamps,
         )
 
 
@@ -154,6 +162,13 @@ class Tracklet:
     first_ground_point: tuple[float, float] = (0.0, 0.0)
     last_ground_point: tuple[float, float] = (0.0, 0.0)
 
+    last_stamps: dict[str, float] = field(default_factory=dict)
+    """Mốc đo độ trễ của khung MỚI NHẤT đã thấy — cập nhật cùng nhịp với `last_bbox`.
+
+    Độ trễ end-to-end phải trả lời "vị trí vừa hiển thị cũ bao nhiêu", nên mốc phải là
+    của khung mới nhất, không phải của khung mở tracklet.
+    """
+
     ground_path: list[tuple[int, tuple[float, float]]] = field(default_factory=list)
     """(ts_ms, điểm chân trong ảnh) đã tỉa thưa — quỹ đạo để so vị trí theo thời gian.
 
@@ -212,6 +227,7 @@ class Tracklet:
             self.end_frame_id = obs.frame_id
             self.last_bbox = obs.bbox
             self.last_ground_point = obs.ground_point
+            self.last_stamps = obs.stamps
         self.recent.append(obs)
         self._push_ground_point(obs, max_points)
 

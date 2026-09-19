@@ -15,6 +15,12 @@ chạy một vòng gán, phát `GlobalUpdate`, ghi SQLite, rồi đóng GlobalTr
 Dùng `ts_ms` chứ không dùng đồng hồ hệ thống để phát lại một fixture cho ra **đúng** kết
 quả như lúc chạy thật — nếu không thì không có cách nào tái lập số liệu của chương 6.
 
+**Đo độ trễ.** `--latency-log <file>` (hoặc `MCT_LATENCY_LOG`) ghi ra JSONL một bản ghi
+cho mỗi `GlobalUpdate`, kèm toàn bộ mốc t0..t4 của khung mới nhất dẫn tới nó; đọc bằng
+`python -m tools.latency_report`. Mặc định TẮT, và khi tắt thì engine không gọi thêm một
+lần lấy giờ nào. Phần đo không chạm vào logic gán: mốc thời gian dùng cho thuật toán vẫn
+chỉ là `ts_ms` trong message.
+
 **Vì sao có `--source <fixture>`.** Chênh lệch giữa chế độ online và offline chính là cái
 giá phải trả của ràng buộc thời gian thực (CLAUDE.md §6), và muốn đo nó thì phải cho cùng
 một dữ liệu chạy qua cả hai đường. Đường offline là `eval/eval_wildtrack.py`; đường online
@@ -35,6 +41,20 @@ from typing import Any
 
 import yaml
 
+from common.latency import (
+    T3_ASSOC,
+    T3D_DB,
+    T3W_WINDOW,
+    T4_OUT,
+    LatencyLog,
+    LatencyRecord,
+    latency_log_path,
+    t0_source_from,
+)
+
+# Đổi tên khi nhập: trong file này `now_ms` đã là TÊN THAM SỐ mang mốc thời gian của
+# DỮ LIỆU (`ts_ms` trong message), còn đây là đồng hồ tường của máy đang chạy engine.
+from common.latency import now_ms as wall_clock_ms
 from common.logging import get_logger
 from common.schema import FrameMessage, GlobalUpdate, read_jsonl
 from mct.associator import Assignment, Associator
@@ -60,12 +80,15 @@ class Engine:
         associator: Associator | None = None,
         store: Store | None = None,
         window_ms: int = 1000,
+        latency: LatencyLog | None = None,
     ) -> None:
         self.builder = TrackletBuilder(tracklet_config)
         self.associator = associator or Associator()
         self.store = store
         self.window_ms = window_ms
+        self.latency = latency
         self._window_end_ms: int | None = None
+        self._pending_latency: list[LatencyRecord] = []
         self.n_messages = 0
         self.n_updates = 0
 
@@ -104,19 +127,83 @@ class Engine:
         if not unique and not force:
             return []
 
+        # t3w: cửa sổ bắt đầu chạy. Hiệu `t3w - t3a` là thời gian message nằm chờ cửa
+        # sổ đóng — thành phần CỐ Ý của thiết kế (window_ms), không phải chi phí thừa,
+        # nhưng phải tách ra thì mới biết đuôi trễ là do nó hay do chỗ khác.
+        t3w = wall_clock_ms() if self.latency is not None else 0.0
+
         results = self.associator.assign(list(unique.values()))
         # TTL của GlobalTrack nằm trong GalleryConfig (`association.global_track_ttl_ms`),
         # `prune` nhận mốc hiện tại chứ không nhận mốc cắt.
         closed_tracks = self.associator.prune(now_ms)
+        # t3 của đề bài: engine đã xử lý xong, CHƯA chạm SQLite.
+        t3 = wall_clock_ms() if self.latency is not None else 0.0
 
+        written_before = self.store.n_written if self.store is not None else 0
         if self.store is not None:
             self.store.record_many(results, now_ms=now_ms)
             if closed_tracks:
                 self.store.close_tracks([t.global_id for t in closed_tracks])
+        t3d = wall_clock_ms() if self.latency is not None else 0.0
 
         updates = [self._to_update(r) for r in results]
         self.n_updates += len(updates)
+        if self.latency is not None and results:
+            db_flushed = self.store is not None and self.store.n_written > written_before
+            self._collect_latency(
+                results, t3w=t3w, t3=t3, t3d=t3d, db_flushed=db_flushed, final_flush=force
+            )
         return updates
+
+    def _collect_latency(
+        self,
+        results: list[Assignment],
+        *,
+        t3w: float,
+        t3: float,
+        t3d: float,
+        db_flushed: bool,
+        final_flush: bool = False,
+    ) -> None:
+        """Dựng bản ghi độ trễ cho cửa sổ vừa chạy; `t4` đóng sau, ở `mark_published()`."""
+        if self.latency is None:  # bên gọi đã kiểm, giữ để type checker yên tâm
+            return
+        for assignment in results:
+            tracklet = assignment.tracklet
+            stamps = dict(tracklet.last_stamps)
+            stamps[T3W_WINDOW] = t3w
+            stamps[T3_ASSOC] = t3
+            stamps[T3D_DB] = t3d
+            self._pending_latency.append(
+                LatencyRecord(
+                    run_id=self.latency.run_id,
+                    cam_id=tracklet.cam_id,
+                    frame_id=tracklet.end_frame_id,
+                    tracklet_id=tracklet.tracklet_id,
+                    global_id=assignment.global_id,
+                    window_n=len(results),
+                    db_flushed=db_flushed,
+                    final_flush=final_flush,
+                    t0_source=t0_source_from(tracklet.last_stamps),
+                    stamps=stamps,
+                )
+            )
+
+    def mark_published(self) -> int:
+        """Đóng mốc `t4` rồi ghi các bản ghi đang chờ. Gọi SAU khi đã đẩy `mct:global`.
+
+        Tách khỏi `_run_window` vì việc đẩy lên `mct:global` nằm ở vòng lặp `main()`:
+        Engine cố tình không biết gì về Redis (xem docstring lớp). Không bật đo hoặc
+        không có gì chờ thì đây là một phép kiểm tra rỗng.
+        """
+        if self.latency is None or not self._pending_latency:
+            return 0
+        out_ms = wall_clock_ms()
+        for record in self._pending_latency:
+            record.stamps[T4_OUT] = out_ms
+        written = self.latency.write_many(self._pending_latency)
+        self._pending_latency.clear()
+        return written
 
     def _to_update(self, assignment: Assignment) -> GlobalUpdate:
         tracklet = assignment.tracklet
@@ -152,6 +239,7 @@ def build_engine(
     topology_path: Path | None = None,
     homography_dir: Path | None = None,
     db_path: str | None = None,
+    latency: LatencyLog | None = None,
 ) -> Engine:
     topology = Topology.load(topology_path) if topology_path else None
     mapper = None
@@ -184,6 +272,7 @@ def build_engine(
         associator=associator,
         store=Store(store_config),
         window_ms=int(association.get("window_ms", 1000)),
+        latency=latency,
     )
 
 
@@ -241,6 +330,14 @@ def main(argv: list[str] | None = None) -> int:
         help="thư mục file hiệu chỉnh; không tồn tại thì bỏ qua thành phần hình học",
     )
     p.add_argument("--db", default=None, help="ghi đè store.db_path trong config")
+    p.add_argument(
+        "--latency-log",
+        default=None,
+        help=(
+            "ghi mốc đo độ trễ t0..t4 ra file JSONL (mặc định lấy MCT_LATENCY_LOG, "
+            "không có thì TẮT). Đọc bằng: python -m tools.latency_report"
+        ),
+    )
     p.add_argument("--publish", action="store_true", help="đẩy GlobalUpdate lên mct:global")
     p.add_argument("--block-ms", type=int, default=1000)
     p.add_argument(
@@ -252,11 +349,18 @@ def main(argv: list[str] | None = None) -> int:
     args = p.parse_args(argv)
 
     config = load_config(args.config if args.config.is_file() else None)
+
+    latency = None
+    if (path := latency_log_path(args.latency_log)) is not None:
+        latency = LatencyLog(path)
+        log.info("Đo độ trễ: ghi vào %s (run_id=%s)", path, latency.run_id)
+
     engine = build_engine(
         config,
         topology_path=args.topology if args.topology.is_file() else None,
         homography_dir=args.homography_dir,
         db_path=args.db,
+        latency=latency,
     )
 
     publisher = None
@@ -286,11 +390,15 @@ def main(argv: list[str] | None = None) -> int:
             updates = engine.feed(msg)
             if updates and publisher is not None:
                 publisher.publish_many(updates)
+            # t4 đóng SAU khi đã đẩy lên mct:global: đoạn cuối phải tính cả chi phí đưa
+            # dữ liệu tới dashboard, không dừng ở lúc ghi xong SQLite.
+            engine.mark_published()
             if stop["now"]:
                 break
         final = engine.finish()
         if final and publisher is not None:
             publisher.publish_many(final)
+        engine.mark_published()
     finally:
         if engine.store is not None:
             summary = engine.store.summary()
@@ -317,6 +425,9 @@ def main(argv: list[str] | None = None) -> int:
         )
         if publisher is not None:
             publisher.close()
+        if latency is not None:
+            log.info("Đã ghi %d bản ghi độ trễ vào %s", latency.n_written, latency.path)
+            latency.close()
     return 0
 
 

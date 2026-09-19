@@ -17,6 +17,10 @@ vận hành.
 
 Độ trễ này BAO GỒM cửa sổ gom của engine (mặc định 1 s, `configs/mct.yaml`) — đó là thành
 phần lớn nhất và là chủ ý thiết kế, không phải chi phí thừa.
+
+Công cụ này đo TỔNG và không cần bật gì thêm. Muốn biết trễ ở ĐOẠN NÀO (đuôi p90 do khâu
+nào sinh ra) thì chạy engine với `--latency-log` rồi đọc bằng `python -m tools.latency_report`
+— nó tách chuỗi thành t0→t1→t2→t3→t4 (`src/common/latency.py`).
 """
 
 from __future__ import annotations

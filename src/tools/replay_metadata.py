@@ -15,6 +15,7 @@ import time
 from dataclasses import replace
 from pathlib import Path
 
+from common.latency import T0_CAPTURE, T0_IS_NTP, T1_PROBE, now_ms
 from common.logging import get_logger
 from common.schema import FrameMessage, read_jsonl
 from common.streams import STREAM_FRAMES, FramePublisher
@@ -72,6 +73,14 @@ def replay(
                         # Gắn thời gian thực để so khớp với đồng hồ hệ thống khi demo.
                         shift += int(time.time() * 1000) - origin_ts - base_shift
                     out = replace(msg, ts_ms=msg.ts_ms + shift)
+
+                # Mốc đo độ trễ của fixture là của LẦN GHI, có khi từ tháng trước — để
+                # nguyên thì mọi đoạn tính ra hàng triệu ms. Ghi đè bằng mốc hiện tại:
+                # ở đây tool này CHÍNH LÀ producer, nó không có khâu capture nên t0 = t1
+                # (t0_is_ntp = 0), và các đoạn từ t1 trở đi vẫn đo được thật. Nhờ vậy cả
+                # chuỗi đo chạy được trên máy dev với Redis, không cần GPU.
+                stamp = now_ms()
+                out.stamps = {T0_CAPTURE: stamp, T0_IS_NTP: 0.0, T1_PROBE: stamp}
 
                 pub.publish(out)
                 sent += 1

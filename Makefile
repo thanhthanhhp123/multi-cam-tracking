@@ -1,6 +1,7 @@
 .PHONY: help dev test lint fmt up down replay record fixture wildtrack-annotations \
         wildtrack-fixture wildtrack-homography engine engine-fixture dashboard compare eval \
-        wildtrack-video wildtrack-ds-gt \n        ds-build ds-run ds-run-reid ds-run-wildtrack clean
+        wildtrack-video wildtrack-ds-gt engine-latency latency-report \
+        ds-build ds-run ds-run-reid ds-run-wildtrack clean
 .DEFAULT_GOAL := help
 
 VENV    := .venv
@@ -78,6 +79,14 @@ engine-fixture:  ## Chạy engine trên fixture, không cần Redis — make eng
 
 dashboard:  ## Mở dashboard ở http://localhost:8000 (đọc Redis + $(DB))
 	MCT_DB_PATH=$(DB) $(VENV)/bin/uvicorn dashboard.app:app --port 8000 --reload
+
+LATENCY_LOG ?= data/latency.jsonl
+
+engine-latency:  ## Chạy engine CÓ đo mốc t0..t4 (Redis) — ghi ra $(LATENCY_LOG)
+	$(PY) -m mct --config configs/mct.yaml --db $(DB) --publish --latency-log $(LATENCY_LOG)
+
+latency-report:  ## Trung vị/p90/p99 TỪNG ĐOẠN từ $(LATENCY_LOG) — chỗ tìm đuôi trễ
+	$(PY) -m tools.latency_report --log $(LATENCY_LOG) --top 5
 
 compare:  ## Đo chênh lệch online vs offline trên fixture — make compare FIXTURE=...
 	$(PY) -m eval.compare_online_offline --fixture $(FIXTURE) \

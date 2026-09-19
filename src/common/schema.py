@@ -106,6 +106,20 @@ class FrameMessage:
 
     schema_version: int = SCHEMA_VERSION
 
+    stamps: dict[str, float] = field(default_factory=dict)
+    """Mốc đo độ trễ (epoch ms, có phần thập phân) — khoá định nghĩa ở `common/latency.py`.
+
+    Trường CHỈ ĐỂ ĐO, không có ý nghĩa thuật toán: `src/mct` không được đọc nó để ra
+    quyết định gán, nếu không thì kết quả phụ thuộc đồng hồ và fixture hết tái lập được.
+    Mốc thời gian dùng cho thuật toán vẫn chỉ có một chỗ duy nhất là `ts_ms`.
+
+    **Vì sao KHÔNG nâng `schema_version`.** Đây là phép thêm thuần tuý và tương thích cả
+    hai chiều: bản đọc cũ bỏ qua khoá lạ, bản đọc mới thấy fixture cũ thì nhận dict rỗng.
+    Nâng version sẽ làm mọi fixture WildTrack sinh trước đó không đọc được nữa — mà sinh
+    lại chúng phải thuê GPU (CLAUDE.md §2). Đổi Ý NGHĨA của một trường sẵn có mới là
+    breaking change thật sự và khi đó vẫn phải nâng version.
+    """
+
     def infer_embed_dim(self) -> int:
         for det in self.detections:
             if det.embedding is not None:
@@ -150,7 +164,7 @@ def _message_to_dict(msg: FrameMessage, encode_emb: _EmbEncoder) -> dict[str, An
             item["embedding"] = encode_emb(det.embedding)
         detections.append(item)
 
-    return {
+    data: dict[str, Any] = {
         "schema_version": int(msg.schema_version),
         "cam_id": str(msg.cam_id),
         "frame_id": int(msg.frame_id),
@@ -161,6 +175,11 @@ def _message_to_dict(msg: FrameMessage, encode_emb: _EmbEncoder) -> dict[str, An
         "embed_dim": int(msg.embed_dim or msg.infer_embed_dim()),
         "detections": detections,
     }
+    # Chỉ ghi khi CÓ: message không đo độ trễ thì giữ nguyên kích thước như trước, và
+    # fixture cũ đọc-ghi lại vẫn ra đúng từng byte như cũ.
+    if msg.stamps:
+        data["stamps"] = {str(k): float(v) for k, v in msg.stamps.items()}
+    return data
 
 
 def _message_from_dict(data: dict[str, Any], decode_emb: _EmbDecoder) -> FrameMessage:
@@ -192,6 +211,7 @@ def _message_from_dict(data: dict[str, Any], decode_emb: _EmbDecoder) -> FrameMe
         detections=detections,
         embed_dim=int(data.get("embed_dim", 0)),
         schema_version=version,
+        stamps={str(k): float(v) for k, v in (data.get("stamps") or {}).items()},
     )
 
 

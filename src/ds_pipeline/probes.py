@@ -13,11 +13,15 @@ là hợp lệ — đây là package DUY NHẤT được phép.
   - embedding: lấy từ user meta của nvtracker (đường A, CLAUDE.md §11). Chi tiết phụ
     thuộc phiên bản DeepStream nằm gọn trong `ds_pipeline/reid_meta.py` — sửa ở đó,
     không rải rác trong probe.
+  - stamps: hai mốc đầu của chuỗi đo độ trễ (`common/latency.py`). `t0` = lúc khung rời
+    camera/NVDEC (`ntp_timestamp`), `t1` = lúc probe làm xong. Đây là chỗ DUY NHẤT đo
+    được `t0`, vì sau probe thì buffer gốc không còn. Chi phí: hai lần gọi đồng hồ và
+    một dict ba phần tử cho mỗi khung — không đáng kể so với suy luận, nhưng vẫn nằm
+    trên luồng streaming nên KHÔNG thêm gì nặng hơn vào đây.
 """
 
 from __future__ import annotations
 
-import time
 from collections.abc import Callable
 from dataclasses import dataclass
 
@@ -27,6 +31,13 @@ import pyds
 gi.require_version("Gst", "1.0")
 from gi.repository import Gst  # noqa: E402
 
+from common.latency import (  # noqa: E402
+    T0_CAPTURE,
+    T0_IS_NTP,
+    T1_PROBE,
+    capture_ms,
+    now_ms,
+)
 from common.logging import get_logger  # noqa: E402
 from common.schema import Detection, FrameMessage, l2_normalize  # noqa: E402
 from ds_pipeline.reid_meta import extract_reid_embedding  # noqa: E402
@@ -94,7 +105,13 @@ def make_probe(
             # attach-sys-ts trên streammux gắn NTP wall-clock vào buffer_pts của batch;
             # nếu không bật (nguồn file, live-source=0) thì fallback wall-clock tại probe —
             # đủ cho fixture/dev, KHÔNG đủ chính xác cho đối chiếu đa camera thời gian thực.
-            ts_ms = int(time.time() * 1000)
+            probe_ms = now_ms()
+            ts_ms = int(probe_ms)
+
+            # t0 lấy TRƯỚC khi duyệt object: mốc phải là lúc khung tới, không phải lúc
+            # duyệt xong. Không có ntp_timestamp thì t0 = t1 và cột `t1-t0` ra 0 ms —
+            # `t0_is_ntp` cho biết đó là "chưa đo được" chứ không phải "tức thời".
+            t0_ms, t0_source = capture_ms(getattr(frame_meta, "ntp_timestamp", 0) or 0, probe_ms)
 
             detections: list[Detection] = []
             l_obj = frame_meta.obj_meta_list
@@ -126,6 +143,13 @@ def make_probe(
                 detections=detections,
             )
             msg.embed_dim = msg.infer_embed_dim()
+            # t1 đóng sau khi đã trích xong embedding: đoạn t1-t0 mới bao trọn phần
+            # detect + track + ReID mà ta muốn quy trách nhiệm.
+            msg.stamps = {
+                T0_CAPTURE: t0_ms,
+                T0_IS_NTP: 1.0 if t0_source == "ntp" else 0.0,
+                T1_PROBE: now_ms(),
+            }
             sink(msg)
 
             l_frame = l_frame.next

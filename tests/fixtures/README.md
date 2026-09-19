@@ -59,6 +59,15 @@ python -m tools.record_metadata ...    # đã tự validate và cảnh báo khi 
 Cảnh báo hay gặp nhất là bbox tràn khỏi khung — dấu hiệu probe quên scale toạ độ từ
 `nvstreammux` về độ phân giải camera (CLAUDE.md §5).
 
+**Fixture ghi từ Redis mang theo mốc đo độ trễ** (`stamps`, xem `src/common/latency.py`):
+`t0` lúc khung rời camera, `t1` lúc probe xong, `t1b` lúc publisher nhấc khỏi hàng đợi,
+`t2` lúc Redis ghi entry, `t3a` lúc **máy ghi** nhận được. Nhờ vậy phần độ trễ phía
+producer đo lại được từ file, không cần ngồi cạnh máy GPU. Thêm khoảng 120 byte/message.
+
+Ngược lại, `make replay` **ghi đè** các mốc đó bằng mốc hiện tại: mốc cũ là của lần ghi
+(có khi từ tháng trước) nên giữ lại thì mọi đoạn tính ra hàng triệu ms. Tức phát lại
+fixture đo được chặng Redis → engine → dashboard, KHÔNG đo được chặng DeepStream.
+
 ## 3. Fixture từ WildTrack — dữ liệu thật, có ground-truth Global ID
 
 Trước khi có pipeline (M1–M3), dùng WildTrack (7 camera HD overlap, chú thích ~2 fps,

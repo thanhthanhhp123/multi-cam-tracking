@@ -258,3 +258,21 @@ def test_wildtrack_cam_id_khop_topology_demo(streams_wildtrack: dict, repo_root:
         (repo_root / "configs" / "demo" / "wildtrack.topology.yaml").read_text(encoding="utf-8")
     )
     assert {s["cam_id"] for s in streams_wildtrack["sources"]} == set(topo["cameras"])
+
+
+def test_streams_latency_chi_khac_streams_reid_o_sink_sync(pipeline_dir: Path) -> None:
+    """Config đo độ trễ = config đo FPS + `sync: true`, không khác gì nữa.
+
+    Hai file này sinh ra hai bảng số của chương 6 (FPS và độ trễ). Lệch thêm một khoá nào
+    khác là hai bảng đó nói về hai hệ thống khác nhau mà không ai nhận ra.
+    """
+    reid = yaml.safe_load((pipeline_dir / "streams_reid.yaml").read_text(encoding="utf-8"))
+    latency = yaml.safe_load((pipeline_dir / "streams_latency.yaml").read_text(encoding="utf-8"))
+
+    assert latency["sources"] == reid["sources"]
+    assert latency["streammux"] == reid["streammux"]
+    assert latency["pgie"] == reid["pgie"]
+    assert latency["tracker"] == reid["tracker"]
+
+    assert reid["sink"]["sync"] is False
+    assert latency["sink"]["sync"] is True

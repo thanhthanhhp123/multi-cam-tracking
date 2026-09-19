@@ -1,0 +1,44 @@
+# Cấu hình 4 luồng CÓ ReID để ĐO ĐỘ TRỄ theo từng chặng (phiên 23).
+#
+# Giống hệt `streams_reid.yaml` trừ MỘT khoá: `sink.sync: true`. Có test canh điều đó
+# (`tests/test_pipeline_configs.py`), vì chênh lệch giữa hai file phải quy về đúng một
+# biến — nếu không thì số độ trễ đo được ở đây không so được với số FPS đo ở file kia.
+#
+# Vì sao phải `sync: true`: chạy hết tốc lực thì nguồn file đẩy khung nhanh nhất có thể,
+# engine bị dội, và con số đo được là độ trễ LÚC QUÁ TẢI chứ không phải độ trễ vận hành
+# (đo 2026-09-04: 853 khung trải 4.7 s thay vì ~48 s). Đo độ trễ thì phải phát đúng tốc
+# độ thật; đo FPS thì ngược lại, phải để `false`.
+#
+#   python -m ds_pipeline --config configs/pipeline/streams_latency.yaml --publish --stats
+#
+# Tải sinh ra: 4 luồng × 30 fps = 120 message/s. Con số đó CỐ Ý nằm sát trần engine đã đo
+# ở phiên 19 (151.9 msg/s) — chỗ hàng đợi bắt đầu phình chính là chỗ cần nhìn.
+sources:
+  - cam_id: cam01
+    uri: file:///opt/nvidia/deepstream/deepstream/samples/streams/sample_1080p_h264.mp4
+  - cam_id: cam02
+    uri: file:///opt/nvidia/deepstream/deepstream/samples/streams/sample_1080p_h264.mp4
+  - cam_id: cam03
+    uri: file:///opt/nvidia/deepstream/deepstream/samples/streams/sample_1080p_h264.mp4
+  - cam_id: cam04
+    uri: file:///opt/nvidia/deepstream/deepstream/samples/streams/sample_1080p_h264.mp4
+
+streammux:
+  width: 1920
+  height: 1080
+  batched_push_timeout_us: 40000
+  live_source: false
+  attach_sys_ts: true
+
+tracker:
+  ll_lib_file: /opt/nvidia/deepstream/deepstream/lib/libnvds_nvmultiobjecttracker.so
+  ll_config_file: configs/pipeline/config_tracker_NvDCF_reid.yml
+  width: 960
+  height: 544
+  display_tracking_id: false
+
+sink:
+  sync: true
+
+pgie:
+  config_file: configs/pipeline/config_infer_yolo11_b4.txt

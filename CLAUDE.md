@@ -395,6 +395,8 @@ make lint               # ruff check + ruff format --check
 make up                 # docker compose: redis + mct-engine + dashboard
 make replay FIXTURE=tests/fixtures/two_cam_walk.jsonl   # phát lại metadata vào Redis
 make eval               # chạy TrackEval trên kết quả trong eval/
+make engine-latency     # engine + đo mốc t0..t4 ra data/latency.jsonl
+make latency-report     # trung vị/p90/p99 TỪNG ĐOẠN — tìm khâu gây đuôi trễ
 
 # ⚠️ Trên máy GPU (vast-gpu) — xác nhận với người dùng trước khi chạy, tính phí theo giờ (mục 2)
 make ds-build           # build docker/deepstream.Dockerfile
