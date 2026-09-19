@@ -39,6 +39,7 @@ from __future__ import annotations
 
 import argparse
 from collections import defaultdict
+from dataclasses import replace
 from pathlib import Path
 
 import numpy as np
@@ -120,6 +121,123 @@ def rebuild_messages(
     return out, stats
 
 
+def relabel_with_gt_ids(
+    messages: list[FrameMessage],
+    gt_by_frame: dict,
+    *,
+    min_iou: float,
+) -> list[FrameMessage]:
+    """Oracle tracker: thay `local_track_id` bằng `personID` của WildTrack, giữ nguyên mọi thứ khác.
+
+    Dùng để tách lỗi của tracker đơn camera (NvDCF) khỏi lỗi của module liên kết: fixture ra
+    có CÙNG hộp, CÙNG embedding, CÙNG `ts_ms` với đầu vào, chỉ khác danh tính cục bộ — nên
+    hiệu số điểm giữa hai fixture quy được về đúng một nguyên nhân là chất lượng tracker.
+
+    - NvDCF vỡ một người thành hai id → sau đây thành một (`personID` là duy nhất trên camera).
+    - NvDCF trộn hai người vào một id → sau đây tách lại thành hai.
+
+    Đầu vào phải là detection ĐÃ khớp được GT (đầu ra của `rebuild_messages`): detection
+    không ghép được với người nào thì không có `personID` để gán, và im lặng bỏ nó đi sẽ làm
+    fixture oracle lệch tập detection so với fixture gốc — nên báo lỗi.
+    """
+    out: list[FrameMessage] = []
+    for msg in messages:
+        gt_dets = gt_by_frame.get((view_idx_for_cam(msg.cam_id), int(msg.frame_id)), [])
+        pairs = match_frame(
+            [tuple(float(v) for v in d.bbox) for d in msg.detections],  # type: ignore[misc]
+            [g.bbox for g in gt_dets],
+            min_iou=min_iou,
+        )
+        person_of = {det_i: gt_dets[gt_i].person_id for det_i, gt_i, _ in pairs}
+        if len(person_of) != len(msg.detections):
+            raise ValueError(
+                f"{msg.cam_id} frame {msg.frame_id}: {len(msg.detections) - len(person_of)} "
+                "detection không ghép được người WildTrack nào — chỉ dùng cho fixture đã qua "
+                "`rebuild_messages`"
+            )
+        out.append(
+            FrameMessage(
+                cam_id=msg.cam_id,
+                frame_id=msg.frame_id,
+                ts_ms=msg.ts_ms,
+                frame_pts_ns=msg.frame_pts_ns,
+                frame_width=msg.frame_width,
+                frame_height=msg.frame_height,
+                detections=[
+                    replace(det, local_track_id=int(person_of[i]))
+                    for i, det in enumerate(msg.detections)
+                ],
+                embed_dim=msg.embed_dim,
+            )
+        )
+    return out
+
+
+class EmbeddingCache:
+    """(cam_id, frame_id, hộp) -> embedding đã L2-normalize, lưu ra `.npz`.
+
+    **Vì sao cần.** Embedding của một crop chỉ phụ thuộc ảnh, hộp và model — không phụ thuộc
+    fixture nào yêu cầu nó. Với `--boxes gt`, ba lần chạy pipeline khác nhau (nhiễu giữa các
+    lần, phiên 22) khớp gần như cùng một tập hộp GT, nên chỉ lần đầu phải trả giá suy luận
+    (OSNet trên CPU ~0.2 s/crop, ~20 000 crop mỗi fixture); các lần sau gần như không tốn gì.
+
+    Cache gắn với TÊN model: đọc file của model khác là lỗi, không phải im lặng dùng nhầm.
+    Tuy nhiên nó KHÔNG biết crop được cắt bằng code nào — đổi `crop_for_reid` hay tiền xử lý
+    của `OsnetOnnxEmbedder` thì phải xoá file cache.
+    """
+
+    def __init__(self, path: Path | None, *, model_tag: str = "") -> None:
+        self.path = path
+        self.model_tag = model_tag
+        self._items: dict[tuple, np.ndarray] = {}
+        self.hits = 0
+        self.misses = 0
+        if path is not None and path.is_file():
+            self._load(path)
+
+    @staticmethod
+    def key(cam_id: str, frame_id: int, bbox) -> tuple:
+        return (str(cam_id), int(frame_id), tuple(round(float(v), 3) for v in bbox))
+
+    def __len__(self) -> int:
+        return len(self._items)
+
+    def get(self, cam_id: str, frame_id: int, bbox) -> np.ndarray | None:
+        return self._items.get(self.key(cam_id, frame_id, bbox))
+
+    def put(self, cam_id: str, frame_id: int, bbox, embedding: np.ndarray) -> None:
+        self._items[self.key(cam_id, frame_id, bbox)] = np.array(embedding, dtype=np.float32)
+
+    def _load(self, path: Path) -> None:
+        with np.load(path, allow_pickle=False) as data:
+            stored = str(data["model"])
+            if stored != self.model_tag:
+                raise ValueError(
+                    f"{path}: cache của model {stored!r}, đang dùng {self.model_tag!r} — "
+                    "xoá file hoặc trỏ --embed-cache sang chỗ khác"
+                )
+            for cam, frame, box, emb in zip(
+                data["cams"], data["frames"], data["boxes"], data["embs"], strict=True
+            ):
+                self._items[self.key(str(cam), int(frame), box)] = emb
+
+    def save(self) -> None:
+        if self.path is None or not self._items:
+            return
+        keys = list(self._items)
+        tmp = self.path.with_name(self.path.name + ".tmp.npz")
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        np.savez(
+            tmp,
+            model=np.array(self.model_tag),
+            cams=np.array([k[0] for k in keys]),
+            frames=np.array([k[1] for k in keys], dtype=np.int64),
+            boxes=np.array([k[2] for k in keys], dtype=np.float64),
+            embs=np.stack([self._items[k] for k in keys]),
+        )
+        tmp.replace(self.path)  # thay nguyên tử: ngắt giữa chừng không để lại file hỏng
+
+
 def attach_embeddings(
     messages: list[FrameMessage],
     *,
@@ -128,8 +246,13 @@ def attach_embeddings(
     embedder,
     image_subdir_fmt: str = "C{n}",
     image_reader=None,
+    cache: EmbeddingCache | None = None,
 ) -> None:
-    """Trích embedding tại chỗ cho từng message, gom theo ảnh để mỗi PNG chỉ đọc một lần."""
+    """Trích embedding tại chỗ cho từng message, gom theo ảnh để mỗi PNG chỉ đọc một lần.
+
+    Có `cache` thì crop đã có sẵn không bị suy luận lại, và ảnh mà MỌI crop đều đã có thì
+    không được đọc lên (đọc + giải mã một PNG 1080p đã tốn ~0.15 s).
+    """
     read_image = image_reader or _read_image
     image_root = wildtrack_dir / "Image_subsets"
 
@@ -144,18 +267,43 @@ def attach_embeddings(
                 f"frame_id {frame_id} vượt quá {len(frame_numbers)} khung chú thích — "
                 "fixture và dataset không cùng --frame-stride/--max-frames"
             )
-        subdir = image_subdir_fmt.format(n=view_idx_for_cam(cam_id) + 1)
-        path = image_root / subdir / f"{frame_numbers[frame_id]:08d}.png"
-        image = read_image(path)
-        if image is None:
-            raise FileNotFoundError(f"Không đọc được ảnh {path}")
 
-        feats = embedder.embed([crop_for_reid(image, d.bbox) for d in dets])
-        for det, feat in zip(dets, feats, strict=True):
-            det.embedding = l2_normalize(feat)
+        todo: list[Detection] = []
+        for det in dets:
+            hit = cache.get(cam_id, frame_id, det.bbox) if cache is not None else None
+            if hit is None:
+                todo.append(det)
+            else:
+                det.embedding = hit.copy()
+        if cache is not None:
+            cache.hits += len(dets) - len(todo)
+            cache.misses += len(todo)
+
+        if todo:
+            subdir = image_subdir_fmt.format(n=view_idx_for_cam(cam_id) + 1)
+            path = image_root / subdir / f"{frame_numbers[frame_id]:08d}.png"
+            image = read_image(path)
+            if image is None:
+                raise FileNotFoundError(f"Không đọc được ảnh {path}")
+
+            feats = embedder.embed([crop_for_reid(image, d.bbox) for d in todo])
+            for det, feat in zip(todo, feats, strict=True):
+                det.embedding = l2_normalize(feat)
+                if cache is not None:
+                    cache.put(cam_id, frame_id, det.bbox, det.embedding)
 
         if done % 200 == 0 or done == len(items):
-            log.info("trích embedding: %d/%d ảnh", done, len(items))
+            if cache is not None:
+                cache.save()
+                log.info(
+                    "trích embedding: %d/%d ảnh (cache: %d trúng, %d trượt)",
+                    done,
+                    len(items),
+                    cache.hits,
+                    cache.misses,
+                )
+            else:
+                log.info("trích embedding: %d/%d ảnh", done, len(items))
 
     for msg in messages:
         msg.embed_dim = msg.infer_embed_dim()
@@ -174,6 +322,21 @@ def main(argv: list[str] | None = None) -> int:
         choices=BOX_SOURCES,
         required=True,
         help="'fixture' = hộp của detector, 'gt' = hộp ground-truth đã khớp IoU",
+    )
+    p.add_argument(
+        "--oracle-out",
+        type=Path,
+        default=None,
+        help="ghi THÊM một fixture 'oracle tracker': cùng hộp/embedding/ts_ms với --out nhưng "
+        "local_track_id = personID WildTrack. So điểm hai fixture này = chi phí của tracker "
+        "đơn camera. Dùng chung một lượt trích embedding nên không tốn thêm CPU",
+    )
+    p.add_argument(
+        "--embed-cache",
+        type=Path,
+        default=None,
+        help="file .npz nhớ embedding theo (camera, khung, hộp) — dùng chung giữa nhiều fixture "
+        "cùng --boxes gt để mỗi crop chỉ bị suy luận một lần. Gắn với tên model ONNX",
     )
     p.add_argument("--min-iou", type=float, default=0.5)
     p.add_argument("--min-box-area", type=float, default=0.0)
@@ -209,12 +372,17 @@ def main(argv: list[str] | None = None) -> int:
         raise SystemExit("không có detection nào khớp GT — xem lại --min-iou / ánh xạ frame_id")
 
     embedder = OsnetOnnxEmbedder(args.reid_onnx, batch_size=args.reid_batch)
+    cache = None
+    if args.embed_cache is not None:
+        cache = EmbeddingCache(args.embed_cache, model_tag=args.reid_onnx.name)
+        log.info("cache embedding: %s (%d mục có sẵn)", args.embed_cache, len(cache))
     attach_embeddings(
         rebuilt,
         wildtrack_dir=args.wildtrack_dir,
         frame_numbers=frame_numbers,
         embedder=embedder,
         image_subdir_fmt=args.image_subdir_fmt,
+        cache=cache,
     )
 
     # KHÔNG strict: fixture nguồn mang sẵn các detection `confidence = -0.1` — target do
@@ -225,6 +393,19 @@ def main(argv: list[str] | None = None) -> int:
     if problems:
         log.warning("%d message vi phạm contract (giữ nguyên, xem chú thích trong code)", problems)
     n = write_jsonl(args.out, rebuilt)
+
+    if args.oracle_out is not None:
+        oracle = relabel_with_gt_ids(rebuilt, gt_index(raw), min_iou=args.min_iou)
+        n_oracle = write_jsonl(args.oracle_out, oracle)
+        n_ids = len({(m.cam_id, d.local_track_id) for m in oracle for d in m.detections})
+        n_ids_src = len({(m.cam_id, d.local_track_id) for m in rebuilt for d in m.detections})
+        log.info(
+            "%s: %d message, oracle tracker — %d local track (tracker thật: %d)",
+            args.oracle_out,
+            n_oracle,
+            n_ids,
+            n_ids_src,
+        )
 
     log.info(
         "%s: %d message, %d/%d detection giữ lại (hộp=%s), embed_dim=%d",
