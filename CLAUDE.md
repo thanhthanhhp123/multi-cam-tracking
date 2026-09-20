@@ -362,6 +362,16 @@ và trong worklog chỉ link tới nó.
   `command -v ffmpeg` vẫn thấy nên `apt install ffmpeg` bị bỏ qua. Sửa:
   `apt-get install -y libflac8 libmp3lame0 libxvidcore4` (tên gói chữ thường), rồi kiểm
   `ffmpeg -encoders` có `libx264` (đo 2026-09-10).
+- **`FORCE_EXPORT_DEPS=1` (cài ultralytics) nâng numpy `1.26.4 → 2.x` trong image DeepStream, và
+  `nvtracker` SEGFAULT (exit 139) ngay lúc build engine ReID** — im lặng: log chỉ dừng sau
+  `Begin building engine for tracker ReID...`, còn `import pyds` vẫn OK nên bootstrap không bắt
+  được. Chỉ đổi numpy về `pip install numpy==1.26.4` là pipeline chạy lại (đo 2026-09-20). Làm bước
+  đó sau khi export ONNX xong. Ngoài ra `export_yolo11.py` đòi `yolo11s.pt` có sẵn ở cwd, không tự
+  tải; đừng bọc nó trong `| tail` (che mất mã thoát).
+- **CLI `vastai` trên máy dev** nằm ở `%APPDATA%\Python\Python313\Scripts\vastai.exe` (không trên
+  PATH), khóa API ở `~/.config/vastai/vast_api_key`. `vastai destroy instance <id>` hỏi xác nhận và
+  tự hủy bỏ khi không có stdin — phải thêm `-y`, rồi kiểm `vastai show instances` = 0. Lọc offer
+  `inet_down >= 2500` trước khi xét giá (host chậm từng kẹt kéo image 11–28 phút).
 - **Zip WildTrack của EPFL + Python đã vá CVE-2024-0450 = 971/2807 ảnh không giải nén
   được.** Bản vá thêm phép kiểm "Overlapped entries (possible zip bomb)", mà offset của zip
   này cuộn vòng qua mốc 4 GiB nên mọi entry sau mốc bị từ chối — cả `unzip` hệ thống.
