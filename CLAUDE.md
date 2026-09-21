@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-Hướng dẫn làm việc trong repo này. Đọc trước khi sửa bất kỳ file nào.
+Hướng dẫn làm việc trong repo này. Đọc trước khi sửa bất kỳ file nào. Luôn trả lời bằng tiếng Việt, không trả lời bằng tiếng Anh trừ khi có yêu cầu.
 
 ## 1. Bài toán
 
