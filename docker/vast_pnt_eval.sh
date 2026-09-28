@@ -41,15 +41,12 @@ case "$step" in
 setup)
   [ -d "$TE/.git" ] || git clone -q https://github.com/JonathonLuiten/TrackEval "$TE"
   git -C "$TE" checkout -q "$TE_REF"
-  if [ ! -x "$VENV/bin/python" ]; then
-    python3 -m venv "$VENV" 2>/dev/null || { pip install -q uv && uv venv -q --python "$(command -v python3)" "$VENV"; }
-  fi
-  "$VENV/bin/python" -m pip --version >/dev/null 2>&1 || "$VENV/bin/python" -m ensurepip -q 2>/dev/null || true
-  if "$VENV/bin/python" -m pip --version >/dev/null 2>&1; then
-    "$VENV/bin/python" -m pip install -q numpy==1.23.5 scipy==1.10.1 msgpack PyYAML python-dotenv redis
-  else
-    uv pip install -q --python "$VENV/bin/python" numpy==1.23.5 scipy==1.10.1 msgpack PyYAML python-dotenv redis
-  fi
+  # uv, khong dung `python3 -m venv`: image DeepStream thieu ensurepip (python3.10-venv),
+  # venv tao ra khong co pip (gap o phien 30).
+  command -v uv >/dev/null || pip install -q uv
+  [ -x "$VENV/bin/python" ] || uv venv -q --clear --python "$(command -v python3)" "$VENV"
+  uv pip install -q --python "$VENV/bin/python" \
+    numpy==1.23.5 scipy==1.10.1 msgpack PyYAML python-dotenv redis
   "$VENV/bin/python" -c "import numpy, scipy; print('venv-eval numpy', numpy.__version__, 'scipy', scipy.__version__)"
   ;;
 gt)
