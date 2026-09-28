@@ -15,6 +15,16 @@ và mọi con số phải đo được lại. Ưu tiên đơn giản + đo đư�
 Đóng góp kỹ thuật chính = **module liên kết đa camera** (`src/mct/`), không phải pipeline DeepStream.
 Detector và Re-ID dùng model có sẵn (fine-tune nếu cần), không train from scratch.
 
+**Nguyên tắc quy trình** (rút ra 2026-09-28, sau 28 phiên, xem `docs/worklog/2026-09-28-29-*`):
+1. **Tách lỗi theo tầng TRƯỚC khi tối ưu bất kỳ tầng nào.** Tầng gồm: detector, tracker đơn
+   camera và liên kết. Đồ án đã tinh chỉnh `src/mct` nhiều phiên trước khi đo được rằng phần lớn
+   điểm mất nằm ở đầu vào.
+2. **Tầng nào không phải đóng góp thì dùng model/hệ tốt nhất có sẵn**, và phải so với nó trước khi
+   chốt. Lý do "không fine-tune" chỉ trả lời câu *có fine-tune không*, không trả lời câu *chọn model
+   nào*.
+3. **Quét tài liệu và dựng baseline có sẵn trước khi chốt một thành phần.** Baseline cho phần
+   camera chồng lấn là MV3DT của NVIDIA (mục 7).
+
 ## 2. Ràng buộc môi trường — ĐỌC KỸ
 
 > **2026-09-10: `ut-hpc` ĐÃ MẤT — tài khoản cụm bị khoá.** Cột `ut-hpc` trong bảng dưới và
@@ -244,6 +254,14 @@ Cùng một pipeline thật (YOLO11s 640, n = 3): HOTA hộp ảnh 15.7, HOTA m�
 giao thức, toàn khung hay trong vùng, ngưỡng (IoU hoặc T mét), NMS, và tập khung (400 khung hay
 40 khung test).
 
+**Baseline có sẵn: MV3DT** (NVIDIA, trong DeepStream từ 8.0; bài arXiv 2606.13127). Hệ này
+zero-shot, không học trên WildTrack, và báo IDF1 96.5 / MOTA 93.1 ở 27 FPS trên WildTrack. Nó chỉ
+chạy được với **camera chồng lấn**, và cần DeepStream 8–9 (Ubuntu 24.04, driver ≥ 580). Vai trò
+trong đồ án là **mốc so sánh cho phần camera chồng lấn**, không phải sản phẩm. Đóng góp chính của
+đồ án là liên kết cho cấu hình hỗn hợp chồng lấn/không chồng lấn, chạy thời gian thực (định vị
+chờ GVHD chốt, phiên 29). Giao thức chấm của MV3DT **chưa kiểm** với bảng gốc: chưa đặt số của nó
+cạnh số của đồ án cho tới khi kiểm xong.
+
 Khi báo cáo số: luôn ghi kèm cấu hình GPU, model, độ phân giải, số luồng. Số không tái lập được thì vô nghĩa.
 
 ## 8. Quy ước code
@@ -281,6 +299,17 @@ Market-1501 chuyên biệt **+25% F1** (0.346 vs 0.277, phiên 4) — tức khá
 thấy tụt rõ thì mới fine-tune trên chính dữ liệu lab — trình bày như một *ablation* (có/không
 fine-tune), không phải một bước bắt buộc của pipeline chính.
 
+**Mở lại lựa chọn detector (2026-09-28, phiên 29).** Quyết định trên chỉ trả lời "có fine-tune
+không". YOLO11s COCO chưa từng được so với một detector chuyên cho người, trong khi phiên
+21/24/26 cho thấy đầu vào là tầng mất điểm lớn nhất. Cụ thể, thay hộp GT + id GT vào pipeline mà
+giữ nguyên engine thì HOTA mặt đất tăng 31.1 → 63.8.
+- **Ứng viên số 1:** PeopleNet Transformer (NVIDIA, chạy trong `nvinfer`; cũng là detector
+  MV3DT dùng).
+- **Dự phòng:** RF-DETR, YOLO26.
+- **Vẫn giữ quy tắc** pretrained và không fine-tune trên WildTrack.
+- **Tiêu chí:** n = 3, chấm cả hai giao thức ở mục 7, kèm FPS 4 luồng.
+- **Chưa xác minh** PeopleNet Transformer chạy được trên DeepStream 7.1 / TensorRT 10.
+
 Bảng trên là **kế hoạch tham chiếu**, không phải tiến độ thật.
 
 **Trạng thái hiện tại:** xem 2–3 file mới nhất trong `docs/worklog/` (quy ước ở mục 10) —
@@ -309,6 +338,9 @@ và trong worklog chỉ link tới nó.
   Chốt phiên bản chính xác vào `.env` + `docker/deepstream.Dockerfile` **sau khi kiểm tra driver
   trên máy GPU thật** — DeepStream rất kén cặp driver/CUDA/TensorRT. Dùng Docker image chính thức
   của NVIDIA ngay từ đầu, đừng cài native (đề cương chương 5.2 đã liệt kê đây là rủi ro số 1).
+  Repo đang chạy **DeepStream 7.1**. Nếu muốn chạy baseline MV3DT thì phải dùng một image
+  DeepStream 8–9 riêng (Ubuntu 24.04, driver ≥ 580, cần kiểm khi thuê máy). Không nâng pipeline
+  chính chỉ vì baseline.
 - **Đường lấy Re-ID embedding: đã chốt (A)** — ReID extractor tích hợp trong `nvtracker`
   (NvDCF), bật bằng khối `ReID:` trong config tracker; embedding ra qua user meta. Đường (B)
   — SGIE `nvinfer` thứ hai (`process-mode=2`, `output-tensor-meta=1`) chạy OSNet trên crop,
