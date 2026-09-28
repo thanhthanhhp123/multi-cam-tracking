@@ -34,7 +34,7 @@ import argparse
 import contextlib
 import signal
 import sys
-from collections.abc import Iterator
+from collections.abc import Callable, Iterator
 from pathlib import Path
 from types import FrameType
 from typing import Any
@@ -81,12 +81,17 @@ class Engine:
         store: Store | None = None,
         window_ms: int = 1000,
         latency: LatencyLog | None = None,
+        window_observer: Callable[[int, list[Assignment]], None] | None = None,
     ) -> None:
         self.builder = TrackletBuilder(tracklet_config)
         self.associator = associator or Associator()
         self.store = store
         self.window_ms = window_ms
         self.latency = latency
+        # Gọi một lần mỗi vòng gán, kèm mốc thời gian DỮ LIỆU của vòng (`now_ms` = `ts_ms`
+        # đã đóng cửa sổ) và kết quả. Chỉ đọc: để công cụ offline đo thời gian tới lúc có
+        # Global ID theo thời gian dữ liệu, không cần đồng hồ tường (eval/latency_tradeoff.py).
+        self.window_observer = window_observer
         self._window_end_ms: int | None = None
         self._pending_latency: list[LatencyRecord] = []
         self.n_messages = 0
@@ -133,6 +138,8 @@ class Engine:
         t3w = wall_clock_ms() if self.latency is not None else 0.0
 
         results = self.associator.assign(list(unique.values()))
+        if self.window_observer is not None and results:
+            self.window_observer(now_ms, results)
         # TTL của GlobalTrack nằm trong GalleryConfig (`association.global_track_ttl_ms`),
         # `prune` nhận mốc hiện tại chứ không nhận mốc cắt.
         closed_tracks = self.associator.prune(now_ms)

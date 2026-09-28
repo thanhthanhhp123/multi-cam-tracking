@@ -2,6 +2,12 @@
 
 - **Mốc:** M4/M5 | **Máy:** máy dev (Windows, venv 3.10) + `vast-gpu` (Tesla T4) | **Thời lượng:** ~3h | **GPU $0.022**
 
+> **Đính chính 2026-09-28 (phiên 28):** đuôi p90 ≈ 2.2 s dưới đây KHÔNG phải độ trễ chốt danh
+> tính. 100% bản ghi ở đuôi là bản ghi CUỐI của tracklet (phát lại lúc tracklet đóng), khi
+> danh tính đã được chốt ở vòng gán đầu tiên và không đổi nữa. Tính riêng lần gán đầu:
+> p50 107 / p90 ~600 / max ~1040 ms. Số đo từng chặng vẫn đúng; chỉ cách diễn giải đuôi là sai.
+> Xem `2026-09-28-28-danh-doi-do-tre-do-chinh-xac.md`.
+
 ## Mục tiêu phiên
 
 - Phiên 9 đo được độ trễ end-to-end **trung vị 40 ms nhưng p90 2.1 s** và đưa ra giả thuyết
