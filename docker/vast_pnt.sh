@@ -39,6 +39,27 @@ cat_engine_yolo() {
   done
 }
 
+# Ghi nhiet do / xung GPU suot lan do (moi 5 s). Phien 30: may T4 dau tien bi SW Thermal
+# Slowdown (84 C, SM 300/1590 MHz) -> throughput PeopleNet v1 con 1/4 va pipeline khong
+# theo kip 14 anh/s cua WildTrack. So do ma khong kem bang chung nay thi khong tin duoc.
+gpu_log_start() {
+  nvidia-smi --query-gpu=timestamp,temperature.gpu,clocks.sm,clocks_throttle_reasons.active,utilization.gpu     --format=csv,noheader,nounits -l 5 > "$1" 2>/dev/null &
+  GPU_LOG_PID=$!
+}
+gpu_log_stop() {
+  kill "$GPU_LOG_PID" 2>/dev/null || true
+  python3 - "$1" <<'PY'
+import sys
+rows = [r.split(", ") for r in open(sys.argv[1]) if r.count(",") >= 4]
+busy = [r for r in rows if int(r[4]) >= 50]
+if not busy:
+    print("gpu: khong co mau nao GPU >= 50% util"); sys.exit()
+temp = max(int(r[1]) for r in busy); clk = min(int(r[2]) for r in busy)
+thr = sorted({r[3] for r in busy} - {"0x0000000000000000"})
+print(f"gpu ({len(busy)} mau ban): nhiet max {temp} C, xung SM min {clk} MHz, throttle {thr or 'khong'}")
+PY
+}
+
 # Bang chung bac bo duoc cho 3 bay cua phien 30: probe giu dung lop, engine duoc NAP LAI
 # (khong build lai), va co detection that (fixture/khung khong rong).
 bang_chung() {
@@ -58,7 +79,9 @@ wildtrack)
     redis-cli FLUSHALL >/dev/null
     python3 -m tools.record_metadata --out "$out" > "logs/record_${tag}_r${n}.log" 2>&1 &
     rec=$!
+    gpu_log_start "logs/gpu_${tag}_r${n}.csv"
     python3 -m ds_pipeline --config "$streams" --publish --stats > "logs/pipeline_${tag}_r${n}.log" 2>&1
+    gpu_log_stop "logs/gpu_${tag}_r${n}.csv"
     sleep 5
     kill -TERM "$rec"; wait "$rec" || true
     cat_engine_yolo
@@ -83,7 +106,9 @@ fps)
   for i in 1 2; do
     log=logs/fps_${tag}_${i}.log
     echo "=== FPS ${tag} lan ${i}/2 $(date -u +%H:%M:%S) ==="
+    gpu_log_start "logs/gpu_fps_${tag}_${i}.csv"
     timeout 1200 python3 -m ds_pipeline --config "$streams" --stats > "$log" 2>&1 || true
+    gpu_log_stop "logs/gpu_fps_${tag}_${i}.csv"
     cat_engine_yolo
     bang_chung "$log"
   done
