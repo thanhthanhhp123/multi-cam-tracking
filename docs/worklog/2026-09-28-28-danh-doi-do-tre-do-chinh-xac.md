@@ -138,14 +138,20 @@ Welch thô so với `w1000_m3`: `w500_m1` ΔHOTA −1.02, t ≈ 3.0 (tách khỏ
 - **Mẫu độ trễ tốc độ thật rất nhỏ**: 64 tracklet, ~15 giây, 4 bản sao cùng một video mẫu. Cần
   đo lại trên dữ liệu tự thu 25–30 fps (M6), ở đó mới có cả độ trễ lẫn độ chính xác trên cùng
   một nguồn.
-- `tools/latency_report.py` chưa tách "lần gán đầu" với "phát lại lúc đóng". Bảng đuôi của phiên
-  23 vẫn sẽ in con số gây hiểu nhầm nếu chạy lại. Cần thêm cột `is_first` vào `LatencyRecord`
-  (hoặc suy ra theo `tracklet_id`) rồi `--by first`.
+- ~~`tools/latency_report.py` chưa tách "lần gán đầu" với "phát lại lúc đóng"~~ **xong trong
+  phiên**: `LatencyRecord.kind` = `first` / `update` / `close` do engine ghi; log cũ được suy ra
+  `first` theo thứ tự `tracklet_id` (còn lại là `repeat`); `--by kind`; mục tiêu 1 s giờ chấm
+  trên bản ghi `first`. Trên log phiên 23 (lần 2): `first` n = 128, p50 106.6 / p90 621.5 /
+  p99 996.2 ms → ĐẠT; `repeat` n = 891, p90 2405 ms. +4 test. Toàn bộ bộ test: **613 passed,
+  5 skipped**, ruff sạch.
 - Chưa chấm theo giao thức điểm mặt đất cho các cấu hình này (mới có hộp ảnh).
 - `idle_timeout_ms` không ảnh hưởng độ trễ chốt danh tính, nhưng vẫn ảnh hưởng độ vỡ tracklet
   (phiên 12). Không nằm trong lưới quét này.
-- README (`Pipeline performance`) vẫn ghi "End-to-end latency (camera → Global ID) 40 ms median,
-  2.1 s p90" và "targets met with headroom". Cả hai đều sai theo phiên 23 và phiên này. Chưa sửa.
+- ~~README sai số~~ **đã sửa trong phiên**: bảng kết quả dùng số n = 3 (A/C/B/LB của phiên 24)
+  thay cho số một lần chạy trên fixture đã mất; bỏ hàng "Upper bound" ghép nhầm (HOTA/IDF1 của
+  cận trên nhưng AssA/DetA của đơn camera pipeline thật, phiên 15); 189 FPS/luồng là số KHÔNG
+  ReID (có ReID là 175, phiên 9); độ trễ tách vị trí / chốt danh tính; thêm HOTA mặt đất;
+  các số "cận trên (SCT lý tưởng)" được ghi rõ nhãn.
 - Worklog phiên 23 (QĐ/bước tiếp theo 1) vẫn ghi đuôi là "độ trễ chốt danh tính". Đã thêm ghi
   chú đính chính ở đầu file đó, nội dung gốc giữ nguyên.
 
@@ -153,7 +159,6 @@ Welch thô so với `w1000_m3`: `w500_m1` ΔHOTA −1.02, t ≈ 3.0 (tách khỏ
 
 1. Báo cáo GVHD (03–04/10): mang bảng 1 + bảng 3 và đề xuất định nghĩa ở mục "Đọc bảng này thế
    nào". Xin thầy chốt: mục tiêu "<1 s" áp vào độ trễ vị trí, hay chốt danh tính ở p50 / p90?
-2. Sửa `latency_report.py` để tách lần gán đầu (xem trên), rồi sửa README cho khớp.
-3. Vẽ biểu đồ đánh đổi (trục x = p90 `time_to_id`, trục y = HOTA, thanh sai số n = 3) cho slide
+2. Vẽ biểu đồ đánh đổi (trục x = p90 `time_to_id`, trục y = HOTA, thanh sai số n = 3) cho slide
    và chương 6.
-4. M6: đo lại `time_to_id` + HOTA trên cùng một nguồn 25–30 fps khi có dữ liệu tự thu.
+3. M6: đo lại `time_to_id` + HOTA trên cùng một nguồn 25–30 fps khi có dữ liệu tự thu.

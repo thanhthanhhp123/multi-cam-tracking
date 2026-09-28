@@ -243,6 +243,16 @@ class LatencyRecord:
     """
 
     t0_source: str = ""
+    kind: str = ""
+    """Loại cập nhật: `first` (vòng gán ĐẦU TIÊN — lúc danh tính được chốt), `update`
+    (tracklet đã có chủ, vòng sau) hoặc `close` (phát lại lúc tracklet đóng).
+
+    Chỉ `first` là độ trễ chốt danh tính: `Associator.assign` không bao giờ đổi chủ của một
+    tracklet đã gán. Phiên 23 gộp cả ba và đọc nhầm đuôi `close` (trễ ≈ `idle_timeout_ms` +
+    cửa sổ) thành độ trễ chốt danh tính (docs/worklog/2026-09-28-28-*). Rỗng = log cũ, trước
+    khi có trường này; `tools.latency_report` suy ra `first` theo thứ tự `tracklet_id`.
+    """
+
     stamps: dict[str, float] = field(default_factory=dict)
 
     def to_json(self) -> str:
@@ -256,6 +266,7 @@ class LatencyRecord:
             "db_flushed": bool(self.db_flushed),
             "final_flush": bool(self.final_flush),
             "t0_source": self.t0_source,
+            "kind": self.kind,
             # 3 chữ số thập phân = 1 µs: dư cho thứ đang đo, mà file nhỏ hơn hẳn so với
             # float đầy đủ (một buổi chạy sinh hàng trăm nghìn dòng).
             "stamps": {k: round(float(v), 3) for k, v in self.stamps.items()},
@@ -275,6 +286,7 @@ class LatencyRecord:
             db_flushed=bool(data.get("db_flushed", False)),
             final_flush=bool(data.get("final_flush", False)),
             t0_source=str(data.get("t0_source", "")),
+            kind=str(data.get("kind", "")),
             stamps={str(k): float(v) for k, v in (data.get("stamps") or {}).items()},
         )
 

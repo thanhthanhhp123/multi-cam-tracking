@@ -77,47 +77,70 @@ The contract between the two sides is a single message schema
 
 ## Results
 
-All numbers are measured on the **WildTrack** dataset (7 overlapping HD cameras, ~2 fps
-annotations, identity labels consistent across cameras), scored with **TrackEval**
-(MotChallenge2DBox, IoU 0.5).
+All numbers are measured on the **WildTrack** dataset (7 overlapping HD cameras, 2 fps
+annotations, identity labels consistent across cameras), scored with **TrackEval**. Pipeline
+runs are not bit-reproducible (NvDCF id assignment varies run to run by ~0.5 HOTA), so every
+pipeline number below is a mean ± sample std over **n = 3** independent pipeline runs.
 
 ### Association engine — cross-camera HOTA
 
+Image-box protocol: IoU 0.5 on a virtual sequence concatenating the 7 cameras, full frame.
+Real pipeline = YOLO11s 640 FP16 + NvDCF + OSNet Re-ID on a Tesla T4.
+
 | Configuration | HOTA | AssA | IDF1 | DetA |
 |---|---:|---:|---:|---:|
-| Real DeepStream pipeline, before same-camera stitching | 14.37 | 8.75 | 17.51 | 24.12 |
-| Real DeepStream pipeline, **with same-camera stitching** *(this project)* | **16.21** | **11.13** | **20.92** | 24.12 |
-| Same pipeline, fed ground-truth boxes | 25.18 | 14.81 | 25.69 | 42.82 |
-| Upper bound — ground-truth boxes + ideal single-camera tracking | 94.7 | 33.9 | 94.0 | 24.3 |
+| **Real DeepStream pipeline** (this system) | **15.70 ± 0.46** | 10.47 | 20.08 | 24.12 |
+| Ground-truth boxes, NvDCF track ids, same engine | 26.14 ± 0.28 | 15.92 | 26.76 | 42.94 |
+| Ground-truth boxes **and** ids (oracle tracker), same engine | 39.15 ± 1.78 | 35.00 | 43.31 | 43.85 |
+| Same boxes + ids, **perfect** association (ceiling) | 49.31 | 53.87 | 62.20 | 45.14 |
 
-The gap between the real pipeline and the upper bound is almost entirely **association cost**
-(DetA barely moves, AssA collapses): the detector recall (~45%) and per-camera id-switches are
-the dominant error sources, and both live *outside* `src/mct`. Feeding the engine perfect
-boxes lifts HOTA to **25.18** — of which the association-only share is **AssA +33%**.
+Reading the ladder: the largest single loss is **detection coverage** — even the ceiling only
+covers ~45% of the ground-truth boxes. Of the association accuracy lost below that ceiling,
+roughly **half is the per-camera tracker** (NvDCF fragments/mixes identities at 2 fps) and
+**half is the cross-camera engine** — there is no single bottleneck.
+
+Scored the way WildTrack papers do it (one ground-plane point per person, matched within 1 m,
+inside the annotated 12 × 36 m area, no NMS), the real pipeline reaches **HOTA 31.1 ± 0.9**.
+It is still not directly comparable to those papers: they fuse views inside a network trained
+on WildTrack; this system trains nothing on WildTrack.
 
 Key measured decisions (see [`docs/worklog/`](docs/worklog/README.md)):
 
 - **Same-camera tracklet stitching** using position + walking-speed continuity through the
-  camera's own homography: HOTA 14.37 → **16.21**, AssA 8.75 → **11.13**. A control that only
-  loosens the cost threshold instead makes it *worse* — the gain is a real geometric constraint.
+  camera's own homography: HOTA 14.37 → **16.21**, AssA 8.75 → **11.13** (same recorded
+  stream, engine is deterministic). A control that only loosens the cost threshold instead
+  makes it *worse* — the gain is a real geometric constraint.
 - **Run the Hungarian solver per camera, not globally**: a one-to-one match across cameras
-  loses N−1 tracklets for anyone seen in N cameras (recall 0.06 → 0.37 when fixed).
+  loses N−1 tracklets for anyone seen in N cameras (pairwise recall 0.06 → 0.37 when fixed,
+  measured with ideal single-camera tracking).
 - **Online beats offline** here: geometric constraints are functions of time, so near-real-time
-  assignment gives trajectories that actually overlap in time (online F1 0.93 vs offline 0.77).
+  assignment gives trajectories that actually overlap in time (F1 0.93 vs 0.77, again with
+  ideal single-camera tracking — an upper bound, not system performance).
 
 ### Pipeline performance
 
-Measured on rented GPUs (RTX 3090 / Tesla T4), DeepStream 7.1 / CUDA 12.6 / TensorRT 10:
+Measured on rented GPUs, DeepStream 7.1 / CUDA 12.6 / TensorRT 10, YOLO11s FP16 640:
 
-| Metric | Value |
-|---|---|
-| Single stream, 720p, YOLO11s FP16 | 410 FPS |
-| 4 streams with Re-ID | 189 FPS/stream |
-| Re-ID cost | −9.4% FPS |
-| VRAM (4 streams + Re-ID) | 1.57 GB |
-| End-to-end latency (camera → Global ID) | 40 ms median, 2.1 s p90 |
+| Metric | Value | Setup |
+|---|---|---|
+| Throughput with Re-ID | 175 FPS/stream | 4 × 1080p, RTX 3090, `sync=false` |
+| Throughput without Re-ID | 193 FPS/stream | same |
+| Re-ID cost | −9.4% FPS | same |
+| VRAM (4 streams + Re-ID) | 1.57 GB | same |
+| Position latency (camera frame → dashboard) | 106 ms median | 4 × 1080p, Tesla T4, real-time source |
+| Identity latency (newest frame → first Global ID assignment) | 107 ms median, 0.62 s p90 | same |
+| Time to Global ID (person's first frame in a camera → Global ID) | ≈ 0.94 s median, ≈ 1.04 s p90 | ~31 fps replay, `window_ms` 1000 (+~70 ms DeepStream) |
 
-Thesis targets (3–4 streams, ≥15 FPS/stream, <1 s latency) are met with headroom.
+Latency counts only an identity's **first** assignment: the engine never re-assigns a tracklet
+that already has a Global ID, and the later 2–3 s "tail" records are re-emissions when a
+tracklet closes, not identity decisions. `association.window_ms` is the main knob: at 500 ms
+the time-to-ID p90 drops to ≈ 0.67 s, at a cost of ≈ 1 HOTA on WildTrack (2 fps; the cost at
+25–30 fps is not measured yet).
+
+Thesis targets: 3–4 streams at ≥ 15 FPS/stream — met with headroom (7 crowded WildTrack
+streams on a T4 give 13.5 FPS/stream). < 1 s latency — met for position; for the time to a
+Global ID it sits right at 1 s p90 with the default window. The latency definition is still to
+be settled with the supervisor.
 
 ## Demo
 
@@ -226,9 +249,11 @@ reproducible. Highlights:
   labelled "upper bound (ideal SCT)" — F1 0.75 there vs 0.17 on the real DeepStream stream is
   the honest gap.
 - **Decomposing the error.** The 433 Global IDs the engine produces for 313 identities were
-  broken down by an identity-conservation equation: ~50% junk (detector false positives +
-  per-camera id-switches, both outside `src/mct`), the rest fragmentation vs merge — which is
-  what points the next session at the detector rather than at `max_cost`.
+  broken down by an identity-conservation equation: ~50% junk (boxes matching no annotated
+  person + per-camera id-switches, both outside `src/mct`), the rest fragmentation vs merge.
+  A later check showed most "false positive" boxes are real people standing *outside* the
+  area WildTrack annotates, so full-frame scores understate the detector — hence the second,
+  ground-plane protocol above.
 
 ---
 

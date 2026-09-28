@@ -26,6 +26,10 @@ khác nhau, hai công cụ, và cái này không cần Redis.
    đuôi p90 2.1 s được cho là "độ trễ CHỐT danh tính" chứ không phải nghẽn hàng đợi.
    Nếu đúng thì đuôi nằm gần hết ở `window_wait` và `queue_wait` phẳng; nếu sai thì
    ngược lại. Trước đây không phân biệt được hai khả năng đó bằng số.
+   **Đính chính 2026-09-28:** đuôi đó KHÔNG phải độ trễ chốt danh tính. Danh tính của một
+   tracklet được chốt ở vòng gán ĐẦU TIÊN và không bao giờ đổi; đuôi 2–3 s là các bản ghi
+   phát lại lúc tracklet ĐÓNG (`kind = close`). Vì vậy báo cáo in riêng độ trễ của các bản
+   ghi `kind = first`, và `--by kind` tách ba loại (docs/worklog/2026-09-28-28-*).
 3. **Quy trách nhiệm cho đuôi** — lấy riêng các bản ghi nằm trong 10% chậm nhất rồi so
    trung vị từng đoạn của nhóm đó với trung vị chung. Đoạn nào phình ra ở nhóm đuôi
    chính là đoạn tạo ra đuôi. Trung bình toàn cục KHÔNG trả lời được câu này: một đoạn
@@ -40,6 +44,7 @@ với đoạn bắc cầu hai máy (đánh dấu `*`) thì đó là LỆCH ĐỒ
 from __future__ import annotations
 
 import argparse
+import dataclasses
 import json
 from collections import defaultdict
 from collections.abc import Sequence
@@ -95,6 +100,26 @@ def select_run(records: list[LatencyRecord], run: str) -> list[LatencyRecord]:
     return [r for r in records if r.run_id == last_id]
 
 
+def with_kinds(records: Sequence[LatencyRecord]) -> list[LatencyRecord]:
+    """Điền `kind` cho log cũ (trước 2026-09-28, chưa có trường này).
+
+    Log cũ không phân biệt được `update` với `close`, nhưng suy ra được `first`: danh tính
+    chốt ở bản ghi đầu tiên của mỗi `(run_id, tracklet_id)` theo thứ tự ghi. Các bản ghi còn
+    lại nhận `repeat`. Log mới đã mang sẵn `kind` thì giữ nguyên.
+    """
+    seen: set[tuple[str, int]] = set()
+    out: list[LatencyRecord] = []
+    for record in records:
+        key = (record.run_id, record.tracklet_id)
+        first = key not in seen
+        seen.add(key)
+        if record.kind:
+            out.append(record)
+        else:
+            out.append(dataclasses.replace(record, kind="first" if first else "repeat"))
+    return out
+
+
 def _fmt(value: float | None) -> str:
     return "—" if value is None else f"{value:9.1f}"
 
@@ -125,6 +150,7 @@ def report(
     records: list[LatencyRecord], *, top: int = 0, group_by: str = "", as_json: bool = False
 ) -> dict[str, Any]:
     """In báo cáo và trả về cùng nội dung dưới dạng dict (cho `--json`)."""
+    records = with_kinds(records)
     stats = segment_stats(records)
     e2e = deltas(records, END_TO_END)
 
@@ -254,7 +280,7 @@ def _tail_attribution(
 
 
 def _by_group(records: Sequence[LatencyRecord], field: str, *, as_json: bool) -> dict[str, Any]:
-    """Tách end-to-end theo `cam_id` / `global_id` / `db_flushed` / `t0_source`."""
+    """Tách end-to-end theo `cam_id` / `global_id` / `db_flushed` / `t0_source` / `kind`."""
     buckets: dict[str, list[LatencyRecord]] = defaultdict(list)
     for record in records:
         buckets[str(getattr(record, field, ""))].append(record)
@@ -346,11 +372,19 @@ def _warnings(
             out.append(
                 f"đoạn `{segment.name.strip()}` có {stat.n_negative}/{stat.n} mẫu âm — {kind}."
             )
+    first = deltas([r for r in records if r.kind == "first" and not r.final_flush], END_TO_END)
+    if first:
+        p90 = percentile(first, 0.90)
+        out.append(
+            f"mục tiêu đề cương < {TARGET_MS:.0f} ms, độ trễ CHỐT DANH TÍNH (bản ghi "
+            f"kind=first, n={len(first)}): {'ĐẠT' if p90 < TARGET_MS else 'KHÔNG ĐẠT'} "
+            f"(p90 = {p90:.1f} ms)"
+        )
     if e2e:
         p90 = percentile(e2e, 0.90)
         out.append(
-            f"mục tiêu đề cương < {TARGET_MS:.0f} ms: "
-            f"{'ĐẠT' if p90 < TARGET_MS else 'KHÔNG ĐẠT'} (p90 = {p90:.1f} ms)"
+            f"p90 trên MỌI bản ghi = {p90:.1f} ms — gồm cả bản ghi phát lại lúc tracklet đóng "
+            "(trễ ≈ idle_timeout_ms + cửa sổ), KHÔNG phải độ trễ chốt danh tính; xem --by kind"
         )
 
     if not as_json and out:
@@ -373,7 +407,7 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--by",
         default="",
-        choices=["", "cam_id", "global_id", "db_flushed", "t0_source", "final_flush"],
+        choices=["", "cam_id", "global_id", "db_flushed", "t0_source", "final_flush", "kind"],
         help="tách end-to-end theo trường này",
     )
     p.add_argument("--top", type=int, default=0, help="liệt kê N bản ghi chậm nhất")

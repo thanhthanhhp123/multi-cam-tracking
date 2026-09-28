@@ -576,3 +576,57 @@ def test_doan_cham_t2_duoc_noi_dung_sai_mot_mili_giay():
     # -0.1 ms trên đoạn chạm t2 là nhiễu; trên đoạn khác thì không.
     assert summarize([-0.1, 0.5], neg_tolerance_ms=xadd.neg_tolerance_ms).n_negative == 0
     assert summarize([-0.1, 0.5], neg_tolerance_ms=khac.neg_tolerance_ms).n_negative == 1
+
+
+# --------------------------------------------------------------------------- loại bản ghi
+
+
+def test_engine_gan_nhan_first_dung_mot_lan_moi_tracklet(tmp_path):
+    """Danh tính chốt ở vòng gán ĐẦU TIÊN: mỗi tracklet đúng một bản ghi `first`, và nó đứng
+    trước mọi bản ghi khác của tracklet đó (phiên 28 — đuôi phiên 23 là bản ghi `close`)."""
+    path = tmp_path / "latency.jsonl"
+    with LatencyLog(path) as log:
+        _run_engine(latency=log)
+
+    records = read_records(path)
+    assert {r.kind for r in records} <= {"first", "update", "close"}
+    seen: set[int] = set()
+    for record in records:
+        if record.tracklet_id not in seen:
+            assert record.kind == "first"
+            seen.add(record.tracklet_id)
+        else:
+            assert record.kind in ("update", "close")
+
+
+def test_kind_di_qua_json():
+    record = LatencyRecord(run_id="r", tracklet_id=3, kind="close")
+    assert LatencyRecord.from_json(record.to_json()).kind == "close"
+    assert LatencyRecord.from_json('{"run_id": "r"}').kind == ""
+
+
+def test_log_cu_suy_ra_first_theo_thu_tu_tracklet():
+    records = [
+        LatencyRecord(run_id="a", tracklet_id=1),
+        LatencyRecord(run_id="a", tracklet_id=1),
+        LatencyRecord(run_id="a", tracklet_id=2),
+        LatencyRecord(run_id="b", tracklet_id=1),
+        LatencyRecord(run_id="b", tracklet_id=1, kind="close"),
+    ]
+    kinds = [r.kind for r in latency_report.with_kinds(records)]
+    assert kinds == ["first", "repeat", "first", "first", "close"]
+    assert records[0].kind == "", "không được sửa bản ghi gốc"
+
+
+def test_muc_tieu_1s_cham_tren_ban_ghi_first_khong_tren_moi_ban_ghi():
+    """Đuôi 2 s nằm ở bản ghi phát lại (cùng tracklet với bản ghi trước) -> không được tính
+    vào độ trễ chốt danh tính, dù p90 trên mọi bản ghi vượt 1 s."""
+    records = _synthetic_records(20)
+    for record in records[-10:]:  # 10 bản ghi chậm = phát lại của tracklet 0..9
+        record.tracklet_id -= 10
+    payload = latency_report.report(records, as_json=True)
+    identity = [w for w in payload["warnings"] if "CHỐT DANH TÍNH" in w]
+    assert identity and "ĐẠT" in identity[0] and "KHÔNG ĐẠT" not in identity[0]
+    assert any("MỌI bản ghi" in w for w in payload["warnings"])
+    groups = latency_report._by_group(latency_report.with_kinds(records), "kind", as_json=True)
+    assert groups["first"]["n"] == 10 and groups["repeat"]["n"] == 10

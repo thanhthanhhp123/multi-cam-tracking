@@ -192,6 +192,11 @@ class Engine:
                     db_flushed=db_flushed,
                     final_flush=final_flush,
                     t0_source=t0_source_from(tracklet.last_stamps),
+                    kind=(
+                        "first"
+                        if not assignment.is_update
+                        else ("close" if tracklet.closed else "update")
+                    ),
                     stamps=stamps,
                 )
             )
