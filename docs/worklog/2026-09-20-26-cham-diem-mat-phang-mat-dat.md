@@ -190,7 +190,7 @@ Trên 40 khung test với NMS: 41.37 ± 0.80 / 40.02 ± 1.93 / 35.15 ± 1.09 (64
        ... (9 lần: R640/r640n, R960/r960, R1280/r1280 × r1..r3) \
        --json data/s25/ground_plane_nms.json
    ```
-2. Cập nhật CLAUDE.md §7: có hai giao thức chấm (hộp ảnh IoU 0.5 và điểm mặt đất 1 m trong vùng),
+2. ~~Cập nhật CLAUDE.md §7~~ **xong 2026-09-28**: có hai giao thức chấm (hộp ảnh IoU 0.5 và điểm mặt đất 1 m trong vùng),
    và mọi số WildTrack phải ghi kèm giao thức cùng cách tính vùng.
 3. Chương 6: dùng bảng A/B/LB ở mục 3 làm "thang" theo giao thức mặt đất
    (31 → 64 → 83 HOTA), song song với thang hộp ảnh của phiên 24.

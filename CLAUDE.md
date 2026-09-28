@@ -225,6 +225,25 @@ trên cùng dataset, cùng cấu hình, cùng code chấm điểm: F1 **0.752** 
 **0.170** trên fixture do pipeline DeepStream thật sinh ra. Mọi con số của `src/mct` lấy từ
 fixture cũ phải ghi kèm chữ "cận trên (SCT lý tưởng)" khi vào chương 6.
 
+**WildTrack có hai giao thức chấm, cho ra số khác nhau cỡ gấp đôi.** Luôn ghi rõ số lấy theo
+giao thức nào:
+- **Hộp ảnh** (`eval.compare_oracle_tracker`, qua `tools/export_trackeval.py`): IoU 0.5 trên chuỗi
+  ảo ghép 7 camera, tính TOÀN KHUNG. Dùng để tách lỗi theo từng tầng detector / tracker / liên kết
+  (phiên 24). Giao thức này **đánh giá thấp detector**: WildTrack chỉ chú thích người trong lưới
+  12 × 36 m, nên người thật đứng ngoài lưới bị tính là FP. Ở 640 có 60% FP nằm ngoài vùng;
+  precision toàn khung là 0.557, còn nếu chỉ tính trong vùng là 0.760 (`eval/diagnose_fp_region.py`,
+  phiên 25).
+- **Điểm mặt đất** (`eval/eval_ground_plane.py`): chân hộp → homography → trung vị qua các camera,
+  mỗi `(khung, Global ID)` cho một điểm, khớp trong T mét, chỉ tính trong lưới chú thích. Đây là
+  giao thức của các bài WildTrack (MVDet, EarlyBird, TrackTacular…), dùng khi cần đặt cạnh tài liệu.
+  Tuy vậy vẫn **không so thẳng được** với các bài đó: họ gộp view ngay trong mạng và học trên
+  chính WildTrack, còn đồ án thì không học gì trên WildTrack.
+
+Cùng một pipeline thật (YOLO11s 640, n = 3): HOTA hộp ảnh 15.7, HOTA mặt đất trong vùng 31.1
+(T = 1 m, không NMS), hoặc 32.1 nếu bật NMS 0.5 m (phiên 26). Mọi số WildTrack phải ghi kèm:
+giao thức, toàn khung hay trong vùng, ngưỡng (IoU hoặc T mét), NMS, và tập khung (400 khung hay
+40 khung test).
+
 Khi báo cáo số: luôn ghi kèm cấu hình GPU, model, độ phân giải, số luồng. Số không tái lập được thì vô nghĩa.
 
 ## 8. Quy ước code
