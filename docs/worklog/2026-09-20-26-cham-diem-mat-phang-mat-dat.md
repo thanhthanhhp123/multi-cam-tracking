@@ -174,8 +174,8 @@ Trên 40 khung test với NMS: 41.37 ± 0.80 / 40.02 ± 1.93 / 35.15 ± 1.09 (64
   kiểu oracle (`db = oracle`).
 - Số mặt đất vẫn **không so thẳng được** với các bài báo: họ gộp view trong mạng, có NMS, và
   học trên chính WildTrack. Muốn đặt cạnh nhau trong chương 6 thì phải ghi rõ ba điểm khác biệt đó.
-- CLAUDE.md §7 chưa cập nhật (bước 3 của phiên 25): chưa ghi rằng số WildTrack toàn khung đánh
-  giá thấp detector, và giờ còn có thêm giao thức mặt đất.
+- ~~CLAUDE.md §7 chưa cập nhật~~ **đã cập nhật 2026-09-28**: thêm hai giao thức chấm và các thông tin bắt
+  buộc phải ghi kèm mỗi số WildTrack.
 
 ## Bước tiếp theo
 
