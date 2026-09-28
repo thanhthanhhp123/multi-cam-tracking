@@ -55,7 +55,7 @@ done
 echo "=== 3. nvinfer DS 7.1: topk khi cluster-mode=4"
 SRC=$DS/sources/libs/nvdsinfer/nvdsinfer_context_impl_output_parsing.cpp
 if [ -f "$SRC" ]; then
-  grep -n -A8 "DetectPostprocessor::fillUnclusteredOutput" "$SRC" | grep -n "filterTopKOutputs" \
+  grep -n -A15 "DetectPostprocessor::fillUnclusteredOutput" "$SRC" | grep -n "filterTopKOutputs" \
     && echo "=> CO cat topk khi khong gom cum: topk=200 la can thiet" \
     || echo "=> khong thay filterTopKOutputs trong fillUnclusteredOutput"
 else
