@@ -13,8 +13,8 @@
 #
 # Buoc 4: ~3.5 phut/lan (400 khung 2 fps, sync=true). Fixture ra
 # data/fixtures/ds_wildtrack_7cam_<tag>_r<n>.jsonl, cung quy uoc ten voi phien 25 nen
-# cham duoc bang dung cac lenh cu. Doi chung YOLO11s 640 KHONG chay lai: offer nay
-# (13790355) chinh la may cua doi chung R640 phien 25 (HOTA 15.79 ± 0.47).
+# cham duoc bang dung cac lenh cu. Doi chung YOLO11s 640: cham LAI 3 fixture R640 cua
+# phien 25 bang code hien tai (khac may giua hai phien 22/25 da do: trong nhieu).
 # Buoc 5: moi cau hinh chay 2 lan, lay lan 2 (lan 1 co the con build engine ReID/YOLO).
 #
 # Chay lau thi boc bang nohup ... < /dev/null &: ssh rot giua chung se giet tien trinh.
@@ -43,7 +43,8 @@ cat_engine_yolo() {
 # Slowdown (84 C, SM 300/1590 MHz) -> throughput PeopleNet v1 con 1/4 va pipeline khong
 # theo kip 14 anh/s cua WildTrack. So do ma khong kem bang chung nay thi khong tin duoc.
 gpu_log_start() {
-  nvidia-smi --query-gpu=timestamp,temperature.gpu,clocks.sm,clocks_throttle_reasons.active,utilization.gpu     --format=csv,noheader,nounits -l 5 > "$1" 2>/dev/null &
+  nvidia-smi --query-gpu=timestamp,temperature.gpu,clocks.sm,clocks_throttle_reasons.active,utilization.gpu \
+    --format=csv,noheader,nounits -l 5 > "$1" 2>/dev/null &
   GPU_LOG_PID=$!
 }
 gpu_log_stop() {
