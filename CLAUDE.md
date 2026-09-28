@@ -320,7 +320,9 @@ giữ nguyên engine thì HOTA mặt đất tăng 31.1 → 63.8.
   - v2 kém hơn nữa và chỉ đạt 9 FPS/luồng (RTX A4000); v1.1 đạt 25 FPS/luồng, YOLO 106.
   - Lý do: PNT thấy nhiều người hơn, và 84% số hộp sai tăng thêm nằm NGOÀI lưới mà WildTrack chú
     thích. Các track ngoài vùng còn làm hỏng cả bước liên kết.
-  - Hướng tiếp theo đang đề xuất: ROI mặt đất (`docs/worklog/2026-09-28-30-*`, quyết định 7).
+  - ROI mặt đất (phiên 31, lọc sau tracker) cũng không cứu được PNT. HOTA mặt đất: PNT
+    28.4 → 28.0, YOLO 31.1 → 32.5 (sát nhiễu). Phần PNT kém trên mặt đất là do điểm trùng/ma
+    sau khi gộp đa camera, không phải do hình học điểm chân. Chỗ nghẽn vẫn là liên kết.
 
 Bảng trên là **kế hoạch tham chiếu**, không phải tiến độ thật.
 
