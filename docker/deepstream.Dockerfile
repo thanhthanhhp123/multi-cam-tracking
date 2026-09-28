@@ -33,6 +33,17 @@ RUN pip install --no-cache-dir ultralytics onnx onnxslim onnxscript onnxruntime
 # nếu đổi base image — CLAUDE.md §11: DeepStream rất kén cặp driver/CUDA/TensorRT).
 RUN CUDA_VER=12.6 make -C /workspace/DeepStream-Yolo/nvdsinfer_custom_impl_Yolo -j"$(nproc)"
 
+# Parser NvDsInferParseCustomDDETRTAO cho PeopleNet Transformer (deepstream_tao_apps, MIT),
+# commit ghim thuộc nhánh release/tao_ds7.1ga. Chỉ lấy 2 file của post_processor/, không
+# clone cả repo. Giữ đồng bộ với bước 5b của docker/vast_bootstrap.sh.
+ARG TAO_APPS_REF=bc1fa04583798509173eb551069d54f113437fb4
+RUN mkdir -p /workspace/deepstream_tao_apps/post_processor \
+    && cd /workspace/deepstream_tao_apps/post_processor \
+    && for f in Makefile nvdsinfer_custombboxparser_tao.cpp; do \
+         curl -fsSL -o "$f" "https://raw.githubusercontent.com/NVIDIA-AI-IOT/deepstream_tao_apps/${TAO_APPS_REF}/post_processor/$f"; \
+       done \
+    && CUDA_VER=12.6 make
+
 WORKDIR /workspace/mct-repo
 COPY pyproject.toml ./
 COPY src ./src
@@ -40,7 +51,8 @@ COPY configs ./configs
 # third_party trỏ tới lib đã build ở trên — khớp custom-lib-path trong
 # configs/pipeline/config_infer_yolo11.txt (tương đối: ../../third_party/DeepStream-Yolo/...)
 RUN mkdir -p third_party models/detector \
-    && ln -sfn /workspace/DeepStream-Yolo third_party/DeepStream-Yolo
+    && ln -sfn /workspace/DeepStream-Yolo third_party/DeepStream-Yolo \
+    && ln -sfn /workspace/deepstream_tao_apps third_party/deepstream_tao_apps
 
 RUN pip install --no-cache-dir -e .
 

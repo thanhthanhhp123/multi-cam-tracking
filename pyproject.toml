@@ -33,6 +33,13 @@ reid = [
     "multicam-tracking-deepstream[cv]",
     "onnxruntime>=1.16",
 ]
+# Chạy thử ONNX PeopleNet Transformer trên CPU (tools/check_peoplenet_cpu.py): thay plugin
+# TensorRT bằng op Python của onnxruntime-extensions. Không dùng trong pipeline.
+detcheck = [
+    "multicam-tracking-deepstream[reid]",
+    "onnx>=1.15",
+    "onnxruntime-extensions>=0.10",
+]
 dev = [
     "multicam-tracking-deepstream[dashboard]",
     "pytest>=7.4",

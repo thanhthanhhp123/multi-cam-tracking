@@ -82,6 +82,11 @@ class PipelineConfig:
     tracker: TrackerConfig = field(default_factory=TrackerConfig)
     sink: SinkConfig = field(default_factory=SinkConfig)
     pgie_config_file: str = "configs/pipeline/config_infer_yolo11.txt"
+    # Chỉ số lớp "person" THEO NHÃN CỦA PGIE. Probe chỉ giữ lớp này. YOLO11 COCO là 0,
+    # PeopleNet Transformer (BG, Person, Face, Bag) là 1. Đặt lệch thì probe bỏ sạch
+    # mọi hộp mà pipeline vẫn chạy "thành công". Vì vậy khoá này nằm cạnh
+    # pgie.config_file trong YAML, và có test kiểm cả cặp.
+    person_class_id: int = 0
 
     @property
     def cam_ids(self) -> list[str]:
@@ -113,8 +118,11 @@ def load_pipeline_config(path: str | Path) -> PipelineConfig:
     for key, value in (raw.get("sink") or {}).items():
         if hasattr(cfg.sink, key):
             setattr(cfg.sink, key, value)
-    if pgie := (raw.get("pgie") or {}).get("config_file"):
+    pgie_raw = raw.get("pgie") or {}
+    if pgie := pgie_raw.get("config_file"):
         cfg.pgie_config_file = str(pgie)
+    if "person_class_id" in pgie_raw:
+        cfg.person_class_id = int(pgie_raw["person_class_id"])
     return cfg
 
 

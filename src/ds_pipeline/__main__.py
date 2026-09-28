@@ -173,7 +173,14 @@ def main(argv: list[str] | None = None) -> int:
     # từng nguồn khi cần scale bbox chính xác — xem CLAUDE.md §5. M1 chấp nhận giới hạn
     # này vì mục tiêu là chạy được pipeline 1 camera, chưa phải đo độ chính xác bbox.
 
-    probe = make_probe(geometries, cfg.streammux.width, cfg.streammux.height, sink)
+    probe = make_probe(
+        geometries,
+        cfg.streammux.width,
+        cfg.streammux.height,
+        sink,
+        person_class_id=cfg.person_class_id,
+    )
+    log.info("probe giữ lớp %d của detector làm person", cfg.person_class_id)
     pipeline = build_pipeline(cfg, probe=probe)
 
     loop = GLib.MainLoop()

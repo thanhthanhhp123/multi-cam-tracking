@@ -1,0 +1,77 @@
+[property]
+gpu-id=0
+offsets=123.675;116.28;103.53
+net-scale-factor=0.0173520735728
+model-color-format=0
+onnx-file=../../models/detector/peoplenet_transformer/resnet50_peoplenet_transformer_op17.onnx
+model-engine-file=../../models/detector/peoplenet_transformer/resnet50_peoplenet_transformer_op17.onnx_b7_gpu0_fp16.engine
+labelfile-path=../../models/detector/peoplenet_transformer/labels.txt
+batch-size=7
+network-mode=2
+num-detected-classes=4
+filter-out-class-ids=0;2;3
+interval=0
+gie-unique-id=1
+process-mode=1
+network-type=0
+output-blob-names=pred_boxes;pred_logits
+infer-dims=3;544;960
+maintain-aspect-ratio=0
+cluster-mode=4
+parse-bbox-func-name=NvDsInferParseCustomDDETRTAO
+custom-lib-path=../../third_party/deepstream_tao_apps/post_processor/libnvds_infercustomparser_tao.so
+
+# PEOPLENET TRANSFORMER v1.1 (NGC nvidia/tao/peoplenet_transformer:deployable_v1.1) —
+# Deformable DETR + ResNet50, 300 query, 3 lớp + nền. Đây là "PNT" mà bài MV3DT ghi là
+# detector cho bảng WildTrack (arXiv 2606.13127 mục 4: "PeopleNet Transformer 1.1").
+# Bản v2 (DINO + FAN-Small) ở config_infer_peoplenet_transformer_v2.txt, chỉ khác file
+# ONNX. Vì sao đổi detector: docs/worklog/2026-09-28-29-* quyết định 4. Vẫn đúng quy tắc
+# "pretrained, không fine-tune trên WildTrack". Xem thêm docs/worklog/2026-09-28-30-*.
+#
+# Khung lấy từ config NVIDIA cho DeepStream 7.1 (deepstream_tao_apps nhánh
+# release/tao_ds7.1ga, configs/nvinfer/peoplenet_transformer_tao/). Chỗ nào khác thì
+# có ghi lý do ngay dưới đây.
+#
+# CHUẨN HOÁ ĐẦU VÀO = ImageNet: y = 0.01735 * (x - mean), x là pixel 0..255 RGB. Thẻ model
+# trên NGC ghi "scale 1/255, không chuẩn hoá", nhưng câu đó SAI với file ONNX này. Đã chạy
+# thử trên CPU (1 ảnh WildTrack C1, ngưỡng 0.3): chuẩn hoá ImageNet bắt được 22/33 người,
+# còn 1/255 chỉ bắt được 2/33. Pipeline vẫn chạy bình thường khi sai, chỉ âm thầm mất hộp.
+# Có test canh (tests/test_pipeline_configs.py).
+#
+# LỚP: labels.txt = BG, Person, Face, Bag, nên NGƯỜI LÀ LỚP 1, KHÁC YOLO (lớp 0).
+#   - filter-out-class-ids bỏ nền/mặt/túi ngay tại nvinfer, trước khi tới nvtracker.
+#   - probes.py lọc lần hai theo `pgie.person_class_id` trong streams*.yaml. Đặt sai số
+#     đó thì probe bỏ SẠCH mọi hộp mà pipeline vẫn chạy "thành công".
+#   - Lần chạy thử trên CPU cho thấy chỉ lớp 1 khớp hộp người GT (22/47 hộp ở IoU 0.5).
+#     Lớp 2 và 3 không khớp hộp nào.
+#
+# topk=200 THAY CHO 20 của NVIDIA. Với cluster-mode=4 (không gom cụm — DETR không sinh
+# hộp trùng nên không cần NMS), nvinfer vẫn cắt top-k theo từng lớp
+# (fillUnclusteredOutput -> filterTopKOutputs trong nvdsinfer_context_impl_output_parsing.cpp).
+# Một khung WildTrack có tới 33 người GT, và riêng lớp người đã ra 47 hộp ở ngưỡng 0.3.
+# Nên topk=20 sẽ âm thầm cắt mất người. 200 bằng đúng mức `keep_top_k` mà parser
+# NvDsInferParseCustomDDETRTAO tự cắt, tức nvinfer không cắt thêm.
+#
+# pre-cluster-threshold=0.3 lấy theo config MV3DT (config_templates/config_pgie.txt).
+# Config mẫu của DeepStream 7.1 dùng 0.5. Confidence ở đây là sigmoid của logit DETR,
+# khác thang với YOLO, nên ngưỡng 0.25 của YOLO không có nghĩa gì khi đặt vào đây.
+# Quét ngưỡng chỉ làm SAU khi có số n = 3 ở ngưỡng mặc định.
+#
+# maintain-aspect-ratio=0: kéo 1920x1080 về 960x544, giống config của NVIDIA. Chênh tỉ lệ
+# chỉ 0.7%.
+#
+# ENGINE: batch 7 cho WildTrack. nvinfer chỉ build lại khi engine có maxBatch NHỎ HƠN
+# batch được yêu cầu (checkBackendParams), nên engine b7 dùng được luôn cho 4 luồng.
+# Khác DeepStream-Yolo: ở đây nvinfer tự build nên engine được ghi đúng
+# <onnx-file>_b7_gpu0_fp16.engine cạnh file ONNX, trùng tên khai ở trên.
+#
+# PLUGIN: ONNX dùng op tuỳ biến MultiscaleDeformableAttnPlugin_TRT (version "1",
+# namespace ""). Plugin này có trong TensorRT OSS từ nhánh 8.6 tới 10.3 (bản của
+# DeepStream 7.1). CHƯA chạy thật trên DeepStream 7.1: lần thuê máy đầu tiên phải kiểm
+# bằng trtexec trước khi chạy pipeline (docker/vast_peoplenet_check.sh).
+#
+# Parser: libnvds_infercustomparser_tao.so build từ deepstream_tao_apps (MIT) ở commit
+# ghim trong docker/vast_bootstrap.sh.
+[class-attrs-all]
+pre-cluster-threshold=0.3
+topk=200

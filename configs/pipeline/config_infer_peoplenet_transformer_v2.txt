@@ -1,0 +1,44 @@
+[property]
+gpu-id=0
+offsets=123.675;116.28;103.53
+net-scale-factor=0.0173520735728
+model-color-format=0
+onnx-file=../../models/detector/peoplenet_transformer/dino_fan_small_astro_delta.onnx
+model-engine-file=../../models/detector/peoplenet_transformer/dino_fan_small_astro_delta.onnx_b7_gpu0_fp16.engine
+labelfile-path=../../models/detector/peoplenet_transformer/labels.txt
+batch-size=7
+network-mode=2
+num-detected-classes=4
+filter-out-class-ids=0;2;3
+interval=0
+gie-unique-id=1
+process-mode=1
+network-type=0
+output-blob-names=pred_boxes;pred_logits
+infer-dims=3;544;960
+maintain-aspect-ratio=0
+cluster-mode=4
+parse-bbox-func-name=NvDsInferParseCustomDDETRTAO
+custom-lib-path=../../third_party/deepstream_tao_apps/post_processor/libnvds_infercustomparser_tao.so
+
+# PEOPLENET TRANSFORMER v2 (NGC nvidia/tao/peoplenet_transformer_v2:deployable_v1.0,
+# file dino_fan_small_astro_delta.onnx). DINO + FAN-Small, 900 query, 4 tầng đặc trưng.
+# Mọi khoá GIỐNG HỆT config_infer_peoplenet_transformer.txt, chỉ khác file ONNX/engine
+# (có test canh). Lý do cho từng khoá xem ở file đó.
+#
+# Vì sao có bản này: bài MV3DT ghi detector là "PeopleNet Transformer 1.1" (v1). Nhưng
+# reference app MV3DT của NVIDIA (deepstream_reference_apps/deepstream-tracker-3d-multi-view,
+# scripts/setup_prerequisites.sh) lại tải file ONNX của v2 này và đổi tên thành
+# peoplenet_transformer_model_op17.onnx. Chưa biết bảng WildTrack của bài dùng bản nào,
+# nên đo cả hai.
+#
+# Đánh đổi: thẻ NGC ghi v2 chạy 19 FPS trên T4 (FP16, batch 1), còn v1 chạy 43 FPS.
+# Mục tiêu đề cương là 4 luồng × ≥15 FPS = 60 khung/s, trên T4 thì cả hai đều chưa đạt ở
+# batch 1. Phải đo FPS 4 luồng thật, và khi thiếu thì cân nhắc interval=1.
+#
+# Lớp: dùng chung labels.txt với v1 (BG, Person, Face, Bag), giống config MV3DT
+# (filter-out-class-ids=0;2;3). Chạy thử trên CPU với 1 ảnh: lớp 1 khớp 19/51 hộp người
+# GT, lớp 2 và 3 không khớp hộp nào.
+[class-attrs-all]
+pre-cluster-threshold=0.3
+topk=200

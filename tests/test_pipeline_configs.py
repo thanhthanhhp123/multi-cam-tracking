@@ -276,3 +276,129 @@ def test_streams_latency_chi_khac_streams_reid_o_sink_sync(pipeline_dir: Path) -
 
     assert reid["sink"]["sync"] is False
     assert latency["sink"]["sync"] is True
+
+
+# --------------------------------------------------------------------------------------
+# PeopleNet Transformer (phiên 30, docs/worklog/2026-09-28-30-*)
+# --------------------------------------------------------------------------------------
+#
+# Đổi detector đem theo ba lỗi không triệu chứng, cả ba đã lộ ra khi chạy thử ONNX trên
+# CPU (tools/check_peoplenet_cpu.py) hoặc khi đọc mã nguồn nvinfer:
+#   1. người là lớp 1 chứ không phải 0 -> probe lọc sai lớp thì bỏ sạch hộp;
+#   2. chuẩn hoá 1/255 (theo thẻ NGC) thay vì ImageNet -> recall 22/33 tụt còn 2/33;
+#   3. topk=20 (config mẫu NVIDIA) cắt mất người ở khung đông, kể cả khi không gom cụm.
+
+PNT_CONFIGS = (
+    "config_infer_peoplenet_transformer.txt",
+    "config_infer_peoplenet_transformer_v2.txt",
+)
+PNT_LABELS = ["BG", "Person", "Face", "Bag"]
+_IMAGENET_MEAN = (0.485, 0.456, 0.406)
+_IMAGENET_STD = (0.229, 0.224, 0.225)
+
+
+@pytest.fixture(params=PNT_CONFIGS)
+def pnt(request: pytest.FixtureRequest, pipeline_dir: Path) -> configparser.ConfigParser:
+    return _read(pipeline_dir / request.param)
+
+
+def _lop_nguoi_cua_pgie(cfg: configparser.ConfigParser) -> int:
+    """Lớp DUY NHẤT lọt qua được nvinfer: không nằm trong filter-out-class-ids và có
+    pre-cluster-threshold < 1. Dùng chung cho cả kiểu chặn lớp của YOLO (ngưỡng 1.0) lẫn
+    kiểu của PeopleNet (filter-out-class-ids)."""
+    prop = cfg["property"]
+    n = int(prop["num-detected-classes"])
+    bi_loc = {int(x) for x in prop.get("filter-out-class-ids", "").split(";") if x.strip()}
+    mac_dinh = cfg.getfloat("class-attrs-all", "pre-cluster-threshold")
+
+    def nguong(c: int) -> float:
+        muc = f"class-attrs-{c}"
+        return cfg.getfloat(muc, "pre-cluster-threshold") if cfg.has_section(muc) else mac_dinh
+
+    qua = [c for c in range(n) if c not in bi_loc and nguong(c) < 1.0]
+    assert len(qua) == 1, f"phải đúng một lớp lọt qua nvinfer, thấy {qua}"
+    return qua[0]
+
+
+def test_pnt_chi_lop_nguoi_lot_qua(pnt: configparser.ConfigParser) -> None:
+    assert _lop_nguoi_cua_pgie(pnt) == PNT_LABELS.index("Person")
+
+
+def test_pnt_chuan_hoa_imagenet(pnt: configparser.ConfigParser) -> None:
+    """y = net-scale-factor * (x - offset), x là pixel 0..255 RGB. Một hệ số vô hướng nên
+    dùng std trung bình, giống config tracker ReID ở trên."""
+    prop = pnt["property"]
+    offsets = [float(x) for x in prop["offsets"].split(";")]
+    assert offsets == pytest.approx([255.0 * m for m in _IMAGENET_MEAN], abs=1e-3)
+    std_tb = sum(_IMAGENET_STD) / len(_IMAGENET_STD)
+    assert float(prop["net-scale-factor"]) == pytest.approx(1.0 / (255.0 * std_tb), rel=2e-3)
+    assert prop["model-color-format"] == "0"  # RGB
+
+
+def test_pnt_topk_khong_cat_nguoi(pnt: configparser.ConfigParser) -> None:
+    """nvinfer cắt top-k theo lớp cả khi cluster-mode=4. 200 = keep_top_k của parser."""
+    assert pnt["property"]["cluster-mode"] == "4"
+    assert pnt.getint("class-attrs-all", "topk") >= 200
+
+
+def test_pnt_ten_engine_theo_quy_uoc_nvinfer(pnt: configparser.ConfigParser) -> None:
+    """nvinfer tự build thì ghi engine ra <onnx-file>_b<N>_gpu0_fp16.engine. Khai đúng tên đó
+    thì lần sau nạp lại, không build lại."""
+    prop = pnt["property"]
+    assert prop["network-mode"] == "2"
+    engine = f"{prop['onnx-file']}_b{prop['batch-size']}_gpu0_fp16.engine"
+    assert prop["model-engine-file"] == engine
+
+
+def test_pnt_hai_ban_chi_khac_file_onnx(pipeline_dir: Path) -> None:
+    """So v1 với v2 phải là so đúng một biến: file ONNX."""
+    v1, v2 = (_read(pipeline_dir / ten) for ten in PNT_CONFIGS)
+    khac_ten_file = {"onnx-file", "model-engine-file"}
+    assert {k: v for k, v in v1["property"].items() if k not in khac_ten_file} == {
+        k: v for k, v in v2["property"].items() if k not in khac_ten_file
+    }
+    assert v1.sections() == v2.sections()
+    for muc in v1.sections():
+        if muc != "property":
+            assert dict(v1[muc]) == dict(v2[muc]), muc
+    assert v1["property"]["onnx-file"] != v2["property"]["onnx-file"]
+
+
+def test_pnt_labels(repo_root: Path) -> None:
+    """Bỏ qua nếu `models/` chưa có (gitignored)."""
+    labels = repo_root / "models" / "detector" / "peoplenet_transformer" / "labels.txt"
+    if not labels.exists():
+        pytest.skip("models/detector/peoplenet_transformer/labels.txt chưa có (gitignored)")
+    dong = labels.read_text(encoding="utf-8").splitlines()
+    assert [d.strip() for d in dong if d.strip()] == PNT_LABELS
+
+
+def _moi_file_streams(repo_root: Path) -> list[Path]:
+    return sorted((repo_root / "configs" / "pipeline").glob("streams*.yaml")) + sorted(
+        (repo_root / "configs" / "demo").glob("streams*.yaml")
+    )
+
+
+def test_person_class_id_khop_lop_lot_qua_pgie(repo_root: Path) -> None:
+    """Lớp mà probe giữ (`pgie.person_class_id`, mặc định 0) phải đúng là lớp duy nhất mà
+    nvinfer cho qua. Lệch là fixture rỗng, hoặc probe giữ nhầm mặt/túi."""
+    files = _moi_file_streams(repo_root)
+    assert len(files) >= 6
+    for path in files:
+        pgie = yaml.safe_load(path.read_text(encoding="utf-8")).get("pgie") or {}
+        if "config_file" not in pgie:
+            continue
+        cfg = _read(repo_root / pgie["config_file"])
+        assert pgie.get("person_class_id", 0) == _lop_nguoi_cua_pgie(cfg), path.name
+
+
+@pytest.mark.parametrize("tag", ["pnt", "pnt2"])
+def test_wildtrack_pnt_chi_khac_o_pgie(tag: str, streams_wildtrack: dict, repo_root: Path) -> None:
+    """Chênh HOTA so với YOLO11s phải quy về đúng một biến: detector."""
+    path = repo_root / "configs" / "demo" / f"streams_wildtrack_{tag}.yaml"
+    moi = yaml.safe_load(path.read_text(encoding="utf-8"))
+    assert {k: v for k, v in moi.items() if k != "pgie"} == {
+        k: v for k, v in streams_wildtrack.items() if k != "pgie"
+    }
+    cfg = _read(repo_root / moi["pgie"]["config_file"])
+    assert cfg.getint("property", "batch-size") == len(moi["sources"])

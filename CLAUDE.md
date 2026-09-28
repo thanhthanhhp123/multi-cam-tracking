@@ -259,8 +259,13 @@ zero-shot, không học trên WildTrack, và báo IDF1 96.5 / MOTA 93.1 ở 27 F
 chạy được với **camera chồng lấn**, và cần DeepStream 8–9 (Ubuntu 24.04, driver ≥ 580). Vai trò
 trong đồ án là **mốc so sánh cho phần camera chồng lấn**, không phải sản phẩm. Đóng góp chính của
 đồ án là liên kết cho cấu hình hỗn hợp chồng lấn/không chồng lấn, chạy thời gian thực (định vị
-chờ GVHD chốt, phiên 29). Giao thức chấm của MV3DT **chưa kiểm** với bảng gốc: chưa đặt số của nó
-cạnh số của đồ án cho tới khi kiểm xong.
+chờ GVHD chốt, phiên 29). **Giao thức chấm của MV3DT đã đọc ở phiên 30** (`docs/worklog/2026-09-28-30-*`).
+- Tập test là 10% khung cuối (40 khung).
+- Bài KHÔNG nêu ngưỡng khoảng cách, vùng, công cụ chấm, và phần cứng của 27 FPS.
+- Chính bài có hai bộ số: 96.5 / 93.1 ở bảng, 94.3 / 93.3 ở lời văn.
+
+Chỉ đặt số của nó cạnh biến thể "điểm mặt đất, 40 khung test, T = 1 m, trong vùng" của đồ án,
+và ghi rõ T = 1 m là suy luận từ EarlyBird/TrackTacular cùng bảng.
 
 Khi báo cáo số: luôn ghi kèm cấu hình GPU, model, độ phân giải, số luồng. Số không tái lập được thì vô nghĩa.
 
@@ -308,7 +313,10 @@ giữ nguyên engine thì HOTA mặt đất tăng 31.1 → 63.8.
 - **Dự phòng:** RF-DETR, YOLO26.
 - **Vẫn giữ quy tắc** pretrained và không fine-tune trên WildTrack.
 - **Tiêu chí:** n = 3, chấm cả hai giao thức ở mục 7, kèm FPS 4 luồng.
-- **Chưa xác minh** PeopleNet Transformer chạy được trên DeepStream 7.1 / TensorRT 10.
+- **Config sẵn sàng (phiên 30), CHƯA chạy trên GPU.** Bài MV3DT ghi v1.1, reference app lại tải
+  v2, nên đo cả hai: `config_infer_peoplenet_transformer{,_v2}.txt`. Cần plugin
+  `MultiscaleDeformableAttnPlugin_TRT`: có trong mã nguồn TensorRT 10.3, bản binary chưa kiểm
+  (`docker/vast_peoplenet_check.sh`).
 
 Bảng trên là **kế hoạch tham chiếu**, không phải tiến độ thật.
 
@@ -368,6 +376,13 @@ và trong worklog chỉ link tới nó.
   Không chép sang đúng tên thì mỗi lần chạy lại build lại ~3 phút (xác nhận lần 2 vào
   2026-09-04, lần đầu ở worklog 2026-09-03).
 - **Toạ độ bbox theo streammux, không phải theo camera** — xem mục 5.
+- **PeopleNet Transformer có ba bẫy không triệu chứng** (phiên 30). Cả ba đều có test ở
+  `tests/test_pipeline_configs.py`:
+  - người là **lớp 1** (labels `BG, Person, Face, Bag`), nên phải đặt `pgie.person_class_id: 1`
+    trong streams YAML, nếu không probe bỏ sạch hộp;
+  - chuẩn hoá là **ImageNet**, dù thẻ NGC ghi 1/255 (sai thì recall v1 22/33 → 2/33);
+  - `topk=20` của config mẫu NVIDIA cắt mất người ở khung đông, kể cả khi `cluster-mode=4`.
+  Kiểm ONNX trên CPU trước khi thuê máy: `python -m tools.check_peoplenet_cpu`.
 - **Đồng bộ thời gian giữa các camera là điều kiện sống còn** cho ràng buộc thời gian di chuyển.
   Bật NTP trên mọi nguồn; điện thoại Android phát RTSP thường lệch — đo và ghi lại offset.
 - **Điện thoại Android phát RTSP** (đề cương mục 4.1.2) có latency và jitter cao hơn camera IP.

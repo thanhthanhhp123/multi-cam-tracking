@@ -18,6 +18,7 @@ set -euo pipefail
 DS_ROOT=/opt/nvidia/deepstream/deepstream
 REPO=/workspace/mct-repo
 YOLO_DIR=/workspace/DeepStream-Yolo
+TAO_DIR=/workspace/deepstream_tao_apps
 PYDS_URL="https://github.com/NVIDIA-AI-IOT/deepstream_python_apps/releases/download/v1.2.0/pyds-1.2.0-cp310-cp310-linux_x86_64.whl"
 CUDA_VER="${CUDA_VER:-12.6}"
 
@@ -70,10 +71,33 @@ else
 fi
 ls -la "$LIB"
 
+buoc "5b. build libnvds_infercustomparser_tao.so (parser PeopleNet Transformer, phien 30)"
+# NvDsInferParseCustomDDETRTAO cua deepstream_tao_apps (MIT). Chi lay 2 file cua
+# post_processor/ o commit GHIM thuoc nhanh release/tao_ds7.1ga (khop DeepStream 7.1),
+# khong clone ca repo (nhanh do keo theo ca file LFS). Xem
+# configs/pipeline/config_infer_peoplenet_transformer.txt.
+TAO_REF=bc1fa04583798509173eb551069d54f113437fb4
+TAO_PP="$TAO_DIR/post_processor"
+TAO_LIB="$TAO_PP/libnvds_infercustomparser_tao.so"
+if [ -f "$TAO_LIB" ]; then
+  echo "da build: $TAO_LIB"
+else
+  mkdir -p "$TAO_PP"
+  for f in Makefile nvdsinfer_custombboxparser_tao.cpp; do
+    curl -fsSL -o "$TAO_PP/$f" \
+      "https://raw.githubusercontent.com/NVIDIA-AI-IOT/deepstream_tao_apps/$TAO_REF/post_processor/$f"
+  done
+  CUDA_VER="$CUDA_VER" make -C "$TAO_PP"
+fi
+ls -la "$TAO_LIB"
+[ "$(nm -D "$TAO_LIB" | grep -c NvDsInferParseCustomDDETRTAO)" -ge 1 ] \
+  || { echo "FATAL: lib thieu NvDsInferParseCustomDDETRTAO"; exit 1; }
+
 buoc "6. repo + third_party symlink"
 [ -d "$REPO/src" ] || { echo "FATAL: chua day repo len $REPO (dung rsync/tar tu may dev)"; exit 1; }
 mkdir -p "$REPO/third_party" "$REPO/models/detector" "$REPO/models/reid"
 ln -sfn "$YOLO_DIR" "$REPO/third_party/DeepStream-Yolo"
+ln -sfn "$TAO_DIR" "$REPO/third_party/deepstream_tao_apps"
 (cd "$REPO" && pip install --no-cache-dir -e . >/dev/null && echo "pip install -e . ok")
 
 buoc "7. redis-server (de chay duong --publish + ghi fixture)"

@@ -79,12 +79,17 @@ def make_probe(
     mux_width: int,
     mux_height: int,
     sink: FrameSink,
+    person_class_id: int = 0,
 ) -> Callable[[Gst.Pad, Gst.PadProbeInfo, object], Gst.PadProbeReturn]:
     """Trả về hàm probe gắn vào src pad của nvtracker.
 
     `geometries` ánh xạ source_id (index streammux, ổn định trong một phiên chạy) ->
     CameraGeometry mang cam_id thật + độ phân giải gốc. Một FrameMessage phát ra cho
     mỗi frame của mỗi camera có trong batch.
+
+    `person_class_id` là chỉ số lớp người THEO NHÃN CỦA DETECTOR (YOLO11 COCO: 0,
+    PeopleNet Transformer: 1). Detection ra khỏi probe luôn mang `CLASS_PERSON` của
+    schema, nên đổi detector không đổi contract (CLAUDE.md §2 quy tắc 2).
     """
 
     def probe(pad: Gst.Pad, info: Gst.PadProbeInfo, _user_data: object) -> Gst.PadProbeReturn:
@@ -117,7 +122,7 @@ def make_probe(
             l_obj = frame_meta.obj_meta_list
             while l_obj is not None:
                 obj_meta = pyds.NvDsObjectMeta.cast(l_obj.data)
-                if obj_meta.class_id == 0:  # person — khớp CLASS_PERSON trong schema.py
+                if obj_meta.class_id == person_class_id:
                     bbox = _scale_bbox(
                         obj_meta.rect_params, mux_width, mux_height, geom.width, geom.height
                     )
