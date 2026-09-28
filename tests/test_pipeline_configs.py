@@ -402,3 +402,14 @@ def test_wildtrack_pnt_chi_khac_o_pgie(tag: str, streams_wildtrack: dict, repo_r
     }
     cfg = _read(repo_root / moi["pgie"]["config_file"])
     assert cfg.getint("property", "batch-size") == len(moi["sources"])
+
+
+@pytest.mark.parametrize("tag", ["pnt", "pnt2"])
+def test_streams_reid_pnt_chi_khac_o_pgie(tag: str, pipeline_dir: Path) -> None:
+    """Bảng FPS 4 luồng: chênh lệch so với YOLO11s phải là chi phí của detector, không gì khác."""
+    reid = yaml.safe_load((pipeline_dir / "streams_reid.yaml").read_text(encoding="utf-8"))
+    moi = yaml.safe_load((pipeline_dir / f"streams_reid_{tag}.yaml").read_text(encoding="utf-8"))
+    assert {k: v for k, v in moi.items() if k != "pgie"} == {
+        k: v for k, v in reid.items() if k != "pgie"
+    }
+    assert moi["pgie"]["config_file"].endswith(PNT_CONFIGS[0 if tag == "pnt" else 1])
