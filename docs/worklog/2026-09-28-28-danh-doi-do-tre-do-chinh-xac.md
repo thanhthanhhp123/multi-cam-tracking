@@ -24,7 +24,7 @@
    lần gán đầu; cửa sổ ngắn hơn thì chốt sớm hơn; vòng `finish` được tách riêng; phân vị; config
    gốc không bị sửa. Chạy các file liên quan (`test_latency_tradeoff`, `test_engine_online`,
    `test_latency`, `test_no_gpu_imports`): **135 passed**. Ruff sạch trên `src tests eval`.
-   **Chưa chạy lại toàn bộ bộ test.**
+   Sau phần `latency_report` (mục "chưa xong"), toàn bộ bộ test: **613 passed, 5 skipped**.
 5. **Kiểm tái lập**: `w1000_m3` (cấu hình WildTrack hiện tại) trên `r640n_r1` cho HOTA 15.878 /
    AssA 10.726 / 385 Global ID, trùng từng chữ số với phiên 25. Trên n = 3 cho 15.79 ± 0.47,
    cũng trùng đối chứng 640 của phiên 25.
@@ -48,7 +48,8 @@ kết luận "KHÔNG ĐẠT nếu tính chung". **Sai**: đuôi đó là lần p
   p99 877–1012 / max 1040–1045 ms**. Đây đo từ khung MỚI NHẤT của tracklet lúc gán, không từ
   khung đầu tiên. Thước đo của phiên này (`time_to_id`) thì tính từ khung đầu tiên.
 - Bản ghi phát lại lúc đóng vẫn hữu ích cho dashboard (báo tracklet kết thúc), chỉ không được
-  tính là độ trễ chốt danh tính. Chưa sửa `latency_report.py` để tách hai loại (xem "chưa xong").
+  tính là độ trễ chốt danh tính. `latency_report.py` đã tách hai loại trong phiên này
+  (`LatencyRecord.kind`, xem "chưa xong").
 
 **2. `time_to_id` đo bằng thời gian dữ liệu, không bằng đồng hồ tường.** `time_to_id` = `now_ms`
 của vòng gán đầu tiên − `start_ms` của tracklet, cả hai đều lấy từ `ts_ms`. Nhờ vậy engine tất
@@ -159,6 +160,8 @@ Welch thô so với `w1000_m3`: `w500_m1` ΔHOTA −1.02, t ≈ 3.0 (tách khỏ
 
 1. Báo cáo GVHD (03–04/10): mang bảng 1 + bảng 3 và đề xuất định nghĩa ở mục "Đọc bảng này thế
    nào". Xin thầy chốt: mục tiêu "<1 s" áp vào độ trễ vị trí, hay chốt danh tính ở p50 / p90?
-2. Vẽ biểu đồ đánh đổi (trục x = p90 `time_to_id`, trục y = HOTA, thanh sai số n = 3) cho slide
-   và chương 6.
+2. ~~Vẽ biểu đồ đánh đổi~~ **xong**: `data/s28/latency_tradeoff.png` (script
+   `data/s28/plot_tradeoff.py`, chạy bằng `uv run --no-project --with matplotlib`; cả hai đều
+   gitignored, chỉ có trên máy dev). Trục x p90 `time_to_id` (log, WildTrack 2 fps), trục y
+   HOTA hộp ảnh; ba điểm n = 3 có thanh sai số, 12 điểm r1 làm nền.
 3. M6: đo lại `time_to_id` + HOTA trên cùng một nguồn 25–30 fps khi có dữ liệu tự thu.
