@@ -313,10 +313,14 @@ giữ nguyên engine thì HOTA mặt đất tăng 31.1 → 63.8.
 - **Dự phòng:** RF-DETR, YOLO26.
 - **Vẫn giữ quy tắc** pretrained và không fine-tune trên WildTrack.
 - **Tiêu chí:** n = 3, chấm cả hai giao thức ở mục 7, kèm FPS 4 luồng.
-- **Config sẵn sàng (phiên 30), CHƯA chạy trên GPU.** Bài MV3DT ghi v1.1, reference app lại tải
-  v2, nên đo cả hai: `config_infer_peoplenet_transformer{,_v2}.txt`. Cần plugin
-  `MultiscaleDeformableAttnPlugin_TRT`: có trong mã nguồn TensorRT 10.3, bản binary chưa kiểm
-  (`docker/vast_peoplenet_check.sh`).
+- **Kết quả phiên 30: PeopleNet Transformer KHÔNG thắng, vẫn giữ YOLO11s 640.** Đo trên WildTrack,
+  n = 3, cả hai giao thức:
+  - hộp ảnh: v1.1 13.87 ± 0.33 so với YOLO 15.79 ± 0.47;
+  - mặt đất trong vùng: v1.1 28.4 ± 1.1 so với YOLO 31.1 ± 0.8.
+  - v2 kém hơn nữa và chỉ đạt 9 FPS/luồng (RTX A4000); v1.1 đạt 25 FPS/luồng, YOLO 106.
+  - Lý do: PNT thấy nhiều người hơn, và 84% số hộp sai tăng thêm nằm NGOÀI lưới mà WildTrack chú
+    thích. Các track ngoài vùng còn làm hỏng cả bước liên kết.
+  - Hướng tiếp theo đang đề xuất: ROI mặt đất (`docs/worklog/2026-09-28-30-*`, quyết định 7).
 
 Bảng trên là **kế hoạch tham chiếu**, không phải tiến độ thật.
 
@@ -409,6 +413,16 @@ và trong worklog chỉ link tới nó.
   `srun` foreground dễ bị treo chờ hàng đợi khi node đang bận —
   ưu tiên `sbatch` (job không đồng bộ) cho việc chạy lâu, dùng `squeue -u $USER` để theo dõi thay
   vì đoán thời gian chờ.
+- **Máy vast.ai còn hỏng theo hai kiểu nữa** (phiên 30, 2 trong 3 máy thuê):
+  - **GPU bị hạ xung vì nhiệt.** Ví dụ: T4 offer `13790355`, 84 °C, SM chỉ còn 300/1590 MHz,
+    `SW Thermal Slowdown: Active`. Không có lỗi nào, chỉ chậm đi khoảng 5 lần. Khi đó pipeline không
+    theo kịp WildTrack 14 ảnh/s, `ts_ms` giãn ra, và fixture không còn so được. Kiểm bằng
+    `nvidia-smi --query-gpu=temperature.gpu,clocks.sm,clocks_throttle_reasons.active` **trong lúc
+    GPU đang tải**. `docker/vast_pnt.sh` ghi sẵn các cột này.
+  - **Thiếu hẳn `libnvcuvid.so`** dù `NVIDIA_DRIVER_CAPABILITIES=all` (T4 offer `13080903`, driver
+    580). Bước kiểm NVDEC bên dưới bắt được ngay.
+  - RTX A4000 offer `35674412` (Nhật, $0.088/h) chạy tốt, và đẩy dữ liệu từ VN sang nhanh. FPS đo trên
+    máy này không so thẳng được với số T4 hay RTX 3090 cũ.
 - **Instance vast.ai có thể hỏng NVDEC dù mọi thứ khác bình thường** (đo 2026-09-04: 2/3 máy
   thuê trong một phiên). `nvidia-smi`, CUDA, TensorRT, `libnvcuvid.so`, `/dev/nvidia*` đều
   đủ và đúng, nhưng `nvv4l2decoder` dừng ở `PREROLLING` vĩnh viễn, GPU 0%. Không kiểm được

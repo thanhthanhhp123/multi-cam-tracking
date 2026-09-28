@@ -66,9 +66,12 @@ custom-lib-path=../../third_party/deepstream_tao_apps/post_processor/libnvds_inf
 # <onnx-file>_b7_gpu0_fp16.engine cạnh file ONNX, trùng tên khai ở trên.
 #
 # PLUGIN: ONNX dùng op tuỳ biến MultiscaleDeformableAttnPlugin_TRT (version "1",
-# namespace ""). Plugin này có trong TensorRT OSS từ nhánh 8.6 tới 10.3 (bản của
-# DeepStream 7.1). CHƯA chạy thật trên DeepStream 7.1: lần thuê máy đầu tiên phải kiểm
-# bằng trtexec trước khi chạy pipeline (docker/vast_peoplenet_check.sh).
+# namespace ""). Plugin này có sẵn trong libnvinfer_plugin của TensorRT 10.3, bản đi kèm
+# DeepStream 7.1. Đã kiểm trên T4 và RTX A4000 ở phiên 30 (docker/vast_peoplenet_check.sh).
+#
+# KẾT QUẢ PHIÊN 30: PNT KHÔNG thắng YOLO11s 640 trên WildTrack (hộp ảnh 13.87 so với 15.79,
+# mặt đất 28.4 so với 31.1, n = 3). Giữ lại file này để làm ablation, pipeline chính vẫn
+# dùng YOLO. Lý do nằm ở docs/worklog/2026-09-28-30-*, quyết định 6–7.
 #
 # Parser: libnvds_infercustomparser_tao.so build từ deepstream_tao_apps (MIT) ở commit
 # ghim trong docker/vast_bootstrap.sh.
