@@ -42,10 +42,12 @@ lưới 12 m × 36 m.
 Kiểm hình học trên B và LB lần r1 của phiên 24 (`data/s24/{B,LB}_r1/mct.db`) →
 `data/s25/gp_sanity_{B,LB}_r1.json`.
 
-**Chưa chạy: NMS mặt đất.** `ground_nms` (`--nms-m`, các bài báo dùng 0.5 m) được thêm SAU
-lần chạy cuối. Dấu hiệu: `ground_plane.json` ghi lúc 17:03, code lúc 17:05, và khoá trong
-JSON không có đoạn `|nms…|` mà code hiện tại sinh ra. Mọi số dưới đây là **không NMS**, và
-chạy lại với `--nms-m 0` thì khoá sẽ khác tên (thêm `|nms0|`).
+**NMS mặt đất: chạy bù ngày 2026-09-28.** `ground_nms` (`--nms-m`, các bài báo dùng 0.5 m)
+được thêm SAU lần chạy ngày 2026-09-20. Dấu hiệu: `ground_plane.json` ghi lúc 17:03, code lúc
+17:05, và khoá trong JSON không có đoạn `|nms…|`. Mục 1–3 vì vậy là **không NMS**. Ngày
+2026-09-28 chạy lại 9 lần với `--nms-m 0 0.5 --area in --threshold-m 1.0` →
+`data/s25/ground_plane_nms.json` (máy dev, 1 phút 53 giây, xem mục 4). Nhánh `nms0` trùng từng
+chữ số với lần chạy ngày 20, nên code NMS không làm đổi đường không-NMS.
 
 Không sửa `src/` hay `configs/`.
 
@@ -73,8 +75,10 @@ nhưng **HOTA hộp ảnh trong vùng vẫn chưa được đo**.
 
 **5. Quyết định cấu hình: giữ YOLO11s 640, không thuê GPU để quét ngưỡng ở 960.** Đây là tiêu chí
 đã đặt trước ở bước 2 của phiên 25: "HOTA trong vùng đi ngang hoặc giảm thì giữ 640". Kết quả
-ở mục 1 đáp ứng tiêu chí đó (960 ngang, 1280 giảm rõ). Điều kiện đi kèm: kết luận có thể đổi
-nếu NMS mặt đất gỡ được phần lớn FP do trùng Global ID (xem "chưa xong").
+ở mục 1 đáp ứng tiêu chí đó (960 ngang, 1280 giảm rõ). Lúc viết có một điều kiện: kết luận có
+thể đổi nếu NMS mặt đất gỡ được phần lớn FP do trùng Global ID. Đã kiểm ngày 2026-09-28 (mục 4):
+NMS 0.5 m không đảo thứ tự mà còn **nới rộng** khoảng cách (640 hơn 960 với t ≈ 4.4), nên
+quyết định giữ nguyên, không còn điều kiện.
 
 ## Số liệu đo được
 
@@ -130,13 +134,41 @@ LB trên 40 khung test: HOTA 94.17, IDF1 96.59. Toàn khung và trong vùng gầ
   là đủ.
 - 18.7% FN còn lại của LB là trần của tập detection này, không phải lỗi hình học.
 
+### 4. NMS mặt đất 0.5 m (chạy 2026-09-28): trong vùng, T = 1 m, n = 3
+
+Cấu hình như mục 1, chỉ thêm `--nms-m 0.5`: trong mỗi khung, giữ điểm có nhiều camera thấy
+nhất, bỏ mọi điểm khác cách nó ≤ 0.5 m. Hoà thì giữ Global ID nhỏ hơn.
+
+| cạnh vào | NMS | HOTA | DetA | AssA | IDF1 | MOTA | TP | FP | FN | precision | recall | F1 |
+|---|---|---|---|---|---|---|---|---|---|---|---|---|
+| 640 | — | 31.10 ± 0.85 | 31.06 | 31.64 | 35.40 | −41.4 | 7 069 | 9 916 | 2 449 | 0.416 | 0.743 | 0.533 |
+| 640 | 0.5 m | **32.14 ± 0.82** | 36.76 | 28.63 | 36.27 | −9.6 | 6 857 | 6 249 | 2 661 | 0.523 | 0.720 | **0.606** |
+| 960 | — | 30.20 ± 1.05 | 28.40 | 32.72 | 32.77 | −66.1 | 7 344 | 12 373 | 2 174 | 0.372 | 0.772 | 0.502 |
+| 960 | 0.5 m | **29.80 ± 0.41** | 33.30 | 27.21 | 32.87 | −32.8 | 7 135 | 8 493 | 2 383 | 0.457 | 0.750 | **0.567** |
+| 1280 | — | 28.16 ± 1.19 | 26.19 | 30.86 | 31.17 | −93.5 | 7 706 | 15 156 | 1 812 | 0.337 | 0.810 | 0.476 |
+| 1280 | 0.5 m | **27.30 ± 1.02** | 31.51 | 24.11 | 30.28 | −50.0 | 7 459 | 10 183 | 2 059 | 0.423 | 0.784 | **0.549** |
+
+Welch thô với NMS, so với 640: 960 ΔHOTA −2.34, t ≈ 4.4; 1280 ΔHOTA −4.84, t ≈ 6.4.
+Trên 40 khung test với NMS: 41.37 ± 0.80 / 40.02 ± 1.93 / 35.15 ± 1.09 (640 và 960 trong nhiễu).
+
+Đọc bảng này thế nào:
+- **NMS gỡ 31–37% FP trong vùng** (640: −3 667; 960: −3 880; 1280: −4 973). Đó là các điểm trùng
+  lặp cách nhau ≤ 0.5 m, tức một người bị engine gán hai Global ID cùng lúc. Nhưng sau NMS vẫn
+  còn 6 249 FP ở 640 (precision 52%). Phần lớn FP trong vùng vì vậy KHÔNG phải trùng lặp sát nhau.
+- **NMS cũng xoá nhầm ~210–250 TP** mỗi mức, và **AssA giảm** (31.6 → 28.6 ở 640). Giữ theo
+  "nhiều camera nhất" có thể chọn Global ID khác nhau giữa các khung liền nhau, làm danh tính
+  của điểm sống sót nhảy qua lại. HOTA chỉ tăng được ở 640 (+1.0), còn ở 960/1280 thì giảm.
+- **Thứ tự 640 > 960 > 1280 giữ nguyên, khoảng cách còn rộng ra.** Độ phân giải cao sinh thêm
+  FP nhanh hơn NMS gỡ được.
+
 ## Vướng mắc / chưa xong
 
-- **Chưa chạy NMS mặt đất.** Engine hay tách một người thành hai Global ID cùng lúc (phiên 20:
-  43.7% khung mất vì vỡ). Khi đó mỗi Global ID thêm một điểm, và theo giao thức điểm thì điểm
-  thứ hai là FP. Ngay trong vùng, precision chỉ 34–42%, nên một phần FP ở mục 1 có thể là trùng
-  lặp chứ không phải hộp sai. Chưa đo được phần đó bao nhiêu, và **chưa biết** nó có đảo thứ tự
-  640/960/1280 không. Code đã có sẵn (`--nms-m 0.5`), chỉ cần chạy.
+- **FP trong vùng sau NMS chưa phân loại.** 6 249 điểm ở 640 có thể là: trùng lặp cách
+  0.5–1 m (sai số chiếu chân lớn hơn bán kính NMS), ghost của detector, hoặc chân chiếu lệch do
+  hộp bị cắt/che. Chưa tách ba nhóm này.
+- NMS theo "nhiều camera nhất" chưa ổn định danh tính giữa các khung. Nếu cần HOTA mặt đất cao hơn
+  cho chương 6, thử ưu tiên Global ID đã sống sót ở khung trước. Đây là việc của **bộ chấm**,
+  không phải của engine, nên phải báo cáo tách riêng.
 - HOTA hộp ảnh chỉ trong vùng (kế hoạch gốc của bước 1, phiên 25) vẫn chưa đo.
 - Kiểm hình học B/LB mới chạy lần r1 (n = 1), B chỉ có biến thể trong vùng. Chưa chạy A theo
   kiểu oracle (`db = oracle`).
@@ -147,14 +179,16 @@ LB trên 40 khung test: HOTA 94.17, IDF1 96.59. Toàn khung và trong vùng gầ
 
 ## Bước tiếp theo
 
-1. Chạy lại `eval.eval_ground_plane` cho 9 lần chạy với `--nms-m 0 0.5` (CPU, venv `mct-eval`,
-   không cần engine hay GPU). Nếu NMS 0.5 m đảo thứ tự 640/960/1280 thì mở lại QĐ 5.
+1. ~~Chạy NMS mặt đất~~ **xong 2026-09-28** (mục 4). Lệnh tái lập (Git Bash; `PYTHONPATH` dùng
+   `;` vì Python chạy trên Windows):
    ```
-   PYTHONPATH=src ~/.venvs/mct-eval/Scripts/python.exe -m eval.eval_ground_plane \
+   PYTHONPATH="src;." ~/.venvs/mct-eval/Scripts/python.exe -m eval.eval_ground_plane \
        --trackeval-path ~/TrackEval --wildtrack-dir data/wildtrack \
-       --homography-dir configs/cameras/homography/wildtrack --nms-m 0 0.5 \
+       --homography-dir configs/cameras/homography/wildtrack \
+       --threshold-m 1.0 --area in --nms-m 0 0.5 \
        --run R640:r1 data/fixtures/ds_wildtrack_7cam_r640n_r1.jsonl data/s25/R640_r1/mct.db \
-       ... --json data/s25/ground_plane_nms.json
+       ... (9 lần: R640/r640n, R960/r960, R1280/r1280 × r1..r3) \
+       --json data/s25/ground_plane_nms.json
    ```
 2. Cập nhật CLAUDE.md §7: có hai giao thức chấm (hộp ảnh IoU 0.5 và điểm mặt đất 1 m trong vùng),
    và mọi số WildTrack phải ghi kèm giao thức cùng cách tính vùng.
