@@ -134,6 +134,8 @@ configs/
   pipeline/      nvinfer/nvtracker config (.txt/.yml) + streams.yaml (danh sách nguồn camera)
   cameras/       topology.yaml (đồ thị camera + transit time), homography/<cam>.yaml
   demo/          cấu hình cho dataset MƯỢN (WildTrack) — tách khỏi cấu hình hệ thống thật
+  lab/           dữ liệu TỰ THU (M6): topology, ground_points, streams_lab, lab.mct — bản mẫu
+                 `status: template` cho tới khi đo thật; quy trình ở docs/m6/README.md
   mct.yaml       tham số association engine (ngưỡng, cửa sổ thời gian, trọng số)
 src/
   common/        schema.py, streams.py (wrapper Redis), config.py, logging.py   ← dùng chung, KHÔNG GPU
@@ -238,6 +240,12 @@ Mọi ngưỡng nằm trong `configs/mct.yaml`, **không hardcode trong code** �
     khoảng 0.19 s, mà kết quả liên kết không đổi. Vế (2) chỉ phụ thuộc `window_ms`: p95 khoảng
     1.11 s ở 1000 ms, khoảng 0.94 s ở 500 ms.
 - Ground-truth tự gán bằng CVAT → `tools/cvat_to_mot.py` → `eval/gt/`.
+- **Dữ liệu tự thu (M6)**: quy trình đầy đủ ở `docs/m6/README.md`, chấm bằng `eval.run_lab_eval`
+  (n lần chạy pipeline × biến thể cấu hình). Ngoài HOTA/IDF1 còn báo **độ chính xác bàn giao
+  danh tính theo loại cặp** (`eval.eval_handover`: chồng lấn / không chồng lấn / quay lại cùng
+  camera). Đây là con số trực tiếp cho đóng góp chính, vì HOTA gộp mọi camera nên không cho biết
+  phần nào tốt, phần nào kém. Chú thích nhảy khung (5 fps trên video 25 fps) thì mọi bước chấm
+  phải `--only-gt-frames`; `run_lab_eval` tự bật cờ này.
 
 **Số đo trên fixture WildTrack cũ (`wildtrack_to_fixture.py`) là CẬN TRÊN, không phải hiệu
 năng hệ thống.** Fixture đó dùng bbox ground-truth và `local_track_id` sinh từ `personID` —
@@ -342,6 +350,13 @@ giữ nguyên engine thì HOTA mặt đất tăng 31.1 → 63.8.
   - Kết luận: không hơn ở mức detector, nên chưa đáng thuê GPU. Mọi thứ đã sẵn nếu cần chạy:
     `tools/export_yolo26.py` và `configs/pipeline/config_infer_yolo26_b{4,7}.txt`.
 
+**Chuẩn bị M6 xong ở phiên 33** (`docs/worklog/2026-10-03-33-*`):
+- toàn bộ công cụ cho dữ liệu tự thu, từ đồng bộ video điện thoại tới bảng điểm, đã diễn tập
+  trọn chuỗi trên dữ liệu giả lập với TrackEval thật;
+- thêm `association.max_cost_geometric` (ngưỡng riêng cho ô có bằng chứng vị trí; null = hành vi
+  cũ, trùng từng dòng SQLite).
+Phần còn lại của M6 là quay, chú thích, rồi chạy theo `docs/m6/README.md`.
+
 Bảng trên là **kế hoạch tham chiếu**, không phải tiến độ thật.
 
 **Trạng thái hiện tại:** xem 2–3 file mới nhất trong `docs/worklog/` (quy ước ở mục 10) —
@@ -409,6 +424,12 @@ và trong worklog chỉ link tới nó.
   Kiểm ONNX trên CPU trước khi thuê máy: `python -m tools.check_peoplenet_cpu`.
 - **Đồng bộ thời gian giữa các camera là điều kiện sống còn** cho ràng buộc thời gian di chuyển.
   Bật NTP trên mọi nguồn; điện thoại Android phát RTSP thường lệch — đo và ghi lại offset.
+  Điện thoại tự quay ra FILE thì đồng bộ bằng tiếng vỗ tay (`tools.sync_recordings`). Công cụ đó
+  cũng chuyển VFR → fps cố định; không chuyển thì "khung thứ i" của pipeline và của CVAT lệch nhau.
+- **Công cụ in tiếng Việt ra stdout chết trên Windows khi chuyển hướng đầu ra** (cp1252,
+  `UnicodeEncodeError` sau khi đã tính xong). Mọi `main()` có `print` phải gọi
+  `sys.stdout.reconfigure(encoding="utf-8")`. Đã dính ở `compare_oracle_tracker` và
+  `estimate_transit` (phiên 33).
 - **Điện thoại Android phát RTSP** (đề cương mục 4.1.2) có latency và jitter cao hơn camera IP.
   Đừng dùng nó cho cặp camera overlap cần homography chính xác.
 - **VRAM**: chạy đồng thời YOLO + Re-ID trên 4 luồng dễ chạm trần trên GPU 8GB.
@@ -515,9 +536,17 @@ make eval               # chạy TrackEval trên kết quả trong eval/
 make engine-latency     # engine + đo mốc t0..t4 ra data/latency.jsonl
 make latency-report     # trung vị/p90/p99 TỪNG ĐOẠN — tìm khâu gây đuôi trễ
 
+# Dữ liệu tự thu (M6) — docs/m6/README.md; máy dev Windows không có make, lệnh Python ở đó
+make lab-homography     # điểm sàn configs/lab/ground_points.yaml -> configs/lab/homography/
+make lab-gt LAB_SESSION=s1       # CVAT data/cvat/s1/*.xml -> eval/gt/lab_s1 + fixture GT
+make lab-transit LAB_SESSION=calib   # transit time từ đoạn hiệu chỉnh -> đề xuất topology
+make lab-check LAB_SESSION=s1    # kiểm cấu hình TRƯỚC khi thuê GPU (phải 0 FAIL)
+make lab-eval LAB_SESSION=s1     # 3 lần chạy pipeline -> data/lab/eval/s1/summary.md
+
 # ⚠️ Trên máy GPU (vast-gpu) — xác nhận với người dùng trước khi chạy, tính phí theo giờ (mục 2)
 make ds-build           # build docker/deepstream.Dockerfile
 make ds-run             # chạy pipeline theo configs/pipeline/streams.yaml
 make ds-run-reid        # 4 luồng CÓ ReID (streams_reid.yaml) — đối chứng của streams_multi.yaml
 make record OUT=tests/fixtures/<tên>.jsonl              # ghi Redis stream ra fixture
+bash docker/vast_lab.sh run s1 3   # dữ liệu tự thu: 3 lần chạy + độ trễ đồng hồ thật (xem đầu file)
 ```

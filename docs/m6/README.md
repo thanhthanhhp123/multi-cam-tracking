@@ -275,3 +275,23 @@ Mọi số phải ghi kèm cấu hình: GPU, model, độ phân giải, số lu�
   và khi làm thì trình bày như một ablation (CLAUDE.md §9).
 
 **Ảnh minh hoạ trong báo cáo/slide phải làm mờ mặt** (đề cương 4.3.3).
+
+## 11. Demo trên dashboard bằng dữ liệu lab
+
+Dashboard đọc topology và homography qua biến môi trường, nên chỉ cần trỏ sang `configs/lab/`.
+Lệnh giống mục Demo của README gốc, cần Redis:
+
+```bash
+# shell 1 — engine
+MCT_DB_PATH=data/lab/demo.db PYTHONPATH=src python -m mct --config configs/lab/lab.mct.yaml \
+    --topology configs/lab/topology.yaml --homography-dir configs/lab/homography \
+    --db data/lab/demo.db --publish
+# shell 2 — dashboard
+MCT_DB_PATH=data/lab/demo.db MCT_TOPOLOGY=configs/lab/topology.yaml \
+    MCT_HOMOGRAPHY_DIR=configs/lab/homography PYTHONPATH=src uvicorn dashboard.app:app --port 8000
+# shell 3 — phát lại một lần chạy pipeline đúng nhịp gốc
+PYTHONPATH=src python -m tools.replay_metadata --fixture data/fixtures/lab_s2_r1.jsonl
+```
+
+Chưa có dữ liệu thật thì demo được bằng buổi quay giả lập (`tools.make_synthetic_lab`). Khi đó
+trỏ topology/homography sang `<out>/configs/` của bộ sinh.

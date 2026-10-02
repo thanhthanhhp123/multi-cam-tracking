@@ -25,6 +25,7 @@ overlapping fields of view *and* pairs with none.
 - [Demo](#demo)
 - [Quickstart](#quickstart-no-gpu-no-cameras)
 - [The multi-camera association engine](#the-multi-camera-association-engine)
+- [Self-collected data (M6)](#self-collected-data-m6)
 - [Repository layout](#repository-layout)
 - [Engineering notes](#engineering-notes)
 
@@ -224,7 +225,10 @@ For each local tracklet updated/closed at camera `c` at time `t`:
    the distance between foot points mapped to a common reference plane via homography, compared
    *at matching timestamps*.
 4. **Hungarian** (`scipy.optimize.linear_sum_assignment`) on the masked matrix, **per camera**.
-5. Accept a pair if `cost < τ`, else mint a new Global ID.
+5. Accept a pair if `cost < τ`, else mint a new Global ID. `τ` can differ for cells backed by
+   ground-plane evidence (`association.max_cost_geometric`): appearance-only pairs need a tight
+   threshold, geometry-backed pairs a loose one, and a mixed overlap/non-overlap deployment
+   cannot serve both with one number. When set, Hungarian runs on cost ÷ cell threshold.
 6. Update the gallery (bounded append + EMA), write SQLite.
 
 Two modes are kept: `online` (the delivered product, used for latency measurement) and
@@ -232,10 +236,32 @@ Two modes are kept: `online` (the delivered product, used for latency measuremen
 [`configs/mct.yaml`](configs/mct.yaml) — nothing is hardcoded, so the parameter sweep in M6
 is a config change.
 
+## Self-collected data (M6)
+
+The full procedure — camera layout, floor markers, recording scenarios, clap sync, CVAT
+conventions, GPU runs, scoring — is in [`docs/m6/README.md`](docs/m6/README.md) (Vietnamese),
+with a printable [recording-day checklist](docs/m6/checklist-ngay-quay.md). The toolchain:
+
+| Step | Tool |
+|---|---|
+| sync phone recordings by a clap, cut to a common window, VFR → CFR | `tools.sync_recordings` |
+| floor points → homography (refuses the placeholder template) | `tools.calibrate_homography` |
+| CVAT (frame step, abs/rel numbering auto-detected) → MOT GT + GT fixture | `tools.cvat_to_mot --fixture-out` |
+| transit times between cameras from a calibration walk | `tools.estimate_transit` |
+| pre-flight check before renting a GPU (catches the silent failures seen so far) | `tools.check_lab_setup` |
+| pipeline runs + wall-clock latency on the GPU box | `docker/vast_lab.sh` |
+| GT for pipeline tracklets (generic IoU + vote) | `tools.assign_gt` |
+| n runs × config variants → TrackEval + **identity hand-over accuracy per pair type** (overlap / non-overlap / same-camera re-entry) | `eval.run_lab_eval`, `eval.eval_handover` |
+
+The chain was rehearsed end to end on a synthetic session (`tools.make_synthetic_lab`: four
+cameras with true homographies, CVAT XML with frame step 5 in both numbering styles, noisy
+pipeline fixtures with id switches and false positives) with the real TrackEval.
+
 ## Repository layout
 
 ```
 configs/     nvinfer/nvtracker configs, camera topology + homography, engine params (mct.yaml)
+  lab/       self-collected data (M6): topology, floor points, streams, engine params — templates
 src/
   common/    schema.py (the boundary), streams.py, config.py, logging.py   — shared, no GPU
   ds_pipeline/  builder.py, probes.py, reid_meta.py, sink.py               — GPU box only
