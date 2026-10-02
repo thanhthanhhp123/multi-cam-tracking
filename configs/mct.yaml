@@ -116,6 +116,15 @@ association:
   # GlobalTrack không xuất hiện lại trong khoảng này thì đóng lại, không xét làm ứng viên nữa.
   global_track_ttl_ms: 120000
 
+publish:
+  # Đường phát vị trí: tracklet ĐÃ có Global ID được phát lên mct:global ngay khi có khung
+  # mới, tối đa một lần mỗi khoảng này (ms, theo ts_ms), thay vì chờ cửa sổ gán đóng.
+  # Không đổi kết quả liên kết (chỉ đọc gallery). Bỏ khoá này = tắt (chỉ phát theo cửa sổ,
+  # độ trễ theo khung p95 ≈ window_ms); 0 = phát mọi khung. Khoảng này cộng thẳng vào
+  # độ trễ theo khung (răng cưa 0..khoảng), và nhân số message trên mct:global theo
+  # window_ms / khoảng. Xem docs/worklog/2026-10-02-32-*.
+  position_interval_ms: 100
+
 store:
   db_path: ${MCT_DB_PATH}
   # Ghi theo lô cho đỡ tốn I/O; flush khi đủ số bản ghi hoặc hết thời gian.

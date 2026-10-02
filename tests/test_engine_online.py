@@ -7,6 +7,9 @@ tái lập được.
 
 from __future__ import annotations
 
+import sqlite3
+from collections import defaultdict
+
 import numpy as np
 import pytest
 
@@ -146,3 +149,96 @@ def test_global_update_mang_du_thong_tin_cho_dashboard():
     assert update.n_cameras == 1
     # ground_point = đáy-giữa bbox theo contract common/schema.py
     assert update.ground_point == pytest.approx((update.bbox[0] + 30.0, 350.0))
+
+
+# --------------------------------------------------------------------------- đường phát vị trí
+
+
+def _walk() -> list[FrameMessage]:
+    """Hai người ở cam01 rồi một người sang cam02, 100 ms/khung — đủ để có cả gán mới lẫn
+    ghép xuyên camera, và nhiều khung sau khi đã có Global ID."""
+    person = l2_normalize(np.ones(DIM, dtype=np.float32))
+    other = l2_normalize(np.array([1.0] + [-1.0] * (DIM - 1), dtype=np.float32))
+    msgs = [_msg("cam01", frame, {1: person, 2: other}) for frame in range(25)]
+    msgs += [_msg("cam02", frame, {5: person}) for frame in range(25, 50)]
+    return msgs
+
+
+def _run_walk(tmp_path, name: str, position_interval_ms: int | None):
+    store = Store(StoreConfig(db_path=str(tmp_path / f"{name}.db"), batch_size=1))
+    windows: list[tuple[int, list[tuple[int, int, bool, bool]]]] = []
+    engine = _engine(
+        store=store,
+        position_interval_ms=position_interval_ms,
+        window_observer=lambda now, results: windows.append(
+            (now, [(r.tracklet.tracklet_id, r.global_id, r.is_new, r.is_update) for r in results])
+        ),
+    )
+    updates = []
+    for msg in _walk():
+        updates.append((int(msg.ts_ms), engine.feed(msg)))
+    updates.append((None, engine.finish()))
+    store.close()
+    with sqlite3.connect(tmp_path / f"{name}.db") as conn:
+        tables = {
+            table: conn.execute(f"SELECT * FROM {table} ORDER BY 1, 2").fetchall()
+            for table in ("global_tracks", "appearances")
+        }
+    return engine, windows, updates, tables
+
+
+@pytest.mark.parametrize("interval", [0, 100, 250])
+def test_duong_phat_vi_tri_khong_doi_ket_qua_lien_ket(tmp_path, interval):
+    """Điều kiện để bật mặc định: chỉ ĐỌC gallery, nên mọi vòng gán, SQLite và gallery cuối
+    phải y hệt khi tắt."""
+    off, windows_off, _, tables_off = _run_walk(tmp_path, "off", None)
+    on, windows_on, _, tables_on = _run_walk(tmp_path, f"on{interval}", interval)
+
+    assert windows_on == windows_off
+    assert tables_on == tables_off
+    assert [(t.global_id, sorted(t.cameras)) for t in on.associator.gallery.open_tracks()] == [
+        (t.global_id, sorted(t.cameras)) for t in off.associator.gallery.open_tracks()
+    ]
+    assert off.n_position_updates == 0 and on.n_position_updates > 0
+
+
+def _publish_times(updates, tracklet_id: int, *, until_ms: int) -> list[int]:
+    return [
+        ts - BASE_TS
+        for ts, batch in updates
+        if ts is not None and ts < until_ms
+        for update in batch
+        if update.tracklet_id == tracklet_id
+    ]
+
+
+@pytest.mark.parametrize(
+    ("interval", "expected"),
+    [
+        (None, [1000, 2000]),
+        (250, [1000, 1300, 1600, 1900, 2000, 2300]),
+        (100, list(range(1000, 2500, 100))),
+        (0, list(range(1000, 2500, 100))),
+    ],
+)
+def test_nhip_phat_cua_nguoi_da_co_global_id(tmp_path, interval, expected):
+    """cam01, 100 ms/khung, cửa sổ 1000 ms: vòng gán chạy ở 1000 và 2000 ms.
+
+    - Tắt (`None`): chỉ phát khi cửa sổ đóng, như trước phiên 32.
+    - Bật: từ vòng gán đầu, phát ngay khi khung tới, tối đa một lần mỗi khoảng. Lần phát
+      của vòng gán cũng tính vào nhịp (2000 rồi mới tới 2300 ở khoảng 250).
+    - Trước vòng gán đầu (0–900 ms) chưa ai có Global ID nên không có gì để phát.
+    """
+    _, _, updates, _ = _run_walk(tmp_path, "run", interval)
+    assert _publish_times(updates, 1, until_ms=BASE_TS + 2500) == expected
+
+
+def test_vi_tri_la_cua_khung_vua_toi_va_global_id_khong_doi(tmp_path):
+    _, _, updates, _ = _run_walk(tmp_path, "run", 0)
+    ids: dict[int, set[int]] = defaultdict(set)
+    for ts, batch in updates:
+        for update in batch:
+            ids[update.tracklet_id].add(update.global_id)
+            if ts is not None and ts < BASE_TS + 2500:
+                assert update.ts_ms == ts, "vị trí phát ngay phải là của chính khung vừa tới"
+    assert ids and all(len(gids) == 1 for gids in ids.values())

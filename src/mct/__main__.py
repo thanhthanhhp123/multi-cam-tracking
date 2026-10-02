@@ -15,6 +15,15 @@ chạy một vòng gán, phát `GlobalUpdate`, ghi SQLite, rồi đóng GlobalTr
 Dùng `ts_ms` chứ không dùng đồng hồ hệ thống để phát lại một fixture cho ra **đúng** kết
 quả như lúc chạy thật — nếu không thì không có cách nào tái lập số liệu của chương 6.
 
+**Đường phát vị trí** (`publish.position_interval_ms`, phiên 32). Chỉ có cửa sổ thì vị trí
+của MỌI người trên dashboard làm mới mỗi `window_ms` một lần, kể cả người đã có Global ID
+từ lâu: khung tới đầu cửa sổ chờ gần trọn cửa sổ (p95 độ trễ theo khung 1.05 s với cửa sổ
+1 s, docs/worklog/2026-10-02-32-*). Nhưng tracklet đã có chủ thì không bao giờ đổi chủ, nên
+vị trí mới của nó không cần vòng gán nào: engine phát ngay khi khung tới, tối đa một lần
+mỗi `position_interval_ms` (theo `ts_ms`) cho mỗi tracklet. Đường này chỉ ĐỌC gallery —
+không gán, không ghi SQLite — nên kết quả liên kết y hệt khi tắt. Tracklet CHƯA có chủ vẫn
+chờ cửa sổ như cũ: đó là thời gian tới Global ID, núm vặn của nó là `window_ms`.
+
 **Đo độ trễ.** `--latency-log <file>` (hoặc `MCT_LATENCY_LOG`) ghi ra JSONL một bản ghi
 cho mỗi `GlobalUpdate`, kèm toàn bộ mốc t0..t4 của khung mới nhất dẫn tới nó; đọc bằng
 `python -m tools.latency_report`. Mặc định TẮT, và khi tắt thì engine không gọi thêm một
@@ -63,7 +72,7 @@ from mct.associator import Assignment, Associator
 from mct.homography import HomographyMapper
 from mct.store import Store, StoreConfig
 from mct.topology import Topology
-from mct.tracklet import TrackletBuilder, TrackletConfig
+from mct.tracklet import Tracklet, TrackletBuilder, TrackletConfig
 
 log = get_logger("mct")
 
@@ -82,6 +91,7 @@ class Engine:
         associator: Associator | None = None,
         store: Store | None = None,
         window_ms: int = 1000,
+        position_interval_ms: int | None = None,
         latency: LatencyLog | None = None,
         window_observer: Callable[[int, list[Assignment]], None] | None = None,
     ) -> None:
@@ -89,6 +99,11 @@ class Engine:
         self.associator = associator or Associator()
         self.store = store
         self.window_ms = window_ms
+        # None = tắt: vị trí chỉ lên mct:global khi cửa sổ đóng (hành vi trước phiên 32).
+        # 0 = phát mọi khung. Xem "Đường phát vị trí" ở docstring module.
+        self.position_interval_ms = position_interval_ms
+        self._last_position_ms: dict[int, int] = {}
+        self.n_position_updates = 0
         self.latency = latency
         # Gọi một lần mỗi vòng gán, kèm mốc thời gian DỮ LIỆU của vòng (`now_ms` = `ts_ms`
         # đã đóng cửa sổ) và kết quả. Chỉ đọc: để công cụ offline đo thời gian tới lúc có
@@ -109,10 +124,72 @@ class Engine:
         if int(msg.ts_ms) < self._window_end_ms:
             # Tracklet bị đóng sớm (local_track_id được cấp lại) vẫn phải vào vòng gán
             # ngay, nếu không nó biến mất khỏi `take_updated()` của cửa sổ sau.
-            return self._run_window(int(msg.ts_ms), extra=closed) if closed else []
+            updates = self._run_window(int(msg.ts_ms), extra=closed) if closed else []
+        else:
+            self._window_end_ms = int(msg.ts_ms) + self.window_ms
+            updates = self._run_window(int(msg.ts_ms), extra=closed)
 
-        self._window_end_ms = int(msg.ts_ms) + self.window_ms
-        return self._run_window(int(msg.ts_ms), extra=closed)
+        if self.position_interval_ms is not None:
+            updates.extend(self._publish_positions(msg, updates))
+        return updates
+
+    def _publish_positions(
+        self, msg: FrameMessage, window_updates: list[GlobalUpdate]
+    ) -> list[GlobalUpdate]:
+        """Đường phát vị trí: tracklet ĐÃ có Global ID của message này, không chờ cửa sổ.
+
+        Chỉ đọc gallery (`find_by_tracklet`), không gán và không ghi SQLite. Tracklet vừa
+        được vòng gán của chính lần `feed` này phát rồi thì bỏ qua, và lần phát đó cũng tính
+        vào nhịp giới hạn tần số.
+        """
+        now = int(msg.ts_ms)
+        done = {u.tracklet_id for u in window_updates}
+        for update in window_updates:
+            published = self.builder.by_id(update.tracklet_id)
+            if published is not None and not published.closed:
+                self._last_position_ms[update.tracklet_id] = now
+
+        out: list[GlobalUpdate] = []
+        tracklets = []
+        for det in msg.detections:
+            tracklet = self.builder.get(msg.cam_id, det.local_track_id)
+            if tracklet is None or tracklet.tracklet_id in done:
+                continue
+            track = self.associator.gallery.find_by_tracklet(tracklet)
+            if track is None:
+                continue
+            last = self._last_position_ms.get(tracklet.tracklet_id)
+            if last is not None and now - last < self.position_interval_ms:
+                continue
+            self._last_position_ms[tracklet.tracklet_id] = now
+            done.add(tracklet.tracklet_id)
+            tracklets.append(tracklet)
+            out.append(
+                self._make_update(
+                    tracklet, track.global_id, cost=0.0, is_new=False, is_update=True, reason=""
+                )
+            )
+
+        if self.latency is not None and tracklets:
+            # Không có cửa sổ, không có vòng gán, không ghi DB: ba mốc trùng nhau, nên
+            # `window_wait`/`associate`/`db_write` của bản ghi `position` đúng bằng 0.
+            t3 = wall_clock_ms()
+            for tracklet, update in zip(tracklets, out, strict=True):
+                self._pending_latency.append(
+                    self._latency_record(
+                        tracklet,
+                        update.global_id,
+                        kind="position",
+                        t3w=t3,
+                        t3=t3,
+                        t3d=t3,
+                        window_n=0,
+                        db_flushed=False,
+                        final_flush=False,
+                    )
+                )
+        self.n_position_updates += len(out)
+        return out
 
     def finish(self) -> list[GlobalUpdate]:
         """Hết luồng: đóng mọi tracklet còn mở rồi chạy vòng gán cuối."""
@@ -155,6 +232,10 @@ class Engine:
                 self.store.close_tracks([t.global_id for t in closed_tracks])
         t3d = wall_clock_ms() if self.latency is not None else 0.0
 
+        for tracklet in unique.values():
+            if tracklet.closed:
+                self._last_position_ms.pop(tracklet.tracklet_id, None)
+
         updates = [self._to_update(r) for r in results]
         self.n_updates += len(updates)
         if self.latency is not None and results:
@@ -175,35 +256,57 @@ class Engine:
         final_flush: bool = False,
     ) -> None:
         """Dựng bản ghi độ trễ cho cửa sổ vừa chạy; `t4` đóng sau, ở `mark_published()`."""
-        if self.latency is None:  # bên gọi đã kiểm, giữ để type checker yên tâm
-            return
         for assignment in results:
             tracklet = assignment.tracklet
-            stamps = dict(tracklet.last_stamps)
-            stamps[T3W_WINDOW] = t3w
-            stamps[T3_ASSOC] = t3
-            stamps[T3D_DB] = t3d
-            if not assignment.is_update and T0_CAPTURE in tracklet.first_stamps:
-                stamps[T0_FIRST] = tracklet.first_stamps[T0_CAPTURE]
+            kind = (
+                "first" if not assignment.is_update else ("close" if tracklet.closed else "update")
+            )
             self._pending_latency.append(
-                LatencyRecord(
-                    run_id=self.latency.run_id,
-                    cam_id=tracklet.cam_id,
-                    frame_id=tracklet.end_frame_id,
-                    tracklet_id=tracklet.tracklet_id,
-                    global_id=assignment.global_id,
+                self._latency_record(
+                    tracklet,
+                    assignment.global_id,
+                    kind=kind,
+                    t3w=t3w,
+                    t3=t3,
+                    t3d=t3d,
                     window_n=len(results),
                     db_flushed=db_flushed,
                     final_flush=final_flush,
-                    t0_source=t0_source_from(tracklet.last_stamps),
-                    kind=(
-                        "first"
-                        if not assignment.is_update
-                        else ("close" if tracklet.closed else "update")
-                    ),
-                    stamps=stamps,
                 )
             )
+
+    def _latency_record(
+        self,
+        tracklet: Tracklet,
+        global_id: int,
+        *,
+        kind: str,
+        t3w: float,
+        t3: float,
+        t3d: float,
+        window_n: int,
+        db_flushed: bool,
+        final_flush: bool,
+    ) -> LatencyRecord:
+        stamps = dict(tracklet.last_stamps)
+        stamps[T3W_WINDOW] = t3w
+        stamps[T3_ASSOC] = t3
+        stamps[T3D_DB] = t3d
+        if kind == "first" and T0_CAPTURE in tracklet.first_stamps:
+            stamps[T0_FIRST] = tracklet.first_stamps[T0_CAPTURE]
+        return LatencyRecord(
+            run_id=self.latency.run_id if self.latency is not None else "",
+            cam_id=tracklet.cam_id,
+            frame_id=tracklet.end_frame_id,
+            tracklet_id=tracklet.tracklet_id,
+            global_id=global_id,
+            window_n=window_n,
+            db_flushed=db_flushed,
+            final_flush=final_flush,
+            t0_source=t0_source_from(tracklet.last_stamps),
+            kind=kind,
+            stamps=stamps,
+        )
 
     def mark_published(self) -> int:
         """Đóng mốc `t4` rồi ghi các bản ghi đang chờ. Gọi SAU khi đã đẩy `mct:global`.
@@ -222,21 +325,39 @@ class Engine:
         return written
 
     def _to_update(self, assignment: Assignment) -> GlobalUpdate:
-        tracklet = assignment.tracklet
-        track = self.associator.gallery.get(assignment.global_id)
+        return self._make_update(
+            assignment.tracklet,
+            assignment.global_id,
+            cost=assignment.cost if assignment.cost == assignment.cost else 0.0,
+            is_new=assignment.is_new,
+            is_update=assignment.is_update,
+            reason=assignment.reason,
+        )
+
+    def _make_update(
+        self,
+        tracklet: Tracklet,
+        global_id: int,
+        *,
+        cost: float,
+        is_new: bool,
+        is_update: bool,
+        reason: str,
+    ) -> GlobalUpdate:
+        track = self.associator.gallery.get(global_id)
         return GlobalUpdate(
-            global_id=assignment.global_id,
+            global_id=global_id,
             cam_id=tracklet.cam_id,
             local_track_id=tracklet.local_track_id,
             tracklet_id=tracklet.tracklet_id,
             ts_ms=tracklet.end_ms,
             bbox=tracklet.last_bbox,
             ground_point=tracklet.last_ground_point,
-            cost=assignment.cost if assignment.cost == assignment.cost else 0.0,
-            is_new=assignment.is_new,
-            is_update=assignment.is_update,
+            cost=cost,
+            is_new=is_new,
+            is_update=is_update,
             n_cameras=len(track.cameras) if track is not None else 1,
-            reason=assignment.reason,
+            reason=reason,
         )
 
 
@@ -283,11 +404,14 @@ def build_engine(
         store_config.db_path = db_path
 
     association = dict(config.get("association", {}) or {})
+    publish = dict(config.get("publish", {}) or {})
+    interval = publish.get("position_interval_ms")
     return Engine(
         tracklet_config=TrackletConfig.from_mapping(config),
         associator=associator,
         store=Store(store_config),
         window_ms=int(association.get("window_ms", 1000)),
+        position_interval_ms=None if interval is None else int(interval),
         latency=latency,
     )
 

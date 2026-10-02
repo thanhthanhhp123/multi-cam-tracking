@@ -96,9 +96,17 @@ TARGET_MS = 1000.0
 TARGET_QUANTILE = 0.95
 
 FRAME_STEP_MS = 10.0
-"""Bước lấy mẫu độ trễ theo khung — chỉ cần nhỏ hơn nhiều so với nhịp phát (~`window_ms`)."""
+"""Bước lấy mẫu độ trễ theo khung (trần) — tự thu nhỏ để mỗi nhịp phát có ≥ 10 mẫu."""
 
-_LIVE_KINDS = ("first", "update", "repeat")
+GAP_SLACK = 1.5
+"""Khung thuộc một lần phát chỉ được tính lùi tới `GAP_SLACK` × nhịp phát trung vị.
+
+Đủ rộng để không cắt nhịp phát dao động (khung rơi lệch nhịp giới hạn tần số), đủ hẹp để
+một quãng vắng dài (tracklet không có detection) không bị tính thành trễ. Quãng vắng ngắn
+hơn mức này thì bị tính thừa, tức sai về phía bảo thủ.
+"""
+
+_LIVE_KINDS = ("first", "update", "repeat", "position")
 
 
 def select_run(records: list[LatencyRecord], run: str) -> list[LatencyRecord]:
@@ -178,16 +186,22 @@ def frame_latencies(
 ) -> FrameLatency | None:
     """Độ trễ THEO KHUNG: khung chụp lúc `c` hiện ra trên `mct:global` lúc nào.
 
-    Engine chỉ phát theo cửa sổ, và mỗi bản ghi chỉ mang mốc của khung MỚI NHẤT. Giữa hai
-    lần phát `a → b` của cùng một tracklet, mọi khung chụp trong `(t0_a, t0_b]` hiện ra
-    cùng lúc ở `t4_b`. Độ trễ của chúng vì thế trải từ `t4_b - t0_b` (khung mới nhất, con
-    số duy nhất bảng end-to-end đo) tới `t4_b - t0_a` (khung ngay sau lần phát trước). Hàm
-    lấy mẫu khoảng đó mỗi `step_ms`, tức giả định khung đến đều theo thời gian. Cũng chính
-    là độ cũ của vị trí đang hiện trên dashboard, lấy trung bình theo thời gian.
+    Mỗi bản ghi chỉ mang mốc của khung MỚI NHẤT lúc phát. Giữa hai lần phát `a → b` của
+    cùng một tracklet, mọi khung chụp trong `(t0_a, t0_b]` hiện ra cùng lúc ở `t4_b`. Độ trễ
+    của chúng vì thế trải từ `t4_b - t0_b` (khung mới nhất, con số duy nhất bảng end-to-end
+    đo) tới `t4_b - t0_a` (khung ngay sau lần phát trước). Hàm lấy mẫu khoảng đó đều theo
+    thời gian, tức giả định khung đến đều. Cũng chính là độ cũ của vị trí đang hiện trên
+    dashboard, lấy trung bình theo thời gian. Chỉ phát theo cửa sổ thì nhịp phát là
+    `window_ms`; bật đường phát vị trí thì là `publish.position_interval_ms`.
+
+    Giả định khung đến LIÊN TỤC chỉ đúng khi nhịp phát dài hơn hẳn khoảng cách khung. Khi
+    hai thứ xấp xỉ nhau (phát mọi khung, hoặc dữ liệu 2 fps như WildTrack) thì thật ra không
+    có khung nào nằm giữa hai lần phát, và phép dựng lại thiên CAO tới một khoảng khung —
+    sai về phía bảo thủ, nhưng số đó không còn đọc như độ trễ được.
 
     Hai giới hạn có chủ ý:
-    - khoảng bị chặn ở một nhịp phát (`update_gap_ms`): tracklet vắng vài cửa sổ (không có
-      detection) thì quãng vắng không có khung nào để mà trễ;
+    - khoảng bị chặn ở `GAP_SLACK` × nhịp phát trung vị (`update_gap_ms`): tracklet vắng
+      lâu (không có detection) thì quãng vắng không có khung nào để mà trễ;
     - khung TRƯỚC lần phát đầu tiên không tính ở đây. Chúng chờ danh tính, và đó là việc của
       `time_to_id`.
     """
@@ -196,14 +210,15 @@ def frame_latencies(
     if not pairs:
         return None
     gap = percentile([b.stamps[T4_OUT] - a.stamps[T4_OUT] for a, b in pairs], 0.5)
+    step = min(step_ms, max(gap / 10.0, 1.0))
     samples: list[float] = []
     for a, b in pairs:
         t0_b, t4_b = b.stamps[T0_CAPTURE], b.stamps[T4_OUT]
-        lower = max(a.stamps[T0_CAPTURE], t0_b - gap)
+        lower = max(a.stamps[T0_CAPTURE], t0_b - GAP_SLACK * gap)
         capture = t0_b
         while capture > lower:
             samples.append(t4_b - capture)
-            capture -= step_ms
+            capture -= step
     if not samples:
         return None
     return FrameLatency(

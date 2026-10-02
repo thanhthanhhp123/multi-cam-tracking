@@ -127,7 +127,8 @@ Measured on rented GPUs, DeepStream 7.1 / CUDA 12.6 / TensorRT 10, YOLO11s FP16 
 | Throughput without Re-ID | 193 FPS/stream | same |
 | Re-ID cost | −9.4% FPS | same |
 | VRAM (4 streams + Re-ID) | 1.57 GB | same |
-| Frame latency (camera frame → shown on `mct:global`), p50 / p95 | 0.61 s / 1.05 s | 4 × 1080p, Tesla T4, real-time source, `window_ms` 1000 |
+| Frame latency (camera frame → shown on `mct:global`), p50 / p95 | ≈ 0.13 s / ≈ 0.19 s | ~31 fps replay, position path at 100 ms (+~75 ms pipeline) |
+| — same, position path off (updates only when the window closes) | 0.61 s / 1.05 s | 4 × 1080p, Tesla T4, real-time source, `window_ms` 1000 |
 | — of which is not waiting for the association window | ≈ 80 ms (p99) | same |
 | Time to Global ID (person's first frame in a camera → first Global ID on `mct:global`), p50 / p95 | ≈ 0.94 s / ≈ 1.11 s | ~31 fps replay, `window_ms` 1000, `min_frames` 5 (+~75 ms pipeline) |
 
@@ -138,17 +139,24 @@ appearing on `mct:global` (the dashboard's only source), and both must be below 
 - *frame latency*: for every frame of a person who already has a Global ID, how late it shows up;
 - *time to Global ID*: from a person's first frame in a camera to their first Global ID.
 
-The engine publishes once per association window, so a frame that arrives early in the window
-waits for almost the whole `window_ms`. The older "106 ms median" only measured the newest frame
-of each update, which is the best point of that sawtooth. Re-emissions when a tracklet closes and
-the final flush at end of input are excluded, because they carry no new information.
-`python -m tools.latency_report` grades both quantities.
+If the engine only publishes when an association window closes, a frame that arrives early in
+the window waits for almost the whole `window_ms`. The older "106 ms median" only measured the
+newest frame of each update, which is the best point of that sawtooth. Re-emissions when a
+tracklet closes and the final flush at end of input are excluded, because they carry no new
+information. `python -m tools.latency_report` grades both quantities.
+
+**Position path** (`publish.position_interval_ms`, default 100). Once a tracklet has a Global ID
+it never changes owner, so the engine publishes its new position as soon as the frame arrives, at
+most once per interval. The position path does not wait for the window. It only reads the
+gallery, so association results are unchanged. On WildTrack r1 the SQLite output with the path on
+and off is identical row for row. The cost is about 7× more updates on `mct:global` (190/s
+instead of 28/s on 4 streams) and about 4% engine throughput.
 
 Thesis targets: 3–4 streams at ≥ 15 FPS/stream — met with headroom (7 crowded WildTrack
-streams on a T4 give 13.5 FPS/stream). < 1 s latency — **narrowly not met** with the default
-`window_ms` 1000 (p95 1.05 s and ≈ 1.11 s). At 500 ms the time to Global ID is ≈ 0.94 s p95. The
-accuracy cost of that window at 25–30 fps is not measured yet (on WildTrack at 2 fps with
-`min_frames` 5 it is within noise on one run).
+streams on a T4 give 13.5 FPS/stream). < 1 s latency — met for frame latency (≈ 0.19 s p95).
+Time to Global ID is **narrowly not met** with the default `window_ms` 1000 (≈ 1.11 s p95). At
+500 ms it is ≈ 0.94 s p95. The accuracy cost of that window at 25–30 fps is not measured yet. On
+WildTrack at 2 fps with `min_frames` 5, a single run puts it within noise.
 
 ## Demo
 

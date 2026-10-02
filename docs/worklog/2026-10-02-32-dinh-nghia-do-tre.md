@@ -1,11 +1,13 @@
-# 2026-10-02 (phiên 32): Chốt định nghĩa độ trễ "< 1 s". Theo định nghĩa này, hệ hiện tại KHÔNG ĐẠT, dù chỉ thiếu một chút
+# 2026-10-02 (phiên 32): Chốt định nghĩa độ trễ "< 1 s"; đường phát vị trí đưa độ trễ theo khung từ 1.05 s xuống ≈ 0.19 s mà không đổi kết quả liên kết
 
-- **Mốc:** M5 (độ trễ) + chuẩn bị báo cáo GVHD | **Máy:** máy dev (CPU, không thuê GPU) | **Thời lượng:** ~1.5h
+- **Mốc:** M5 (độ trễ) + chuẩn bị báo cáo GVHD | **Máy:** máy dev (CPU, không thuê GPU) | **Thời lượng:** ~3h
 
 ## Mục tiêu phiên
 
 - Người dùng giao: **tự chốt định nghĩa độ trễ** cho mục tiêu "< 1 s" của đề cương, câu hỏi treo
   từ phiên 9, rồi giải thích các vấn đề liên quan. Trước đây định chờ GVHD chốt (phiên 28).
+- Phần 2, sau khi commit phần 1 (`394c5a8`): làm luôn hướng sửa 1, tức **tách đường phát vị trí
+  khỏi cửa sổ gán** (QĐ 4.1).
 
 ## Đã làm
 
@@ -42,12 +44,60 @@
    `t0_first`). Đã chạy các file liên quan, ruff sạch (xem "Số liệu").
 7. Cập nhật README (bảng hiệu năng và lời giải thích) và CLAUDE.md §7 (một mục định nghĩa).
 
+**Phần 2: đường phát vị trí.**
+
+8. `src/mct/__main__.py`:
+   - `Engine(position_interval_ms=...)` và `Engine._publish_positions()`. Sau mỗi `feed`, mọi
+     tracklet ĐÃ có chủ (`gallery.find_by_tracklet`) có mặt trong message được phát `GlobalUpdate`
+     ngay, tối đa một lần mỗi `position_interval_ms` theo `ts_ms`.
+   - Tracklet vừa được vòng gán của chính lần `feed` đó phát thì bỏ qua, và lần phát đó cũng tính
+     vào nhịp.
+   - Bản ghi độ trễ loại mới `kind = position`, có `t3w = t3 = t3d` vì không chờ cửa sổ, không gán,
+     không ghi DB.
+   - Tách `_make_update` và `_latency_record` để hai đường dùng chung.
+   - `build_engine` đọc khoá mới `publish.position_interval_ms`.
+9. `configs/mct.yaml`: thêm mục `publish:` với `position_interval_ms: 100`, **bật mặc định**.
+   `configs/demo/wildtrack_ds.mct.yaml` không có khoá này nên vẫn tắt. Không ảnh hưởng gì, vì kết
+   quả liên kết như nhau (bước 12).
+10. `src/tools/latency_report.py`:
+    - tính cả bản ghi `position`;
+    - mức chặn quãng vắng nới thành `GAP_SLACK` = 1.5 × nhịp phát trung vị, để không cắt nhịp phát
+      dao động (khung rơi lệch nhịp giới hạn tần số);
+    - bước lấy mẫu tự thu nhỏ theo nhịp phát;
+    - ghi rõ giới hạn của phép dựng lại khi nhịp phát xấp xỉ khoảng cách khung.
+11. `eval/latency_tradeoff.py`:
+    - đo thêm **độ trễ theo khung bằng thời gian dữ liệu**: mỗi `GlobalUpdate` mang `ts_ms` của
+      khung mới nhất và được phát lúc engine nuốt message có `ts_ms = now`;
+    - đo số cập nhật/giây đổ lên `mct:global`;
+    - quét `--position-interval-ms off 200 100 0`.
+12. Kiểm "không đổi kết quả" trên dữ liệu thật: WildTrack r1 (`ds_wildtrack_7cam_r640n_r1`,
+    `configs/demo/wildtrack_ds.mct.yaml`, w1000_m3), tắt so với 100 ms. SQLite **trùng từng dòng**
+    (385 global track, 829 appearance), 385 Global ID khớp phiên 28. HOTA chấm từ chính SQLite
+    này nên cũng trùng.
+13. Test:
+    - `tests/test_engine_online.py` +8 ca (3 hàm có tham số hoá): không đổi vòng gán, SQLite hay
+      gallery ở các khoảng 0/100/250 ms; mốc phát chính xác ở tắt/250/100/0 ms; vị trí là của khung
+      vừa tới và Global ID không đổi.
+    - `tests/test_latency.py` +1 (bản ghi `position`); sửa 1 (mức chặn quãng vắng).
+    - Toàn bộ bộ test: **668 passed, 5 skipped**, ruff sạch.
+14. `src/common/streams.py`: sửa docstring của `GlobalPublisher`. Câu "mỗi tracklet chỉ sinh vài cập
+    nhật" không còn đúng.
+
 Lệnh tái lập (Git Bash, máy dev):
 ```
 PYTHONPATH=src ~/.venvs/mct-test/Scripts/python.exe -m tools.latency_report --log data/latency-run2.jsonl
 PYTHONPATH=src ~/.venvs/mct-test/Scripts/python.exe -m eval.latency_tradeoff \
     --run reid data/s28/ds_4cam_reid_realtime_head1904.jsonl --config configs/mct.yaml \
     --window-ms 250 500 750 1000 --min-frames 5 --work-dir data/s32/rt
+# phần 2
+PYTHONPATH="src;." ~/.venvs/mct-test/Scripts/python.exe -m eval.latency_tradeoff \
+    --run reid data/s28/ds_4cam_reid_realtime_head1904.jsonl --config configs/mct.yaml \
+    --window-ms 500 1000 --min-frames 5 --position-interval-ms off 200 100 0 --work-dir data/s32/fast
+PYTHONPATH="src;." ~/.venvs/mct-test/Scripts/python.exe -m eval.latency_tradeoff \
+    --run r1 data/fixtures/ds_wildtrack_7cam_r640n_r1.jsonl --config configs/demo/wildtrack_ds.mct.yaml \
+    --topology configs/demo/wildtrack.topology.yaml --homography-dir configs/cameras/homography/wildtrack \
+    --window-ms 1000 --min-frames 3 --position-interval-ms off 100 --work-dir data/s32/wt
+# rồi so data/s32/wt/w1000_m3_p{off,100}_r1/mct.db bảng global_tracks + appearances
 ```
 
 ## Quyết định kỹ thuật
@@ -105,29 +155,54 @@ Mục tiêu "< 1 s" của đề cương ĐẠT khi và chỉ khi **p95 của c�
   - *Loại: glass-to-glass làm số chính.* Vẫn đo nó ở M6 và đặt cạnh, để người đọc biết ngân sách
     thật còn bao nhiêu.
 
-### 3. Hệ quả: với cấu hình mặc định, mục tiêu KHÔNG ĐẠT, và thiếu chỉ một chút
+### 3. Hệ quả: với cấu hình lúc đầu phiên, mục tiêu KHÔNG ĐẠT, và thiếu chỉ một chút
 
 - (A) p95 = 1.05 s (log phiên 23).
 - (B) p95 ≈ 1.03 s thời gian dữ liệu, cộng khoảng 75 ms pipeline thì ≈ 1.11 s.
 - Câu "met for position" trong README là kết luận từ thước đo sai, đã sửa.
 - Đây không phải chuyện tính toán chậm. Phần không phải chờ cửa sổ chỉ khoảng 75–80 ms, kể cả ở
   p99 (bảng 1). Toàn bộ phần còn lại là chờ cửa sổ, tức một **tham số thiết kế**.
+- Sau phần 2 (QĐ 5): (A) ĐẠT với dư địa lớn (≈ 0.19 s). (B) vẫn KHÔNG ĐẠT ở `window_ms` 1000 —
+  đường phát vị trí không chạm tới (B), và cũng không được chạm tới.
 
-### 4. Hướng sửa (chưa làm, chờ người dùng/GVHD)
+### 4. Hướng sửa
 
-1. **Tách đường phát vị trí khỏi cửa sổ gán** để sửa (A).
+1. **Tách đường phát vị trí khỏi cửa sổ gán** để sửa (A). **Đã làm ở phần 2**, xem QĐ 5.
    - Tracklet đã có chủ thì không bao giờ đổi chủ (phiên 28, QĐ 1). Vậy có thể phát vị trí của nó
-     ngay khi có khung mới, có giới hạn tần số, ví dụ 5–10 Hz/tracklet, mà không cần chờ vòng gán.
+     ngay khi có khung mới, có giới hạn tần số, mà không cần chờ vòng gán.
    - Kết quả gán và SQLite không đổi, nên **độ chính xác không đổi theo cấu trúc**.
-   - Ước lượng (chưa đo): (A) còn khoảng 80 ms.
-   - Cái giá là nhiều message hơn trên `mct:global`. Margin thông lượng của engine chỉ còn khoảng
-     1.5 lần (phiên 19), nên phải đo lại.
-2. **Chọn `window_ms` cho (B) theo quy tắc ràng buộc:** ở M6, trên dữ liệu 25–30 fps, chọn cấu hình
+2. **Chọn `window_ms` cho (B) theo quy tắc ràng buộc** (chưa làm): ở M6, trên dữ liệu 25–30 fps, chọn cấu hình
    có HOTA cao nhất **trong số** các cấu hình đạt (B) p95 < 1 s.
    - Ứng viên: `window_ms` 500, (B) p95 ≈ 0.94 s.
    - Bằng chứng duy nhất hiện có về giá độ chính xác: WildTrack r1 với `min_frames` 5 cho `w500`
      16.28 so với `w1000` 16.29. Chỉ là một lần chạy, ở 2 fps.
-   - Không đổi `configs/mct.yaml` trong phiên này, theo phiên 28 QĐ 4.
+   - Phiên này không đổi `window_ms`, theo phiên 28 QĐ 4.
+
+### 5. Đường phát vị trí: thiết kế và các lựa chọn
+
+- **Vì sao đúng.** Danh tính của một tracklet chốt đúng một lần, ở vòng gán đầu tiên, và không bao
+  giờ đổi (`Associator.assign` + `Gallery.find_by_tracklet`, phiên 28). Vị trí mới của một tracklet
+  đã có chủ vì thế không cần vòng gán nào. Đường phát chỉ ĐỌC gallery, nên vòng gán, gallery và
+  SQLite giống hệt khi tắt. Điều này được kiểm bằng test và bằng WildTrack r1 (bước 12). Đây là
+  điểm khác với việc hạ `window_ms`: hạ cửa sổ thì có thể mất độ chính xác, còn cách này thì
+  không mất, xét theo cấu trúc.
+- **Chọn 100 ms (10 Hz/tracklet) làm mặc định.**
+  - Khoảng này cộng thẳng vào (A) dưới dạng răng cưa 0..khoảng; số cập nhật trên `mct:global`
+    tăng theo `window_ms` / khoảng (bảng 4).
+  - 100 ms cho (A) p95 ≈ 0.19 s, dư địa lớn so với 1 s, và đủ mượt để vẽ.
+  - *Loại 0 (mọi khung):* (A) chỉ tốt thêm khoảng 80 ms, nhưng số cập nhật gấp 3 lần (571/s so
+    với 190/s trên 4 luồng, khoảng 13 người) và engine chậm đi 25% (bảng 5).
+  - *Loại 200 ms:* vẫn đạt (≈ 0.29 s), nhưng dashboard giật hơn, trong khi cái lợi về tải nhỏ.
+- **Giới hạn tần số theo `ts_ms`, không theo đồng hồ tường.** Nhờ vậy phát lại fixture cho đúng
+  một chuỗi cập nhật, cùng nguyên tắc với cửa sổ (docstring `mct.__main__`).
+- **Lần phát của vòng gán tính vào nhịp,** để một tracklet không bị phát hai lần sát nhau ở
+  ranh giới cửa sổ.
+- **Không đổi schema.** Bản cập nhật vị trí là `GlobalUpdate` với `is_update = True`, `cost = 0`,
+  `reason = ""`, đúng ngữ nghĩa sẵn có ("tracklet đã thuộc Global ID này từ trước"). Dashboard đọc
+  tối đa 256 cập nhật mỗi lần và broadcast một lần cho cả lô (`RedisBridge`), nên tải WebSocket
+  không tăng theo số cập nhật.
+- **Bật mặc định ở `configs/mct.yaml`** (hệ thống thật). Cấu hình WildTrack để tắt; bật hay tắt
+  thì HOTA cũng như nhau.
 
 ## Số liệu đo được
 
@@ -166,9 +241,60 @@ nhiễu. Cột cuối cộng khoảng 75 ms pipeline (bảng 1).
 
 ### 3. Kiểm test
 
-`pytest tests/test_latency.py tests/test_latency_tradeoff.py tests/test_engine_online.py
-tests/test_no_gpu_imports.py tests/test_tracklet.py tests/test_associator.py`: **198 passed**. Ruff check và format sạch trên
-`src tests eval`.
+- Phần 1: `pytest tests/test_latency.py tests/test_latency_tradeoff.py tests/test_engine_online.py
+  tests/test_no_gpu_imports.py tests/test_tracklet.py tests/test_associator.py`: **198 passed**.
+- Phần 2: toàn bộ bộ test **668 passed, 5 skipped**.
+- Ruff check và format sạch trên `src tests eval` ở cả hai phần.
+
+### 4. Đường phát vị trí trên fixture tốc độ thật (thời gian dữ liệu)
+
+Cùng fixture với bảng 2: 4 luồng, khoảng 31 fps, khoảng 13 người, `min_frames` 5.
+- Độ trễ theo khung đo theo thời gian dữ liệu, CHƯA gồm khoảng 75 ms pipeline; cột "p95 + 75" mới
+  là số để chấm.
+- Thời gian tới Global ID và số Global ID **không đổi** giữa các hàng cùng `window_ms`, đúng như
+  thiết kế: 865/971/1032 ms ở w1000; 470/598/865 ms ở w500; 13 và 14 Global ID.
+- Kết quả: `data/s32/fast/tradeoff.json`.
+
+| `window_ms` | Đường phát vị trí | Theo khung p50 | p95 | p95 + 75 ms | Chấm (A) | Cập nhật/s lên `mct:global` |
+|---|---|---|---|---|---|---|
+| 1000 | tắt | 530 | 971 | ≈ 1.05 s | KHÔNG ĐẠT | 28 |
+| 1000 | 200 ms | 100 | 210 | ≈ 0.29 s | ĐẠT | 101 |
+| **1000** | **100 ms** (mặc định mới) | 50 | 110 | **≈ 0.19 s** | ĐẠT | 190 |
+| 1000 | 0 (mọi khung) | 17* | 30* | ≈ 0.11 s | ĐẠT | 571 |
+| 500 | tắt | 271 | 492 | ≈ 0.57 s | ĐẠT | 47 |
+| 500 | 100 ms | 50 | 120 | ≈ 0.20 s | ĐẠT | 198 |
+
+\* Khi phát mọi khung, nhịp phát bằng khoảng cách khung (33 ms). Phép dựng lại của
+`frame_latencies` khi đó thiên cao tới một khung (docstring); số thật theo thời gian dữ liệu là 0.
+
+**Kiểm chéo với đồng hồ thật.** Hàng "1000 / tắt" cộng 75 ms cho p50 ≈ 605, p95 ≈ 1 046 ms. Log
+đồng hồ thật của phiên 23 (bảng 1) là 614 / 1 047 ms. Phép đo theo thời gian dữ liệu cộng hằng số
+pipeline vì thế khớp số đo thật trong khoảng 10 ms.
+
+### 5. Chi phí thông lượng của engine (trong tiến trình, không Redis)
+
+Máy dev, fixture như bảng 4, `w1000_m5`, SQLite `:memory:`. Chạy 8 lượt, xen kẽ thứ tự ba cấu hình
+để khử hiệu ứng khởi động, lấy trung vị. Script tạm ở scratchpad, không vào git.
+
+| Đường phát vị trí | msg/s (trung vị) | Thấp nhất | So với tắt |
+|---|---|---|---|
+| tắt | 7 123 | 4 991 | — |
+| 100 ms | 6 854 | 4 137 | −4% |
+| 0 (mọi khung) | 5 331 | 3 422 | −25% |
+
+- Máy dev đang chạy kém, nên chỉ đọc tỉ lệ, đừng đọc số tuyệt đối.
+- Fixture này thưa người. Phiên 19 đo engine chỉ còn dư khoảng 1.5 lần trên WildTrack đông người,
+  nên −4% vẫn phải kiểm lại trên dữ liệu đông.
+- Bảng chưa gồm chi phí XADD lên Redis. Chi phí đó tăng theo số cập nhật/giây (bảng 4), nhưng
+  được gửi theo lô bằng pipeline (`GlobalPublisher.publish_many`).
+
+### 6. Không đổi kết quả liên kết trên dữ liệu thật
+
+WildTrack r1 (`ds_wildtrack_7cam_r640n_r1`, `configs/demo/wildtrack_ds.mct.yaml`, w1000_m3).
+- Tắt so với 100 ms: bảng `global_tracks` 385 = 385 dòng, bảng `appearances` 829 = 829 dòng, **trùng
+  từng dòng**. Thời gian tới Global ID trùng từng số (p50 1609, p95 5492 ms).
+- Độ trễ theo khung ở 2 fps không có nghĩa, vì nhịp khung 500 ms đã lớn hơn khoảng phát: p95
+  1 765 → 1 079 ms. Kết quả: `data/s32/wt/`.
 
 ## Vướng mắc / chưa xong
 
@@ -176,8 +302,10 @@ tests/test_no_gpu_imports.py tests/test_tracklet.py tests/test_associator.py`: *
   Engine mới đã ghi `t0_first`, nhưng cần một lượt chạy GPU để có log.
 - **Mẫu nhỏ:** 64–128 tracklet, khoảng 15 s, 4 bản sao của cùng một video mẫu. Định nghĩa đòi
   ≥ 200 tracklet và khoảng 10 phút, nên phải đo lại ở M6.
-- Đường phát vị trí tách khỏi cửa sổ (QĐ 4.1) mới là đề xuất. Con số khoảng 80 ms là ước lượng
-  từ các đoạn ngoài cửa sổ, chưa đo.
+- Đường phát vị trí mới đo theo thời gian dữ liệu cộng hằng số pipeline, chưa đo bằng đồng hồ thật
+  với Redis + dashboard trong vòng lặp. Cách cộng hằng số đã khớp đồng hồ thật trong khoảng 10 ms ở
+  chế độ tắt (bảng 4), nhưng chưa kiểm ở chế độ bật. Cũng chưa đo chi phí XADD thật, và chưa đo
+  trên dữ liệu đông người.
 - Glass-to-glass (camera → màn hình) chưa đo. Cần camera thật (đang chờ phần cứng).
 - Phiên 28 báo "giá ≈ 1 HOTA khi hạ `window_ms` 1000 → 500". Số đó so `w1000_m3` với `w500_m1`,
   tức đổi cả `min_frames`. Giữ nguyên `min_frames` 5 thì một lần chạy r1 cho chênh lệch gần 0.
@@ -185,10 +313,13 @@ tests/test_no_gpu_imports.py tests/test_tracklet.py tests/test_associator.py`: *
 
 ## Bước tiếp theo
 
-1. Báo cáo GVHD (03–04/10): trình định nghĩa ở QĐ 1, kết quả "chưa đạt, thiếu khoảng 5–10%"
-   ở QĐ 3, và hai hướng sửa ở QĐ 4. Hỏi thầy có chấp nhận ranh giới `t0` không, hay muốn
-   glass-to-glass làm số chính.
-2. Nếu làm tiếp: cài đường phát vị trí tách khỏi cửa sổ trong `src/mct/__main__.py` (có giới hạn
-   tần số, có test "kết quả gán không đổi"), rồi đo lại (A) bằng phát lại fixture.
-3. Chạy n = 3 trên WildTrack cho `w500_m5` so với `w1000_m5`, để biết giá độ chính xác khi chỉ
-   đổi cửa sổ.
+1. Báo cáo GVHD (03–04/10). Trình bày:
+   - định nghĩa ở QĐ 1;
+   - (A) từ 1.05 s xuống ≈ 0.19 s nhờ đường phát vị trí, không mất độ chính xác (QĐ 5);
+   - (B) còn ≈ 1.11 s ở `window_ms` 1000, và quy tắc chọn cửa sổ ở QĐ 4.2.
+   Hỏi thầy có chấp nhận ranh giới `t0` không, hay muốn glass-to-glass làm số chính.
+2. Chạy n = 3 trên WildTrack cho `w500_m5` so với `w1000_m5`, để biết giá độ chính xác khi chỉ đổi
+   cửa sổ. Nếu nằm trong nhiễu thì hạ `window_ms` xuống 500 để (B) đạt (≈ 0.94 s, vẫn sát).
+3. Lượt `vast-gpu` kế tiếp (nhớ hỏi người dùng trước): chạy `make engine-latency` với engine mới,
+   Redis thật, `--publish`. Mục đích: lần đầu có (A) và (B) bằng đồng hồ thật, vì log mới có cả
+   `t0_first` lẫn bản ghi `position`.

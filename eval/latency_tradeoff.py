@@ -40,6 +40,12 @@ fixture ~30 fps. Không chép `time_to_id` của WildTrack sang hệ thống 25 
 
 Chấm điểm đi đúng đường của `eval.compare_oracle_tracker` (engine → `tools.export_trackeval
 --mode mct` → TrackEval), nên HOTA ở đây so được thẳng với phiên 22/24/25.
+
+**Độ trễ theo khung** (vế thứ nhất của mục tiêu < 1 s, định nghĩa phiên 32): cũng đo bằng
+thời gian dữ liệu. Mỗi `GlobalUpdate` mang `ts_ms` của khung mới nhất, và được phát lúc
+engine nuốt message có `ts_ms` = `now`; `tools.latency_report.frame_latencies` dựng lại độ
+trễ của MỌI khung từ các lần phát đó. `--position-interval-ms` quét đường phát vị trí
+(`off` = chỉ phát theo cửa sổ). Cũng chưa gồm phần DeepStream + vận chuyển (~75 ms).
 """
 
 from __future__ import annotations
@@ -55,9 +61,11 @@ from typing import Any
 
 import yaml
 
-from common.schema import read_jsonl
-from mct.__main__ import build_engine, load_config
+from common.latency import T0_CAPTURE, T4_OUT, LatencyRecord
+from common.schema import GlobalUpdate, read_jsonl
+from mct.__main__ import Engine, build_engine, load_config
 from mct.associator import Assignment
+from tools.latency_report import frame_latencies
 
 PERCENTILES = (0.5, 0.9, 0.95, 0.99)
 SCORE_COLUMNS = ("HOTA", "DetA", "AssA", "IDF1", "IDs")
@@ -134,11 +142,52 @@ def frame_interval_ms(fixture: Path, limit: int = 20000) -> float:
     return float(statistics.median(gaps)) if gaps else float("nan")
 
 
-def derive_config(base: dict[str, Any], window_ms: int, min_frames: int) -> dict[str, Any]:
+def derive_config(
+    base: dict[str, Any], window_ms: int, min_frames: int, position_interval: str | None = None
+) -> dict[str, Any]:
+    """`position_interval`: None = giữ như `base`, `"off"` = tắt đường phát vị trí, số = ms."""
     config = copy.deepcopy(base)
     config.setdefault("association", {})["window_ms"] = int(window_ms)
     config.setdefault("tracklet", {})["min_frames"] = int(min_frames)
+    if position_interval is not None:
+        publish = config.setdefault("publish", {})
+        if position_interval == "off":
+            publish.pop("position_interval_ms", None)
+        else:
+            publish["position_interval_ms"] = int(position_interval)
     return config
+
+
+def _data_time_record(engine: Engine, update: GlobalUpdate, now_ms: int, *, final: bool):
+    """Bản ghi độ trễ theo THỜI GIAN DỮ LIỆU: khung `update.ts_ms` lên lúc `now_ms`."""
+    tracklet = engine.builder.by_id(update.tracklet_id)
+    if not update.is_update:
+        kind = "first"
+    elif tracklet is not None and tracklet.closed:
+        kind = "close"
+    else:
+        kind = "update"
+    return LatencyRecord(
+        run_id="data-time",
+        tracklet_id=update.tracklet_id,
+        kind=kind,
+        final_flush=final,
+        stamps={T0_CAPTURE: float(update.ts_ms), T4_OUT: float(now_ms)},
+    )
+
+
+def summarize_frames(records: list[LatencyRecord], duration_ms: float) -> dict[str, Any]:
+    """Độ trễ theo khung (thời gian dữ liệu) + số cập nhật/giây đổ lên mct:global."""
+    out: dict[str, Any] = {
+        "updates_per_s": len(records) / (duration_ms / 1000.0) if duration_ms > 0 else float("nan")
+    }
+    frames = frame_latencies(records)
+    for q in PERCENTILES:
+        out[f"frame_p{round(q * 100)}_ms"] = (
+            percentile(frames.samples, q) if frames is not None else float("nan")
+        )
+    out["publish_gap_ms"] = frames.update_gap_ms if frames is not None else float("nan")
+    return out
 
 
 def run_engine(
@@ -157,15 +206,21 @@ def run_engine(
     )
     log = FirstAssignmentLog()
     engine.window_observer = log
+    records: list[LatencyRecord] = []
+    first_ms: int | None = None
+    now = 0
     for msg in read_jsonl(fixture):
-        engine.feed(msg)
+        now = int(msg.ts_ms)
+        first_ms = now if first_ms is None else first_ms
+        records.extend(_data_time_record(engine, u, now, final=False) for u in engine.feed(msg))
     log.final = True
-    engine.finish()
+    records.extend(_data_time_record(engine, u, now, final=True) for u in engine.finish())
     summary: dict[str, Any] = {}
     if engine.store is not None:
         summary = engine.store.summary()
         engine.store.close()
     stats = summarize(log)
+    stats.update(summarize_frames(records, now - (first_ms or now)))
     stats["n_global_ids"] = summary.get("n_tracks")
     stats["n_dropped_short"] = engine.builder.n_dropped_short
     return stats, log
@@ -200,16 +255,19 @@ def aggregate(rows: list[dict[str, Any]], key: str) -> tuple[float, float]:
 
 
 def format_table(results: dict[str, list[dict[str, Any]]], scored: bool) -> str:
-    head = ["cấu hình", "time_to_id p50", "p90", "p99", "≤1 s", "Global ID", "bỏ vì ngắn"]
+    head = ["cấu hình", "time_to_id p50", "p90", "p95", "p99", "≤1 s"]
+    head += ["theo khung p50", "p95", "cập nhật/s", "Global ID", "bỏ vì ngắn"]
     if scored:
         head += list(SCORE_COLUMNS[:-1])
     lines = ["| " + " | ".join(head) + " |", "|" + "---|" * len(head)]
     for label, rows in results.items():
         cells = [label]
-        for key in ("p50_ms", "p90_ms", "p99_ms"):
+        for key in ("p50_ms", "p90_ms", "p95_ms", "p99_ms"):
             mean, _ = aggregate(rows, key)
             cells.append(f"{mean:.0f}")
         cells.append(f"{aggregate(rows, 'frac_le_1s')[0] * 100:.1f}%")
+        for key in ("frame_p50_ms", "frame_p95_ms", "updates_per_s"):
+            cells.append(f"{aggregate(rows, key)[0]:.0f}")
         cells.append(f"{aggregate(rows, 'n_global_ids')[0]:.0f}")
         cells.append(f"{aggregate(rows, 'n_dropped_short')[0]:.0f}")
         if scored:
@@ -237,6 +295,12 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--homography-dir", type=Path, default=None)
     p.add_argument("--window-ms", type=int, nargs="+", default=[1000])
     p.add_argument("--min-frames", type=int, nargs="+", default=None)
+    p.add_argument(
+        "--position-interval-ms",
+        nargs="+",
+        default=None,
+        help="quét đường phát vị trí: 'off' hoặc số ms (mặc định: giữ như --config)",
+    )
     p.add_argument("--gt-fixture", type=Path, default=None)
     p.add_argument("--gt-fixture-table", type=Path, default=None)
     p.add_argument("--eval-python", default=sys.executable)
@@ -264,41 +328,50 @@ def main(argv: list[str] | None = None) -> int:
     topology = args.topology if args.topology and args.topology.is_file() else None
 
     results: dict[str, list[dict[str, Any]]] = {}
-    for window_ms in args.window_ms:
-        for min_frames in min_frames_grid:
-            cfg_label = f"w{window_ms}_m{min_frames}"
-            config = derive_config(base, window_ms, min_frames)
-            for run_label, fixture, table in runs:
-                label = f"{cfg_label}:{run_label}"
-                run_dir = args.work_dir / label.replace(":", "_")
-                run_dir.mkdir(parents=True, exist_ok=True)
-                (run_dir / "config.yaml").write_text(
-                    yaml.safe_dump(config, allow_unicode=True, sort_keys=False), encoding="utf-8"
+    grid = [
+        (window_ms, min_frames, position)
+        for window_ms in args.window_ms
+        for min_frames in min_frames_grid
+        for position in (args.position_interval_ms or [None])
+    ]
+    for window_ms, min_frames, position in grid:
+        cfg_label = f"w{window_ms}_m{min_frames}"
+        if position is not None:
+            cfg_label += f"_p{position}"
+        config = derive_config(base, window_ms, min_frames, position)
+        for run_label, fixture, table in runs:
+            label = f"{cfg_label}:{run_label}"
+            run_dir = args.work_dir / label.replace(":", "_")
+            run_dir.mkdir(parents=True, exist_ok=True)
+            (run_dir / "config.yaml").write_text(
+                yaml.safe_dump(config, allow_unicode=True, sort_keys=False), encoding="utf-8"
+            )
+            stats, _ = run_engine(
+                config,
+                fixture,
+                run_dir / "mct.db",
+                topology=topology,
+                homography_dir=args.homography_dir,
+            )
+            stats["frame_interval_ms"] = frame_interval_ms(fixture)
+            if scored and table is not None:
+                stats.update(
+                    {
+                        k: v
+                        for k, v in score(label, fixture, table, args.work_dir, args).items()
+                        if k in SCORE_COLUMNS
+                    }
                 )
-                stats, _ = run_engine(
-                    config,
-                    fixture,
-                    run_dir / "mct.db",
-                    topology=topology,
-                    homography_dir=args.homography_dir,
-                )
-                stats["frame_interval_ms"] = frame_interval_ms(fixture)
-                if scored and table is not None:
-                    stats.update(
-                        {
-                            k: v
-                            for k, v in score(label, fixture, table, args.work_dir, args).items()
-                            if k in SCORE_COLUMNS
-                        }
-                    )
-                results.setdefault(cfg_label, []).append({"run": run_label, **stats})
-                line = (
-                    f"{label}: time_to_id p50 {stats['p50_ms']:.0f} p90 {stats['p90_ms']:.0f} "
-                    f"p99 {stats['p99_ms']:.0f} ms, {stats['n_global_ids']} Global ID"
-                )
-                if "HOTA" in stats:
-                    line += f", HOTA {stats['HOTA']:.3f} AssA {stats['AssA']:.3f}"
-                print(line, flush=True)
+            results.setdefault(cfg_label, []).append({"run": run_label, **stats})
+            line = (
+                f"{label}: time_to_id p50 {stats['p50_ms']:.0f} p95 {stats['p95_ms']:.0f} ms, "
+                f"theo khung p50 {stats['frame_p50_ms']:.0f} p95 {stats['frame_p95_ms']:.0f} "
+                f"ms, {stats['updates_per_s']:.0f} cập nhật/s, "
+                f"{stats['n_global_ids']} Global ID"
+            )
+            if "HOTA" in stats:
+                line += f", HOTA {stats['HOTA']:.3f} AssA {stats['AssA']:.3f}"
+            print(line, flush=True)
 
     print()
     print(format_table(results, scored))

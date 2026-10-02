@@ -233,6 +233,10 @@ Mọi ngưỡng nằm trong `configs/mct.yaml`, **không hardcode trong code** �
     Chấm bằng `tools.latency_report`. Đừng dùng cột end-to-end của bảng đoạn: cột đó chỉ đo khung
     mới nhất của mỗi lần phát. Camera, mạng, jitter buffer (trước `t0`) và trình duyệt (sau `t4`)
     không nằm trong định nghĩa; đo riêng ở M6.
+  - Vế (1) đạt nhờ **đường phát vị trí** (`publish.position_interval_ms`, mặc định 100): người đã
+    có Global ID được phát ngay khi có khung, không chờ cửa sổ. Nhờ vậy p95 giảm từ 1.05 s xuống
+    khoảng 0.19 s, mà kết quả liên kết không đổi. Vế (2) chỉ phụ thuộc `window_ms`: p95 khoảng
+    1.11 s ở 1000 ms, khoảng 0.94 s ở 500 ms.
 - Ground-truth tự gán bằng CVAT → `tools/cvat_to_mot.py` → `eval/gt/`.
 
 **Số đo trên fixture WildTrack cũ (`wildtrack_to_fixture.py`) là CẬN TRÊN, không phải hiệu

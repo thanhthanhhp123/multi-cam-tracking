@@ -334,8 +334,10 @@ class GlobalPublisher:
     """Đẩy `GlobalUpdate` lên `mct:global`. Dùng bởi engine liên kết (`python -m mct`).
 
     Stream này chỉ để dashboard theo dõi realtime, KHÔNG phải nguồn sự thật — nguồn sự
-    thật là SQLite (`mct.store`). `MAXLEN` nhỏ hơn `mct:frames` mười lần vì mỗi tracklet
-    chỉ sinh vài cập nhật, và mất vài cập nhật cũ không ảnh hưởng gì.
+    thật là SQLite (`mct.store`). `MAXLEN` nhỏ hơn `mct:frames` mười lần vì dashboard đọc
+    từ `$` (chỉ cần cập nhật mới nhất), và mất vài cập nhật cũ không ảnh hưởng gì. Từ phiên
+    32, đường phát vị trí (`publish.position_interval_ms`) cho mỗi tracklet tới
+    1000 / khoảng cập nhật/giây, nên trần này chỉ còn giữ vài chục giây lịch sử.
     """
 
     def __init__(

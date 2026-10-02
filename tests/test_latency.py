@@ -717,13 +717,40 @@ def test_log_cu_bo_ban_ghi_repeat_cuoi_cung_cua_tracklet():
 
 
 def test_quang_vang_cua_tracklet_khong_bi_tinh_thanh_tre():
-    """Tracklet vắng 3 nhịp (không có detection): quãng vắng không có khung nào để mà trễ."""
+    """Tracklet vắng 3 nhịp (không có detection): quãng vắng không có khung nào để mà trễ.
+
+    Chỉ được tính lùi tới GAP_SLACK × nhịp phát, không phải cả 4 s của quãng vắng."""
     records = _tracklet_records(1, 10)
     del records[4:7]
     frames = latency_report.frame_latencies(records)
     assert frames is not None
     assert frames.update_gap_ms == pytest.approx(1_000.0)
-    assert max(frames.samples) < 1_100.0
+    assert max(frames.samples) < latency_report.GAP_SLACK * 1_000.0 + 100.0
+
+
+def test_ban_ghi_position_khong_cho_cua_so(tmp_path):
+    """Đường phát vị trí: mỗi lần phát có một bản ghi `position`, không chờ cửa sổ."""
+    path = tmp_path / "latency.jsonl"
+    person_a = l2_normalize(np.ones(DIM, dtype=np.float32))
+    person_b = l2_normalize(np.arange(1, DIM + 1, dtype=np.float32))
+    with LatencyLog(path) as log:
+        engine = _engine(latency=log, position_interval_ms=0)
+        for frame in range(30):
+            msg = _msg("cam01", frame, {1: person_a, 2: person_b}, stamps=_producer_stamps(frame))
+            engine.feed(msg)
+            engine.mark_published()
+        engine.finish()
+        engine.mark_published()
+
+    records = read_records(path)
+    positions = [r for r in records if r.kind == "position"]
+    assert len(positions) == engine.n_position_updates > 0
+    for record in positions:
+        assert record.stamps[T3W_WINDOW] == record.stamps[T3_ASSOC] == record.stamps[T3D_DB]
+        assert T0_FIRST not in record.stamps
+    # Khung 10..29 (sau vòng gán đầu ở khung 10), trừ các khung có vòng gán (10, 20) đã tự
+    # phát: 18 khung × 2 người.
+    assert len(positions) == 18 * 2
 
 
 def test_thoi_gian_toi_global_id_tinh_tu_khung_dau_tien():
