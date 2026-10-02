@@ -134,6 +134,18 @@ class GtSource:
 
     messages: list[FrameMessage]
     table: dict[tuple[str, int], int]
+    annotated_frames: dict[str, frozenset[int]] | None = None
+    """Chỉ chấm trên các khung này (theo camera). `None` = mọi khung của kết quả.
+
+    Cần khi chú thích NHẢY KHUNG (M6: chú thích 5–10 fps trên video 25–30 fps): hộp của hệ
+    thống ở khung không chú thích sẽ bị TrackEval tính là báo nhầm, trong khi chẳng có ai
+    kiểm nó cả. Tập khung lấy từ fixture ground-truth, KỂ CẢ khung chú thích rỗng.
+    """
+
+    def keeps(self, msg: FrameMessage) -> bool:
+        if self.annotated_frames is None:
+            return True
+        return int(msg.frame_id) in self.annotated_frames.get(msg.cam_id, frozenset())
 
 
 def _box(det) -> tuple[float, float, float, float]:
@@ -178,6 +190,8 @@ def export_sct(
         gt_rows: list[MotRow] = []
         res_rows: list[MotRow] = []
         for msg in msgs:
+            if gt_source is not None and not gt_source.keeps(msg):
+                continue
             frame = to_mot_frame(msg.frame_id)
             for det in msg.detections:
                 row = MotRow(
@@ -245,10 +259,19 @@ def export_mct(
 
     gt_rows: list[MotRow] = []
     res_rows: list[MotRow] = []
-    stats = {"n_detections": 0, "n_gt": 0, "n_result": 0, "n_unassigned": 0}
+    stats = {
+        "n_detections": 0,
+        "n_gt": 0,
+        "n_result": 0,
+        "n_unassigned": 0,
+        "n_skipped_unannotated": 0,
+    }
 
     for cam_index, cam_id in enumerate(cam_ids):
         for msg in by_cam.get(cam_id, []):
+            if gt_source is not None and not gt_source.keeps(msg):
+                stats["n_skipped_unannotated"] += len(msg.detections)
+                continue
             frame = virtual_frame(cam_index, msg.frame_id, offset=offset)
             for det in msg.detections:
                 stats["n_detections"] += 1
@@ -306,6 +329,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument(
         "--gt-fixture-table", type=Path, default=None, help="bảng .gt.json của --gt-fixture"
     )
+    p.add_argument(
+        "--only-gt-frames",
+        action="store_true",
+        help="chỉ chấm các khung có trong --gt-fixture (khi chú thích nhảy khung, M6)",
+    )
     p.add_argument("--db", type=Path, default=None, help="SQLite store — bắt buộc cho --mode mct")
     p.add_argument("--out", type=Path, default=Path("eval/trackeval"))
     p.add_argument("--benchmark", default="MCT")
@@ -320,17 +348,29 @@ def main(argv: list[str] | None = None) -> int:
     if not messages:
         raise SystemExit(f"{args.fixture}: không có detection nào")
 
+    if args.only_gt_frames and args.gt_fixture is None:
+        p.error("--only-gt-frames cần --gt-fixture (tập khung đã chú thích lấy từ đó)")
     gt_source = None
     if args.gt_fixture is not None:
         table_path = args.gt_fixture_table or Path(
             str(args.gt_fixture).replace(".jsonl", ".gt.json")
         )
-        gt_messages = [m for m in read_jsonl(args.gt_fixture) if m.detections]
-        gt_source = GtSource(messages=gt_messages, table=load_gt_table(table_path))
+        all_gt = list(read_jsonl(args.gt_fixture))
+        frames: dict[str, frozenset[int]] | None = None
+        if args.only_gt_frames:
+            by_cam: dict[str, set[int]] = defaultdict(set)
+            for m in all_gt:
+                by_cam[m.cam_id].add(int(m.frame_id))
+            frames = {cam: frozenset(v) for cam, v in by_cam.items()}
+        gt_source = GtSource(
+            messages=[m for m in all_gt if m.detections],
+            table=load_gt_table(table_path),
+            annotated_frames=frames,
+        )
         log.info(
             "ground-truth từ %s (%d message, %d tracklet có danh tính)",
             args.gt_fixture,
-            len(gt_messages),
+            len(gt_source.messages),
             len(gt_source.table),
         )
 
@@ -358,12 +398,13 @@ def main(argv: list[str] | None = None) -> int:
             seqs = [seq]
             log.info(
                 "mct: %d camera, offset %d khung, %d dòng GT / %d dòng kết quả "
-                "(%d detection chưa có Global ID)",
+                "(%d detection chưa có Global ID, %d ở khung không chú thích bị bỏ)",
                 stats["n_cameras"],
                 stats["frame_offset"],
                 stats["n_gt"],
                 stats["n_result"],
                 stats["n_unassigned"],
+                stats["n_skipped_unannotated"],
             )
         write_seqmap(layout.seqmap_file(), seqs)
         log.info("%s: %d chuỗi -> %s", mode, len(seqs), layout.gt_folder / layout.dataset)

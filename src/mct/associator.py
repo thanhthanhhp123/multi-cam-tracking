@@ -183,15 +183,23 @@ class Associator:
         results: list[Assignment] = []
         matched_rows: dict[int, tuple[int, float]] = {}
 
+        # Ngưỡng theo từng ô chỉ khi `max_cost_geometric` được đặt. Khi đó Hungarian chạy
+        # trên TỈ LỆ chi phí / ngưỡng của ô (ngân sách đã dùng) và chấp nhận khi < 1; không
+        # đặt thì đi đúng đường cũ — giữ nguyên từng bit kết quả của mọi lần chạy trước.
+        limits = matrix.limits(self.config)
+        if limits is None:
+            work, threshold = matrix.costs, self.config.max_cost
+        else:
+            work, threshold = matrix.costs / limits, 1.0
+
         if tracks:
-            padded = costs_for_hungarian(matrix.costs, self.config.max_cost)
+            padded = costs_for_hungarian(work, threshold)
             rows, cols = linear_sum_assignment(padded)
             for row, col in zip(rows, cols, strict=True):
-                cost = float(matrix.costs[row, col])
                 # Ô vượt ngưỡng đã bị chặn trước khi ghép, nhưng Hungarian vẫn phải trả về
                 # một cột cho mọi hàng — nên vẫn đối chiếu với chi phí GỐC ở đây.
-                if cost < self.config.max_cost:
-                    matched_rows[int(row)] = (int(col), cost)
+                if float(work[row, col]) < threshold:
+                    matched_rows[int(row)] = (int(col), float(matrix.costs[row, col]))
 
         for row, tracklet in enumerate(tracklets):
             hit = matched_rows.get(row)
@@ -207,7 +215,7 @@ class Associator:
                 )
                 continue
 
-            kind, reason = _why_new(matrix, row, self.config.max_cost)
+            kind, reason = _why_new(matrix, row, self.config.max_cost, limits)
             if kind == "no_candidate":
                 self.stats.no_candidate += 1
             elif kind == "threshold":
@@ -265,7 +273,9 @@ def reason_kind(reason: str) -> str:
     return kind if sep and kind in NEW_TRACK_KINDS else ""
 
 
-def _why_new(matrix: CostMatrix, row: int, max_cost: float) -> tuple[str, str]:
+def _why_new(
+    matrix: CostMatrix, row: int, max_cost: float, limits: np.ndarray | None = None
+) -> tuple[str, str]:
     """Vì sao tracklet này phải nhận Global ID mới: `(loại, mô tả)`.
 
     Trả về `loại` chứ không để bên gọi dò chuỗi tiếng Việt: thống kê `no_candidate` và
@@ -286,6 +296,20 @@ def _why_new(matrix: CostMatrix, row: int, max_cost: float) -> tuple[str, str]:
         reasons = {matrix.reason(row, col) for col in range(len(matrix.tracks))}
         detail = "; ".join(sorted(r for r in reasons if r)[:3])
         return "no_candidate", f"không còn ứng viên khả thi sau ràng buộc ({detail})"
+
+    if limits is not None:
+        # Ngưỡng theo ô: "vượt ngưỡng" nghĩa là MỌI ô khả thi đều vượt ngưỡng của chính nó.
+        ratio = np.where(np.isfinite(costs), costs / limits[row], np.inf)
+        col = int(np.argmin(ratio))
+        best, limit = float(costs[col]), float(limits[row, col])
+        geo = matrix.geometric is not None and bool(matrix.geometric[row, col])
+        if ratio[col] >= 1.0:
+            return (
+                "threshold",
+                f"ứng viên tốt nhất có cost={best:.4f} >= ngưỡng của ô {limit} "
+                f"({'có' if geo else 'không có'} bằng chứng vị trí)",
+            )
+        return "taken", f"ứng viên tốt nhất (cost={best:.4f}) đã bị tracklet khác lấy mất"
 
     best = float(finite.min())
     if best >= max_cost:

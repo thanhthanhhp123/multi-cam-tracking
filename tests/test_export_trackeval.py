@@ -393,3 +393,30 @@ def test_mct_mot_danh_tinh_khong_bao_gio_co_hai_hop_trong_MOT_khung(tmp_path, an
     assert len(rows) == 2
     assert len({(r.frame, r.track_id) for r in rows}) == 2
     assert rows[0].frame != rows[1].frame
+
+
+def test_chi_cham_khung_da_chu_thich(tmp_path, messages, annotation):
+    """Chú thích nhảy khung: kết quả ở khung không chú thích (cam01 khung 1) bị bỏ, không
+    thành báo nhầm; khung chú thích rỗng (cam02 khung 1) thì vẫn chấm."""
+    sparse = GtSource(
+        messages=annotation.messages,
+        table=annotation.table,
+        annotated_frames={"cam01": frozenset({0}), "cam02": frozenset({0, 1})},
+    )
+    extra = [*messages, msg("cam02", 1, [det(7, x=200.0)])]
+    gids = _gids({("cam01", 1): 7, ("cam01", 2): 8, ("cam02", 7): 9})
+
+    lay = TrackEvalLayout(root=tmp_path / "mct", benchmark="MCT", split="mct")
+    _, stats = export_mct(extra, {}, gids, lay, tracker="t", fps=2.0, gt_source=sparse)
+    assert stats["n_skipped_unannotated"] == 1  # det(1) ở cam01 khung 1
+    assert stats["n_result"] == 4  # cam01 khung 0 (2 hộp) + cam02 khung 0 và 1
+
+    lay = TrackEvalLayout(root=tmp_path / "sct", benchmark="MCT", split="sct")
+    export_sct(extra, {}, lay, tracker="t", fps=2.0, gt_source=sparse)
+    assert {r.frame for r in parse_mot(lay.result_file("t", "cam01"))} == {1}
+    assert {r.frame for r in parse_mot(lay.result_file("t", "cam02"))} == {1, 2}
+
+
+def test_khong_dat_tap_khung_thi_cham_moi_khung(messages, annotation):
+    assert annotation.annotated_frames is None
+    assert all(annotation.keeps(m) for m in messages)

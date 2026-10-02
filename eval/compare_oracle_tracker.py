@@ -265,6 +265,8 @@ def score_run(
         ]
         if mode == "mct":
             cmd += ["--db", str(db)]
+        if getattr(args, "only_gt_frames", False):
+            cmd.append("--only-gt-frames")
         _run(cmd)
         eval_cmd = [
             args.eval_python,
@@ -318,6 +320,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--fps", type=float, default=2.0, help="chỉ ghi vào seqinfo.ini")
     p.add_argument("--sct", action="store_true", help="chấm thêm từng camera riêng (đo tracker)")
     p.add_argument("--force", action="store_true", help="chạy lại engine dù đã có DB")
+    p.add_argument(
+        "--only-gt-frames",
+        action="store_true",
+        help="chỉ chấm khung có trong --gt-fixture (chú thích nhảy khung, dữ liệu tự thu M6)",
+    )
     args = p.parse_args(argv)
     if not args.run and not args.ceiling:
         p.error("cần ít nhất một --run hoặc --ceiling")

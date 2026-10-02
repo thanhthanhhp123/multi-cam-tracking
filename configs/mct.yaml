@@ -71,6 +71,14 @@ association:
   # thảm hoạ. Ngưỡng riêng theo từng cặp camera (chặt khi thiếu hình học, lỏng khi có)
   # là việc của M6, khi đã có dữ liệu non-overlap thật để đo.
   max_cost: 0.30
+  # Ngưỡng RIÊNG cho ô có bằng chứng vị trí (khoảng cách mặt đất đo được và qua cổng: cặp
+  # chồng lấn đã hiệu chỉnh, hoặc nối mảnh cùng camera). null = dùng chung max_cost, đường
+  # gán cũ giữ nguyên từng bit (đã kiểm trên WildTrack r1, docs/worklog/2026-10-03-33-*).
+  # Đặt giá trị (vd 0.90 như configs/demo/wildtrack_ds.mct.yaml) thì Hungarian chạy trên
+  # chi phí / ngưỡng của từng ô, nên cặp chồng lấn được nới mà cặp không chồng lấn vẫn siết.
+  # Đây là phần "ngưỡng riêng theo cặp camera" của M6 ở trên — chọn bằng sweep trên dữ
+  # liệu tự thu (eval.eval_handover tách kết quả theo loại cặp).
+  max_cost_geometric: null
   # Trọng số lambda của thành phần khoảng cách mặt đất (chỉ áp dụng cho cặp camera overlap).
   homography_weight: 0.4
   # Vượt khoảng cách này trên mặt phẳng tham chiếu thì loại thẳng, không cần xét ngoại hình.

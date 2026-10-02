@@ -17,13 +17,18 @@ from pathlib import Path
 import pytest
 
 from common.motformat import parse_mot
+from common.schema import read_jsonl, validate
 from tools.cvat_to_mot import (
     CvatBox,
     CvatError,
+    CvatMeta,
     _parse_annotation_arg,
     assign_global_ids,
+    build_gt_fixture,
     main,
+    parse_cvat_meta,
     parse_cvat_video,
+    to_video_frames,
     write_ground_truth,
 )
 from tools.export_trackeval import load_gt_table
@@ -276,3 +281,159 @@ def test_chay_tron_hai_camera(tmp_path: Path):
     meta = json.loads((out / "global_ids.gt.json").read_text(encoding="utf-8"))["meta"]
     assert meta["n_identities"] == 1
     assert meta["n_tracks"] == 2
+
+
+# --------------------------------------------------------------------------------------
+# <meta>, số khung của video, fixture ground-truth (M6)
+# --------------------------------------------------------------------------------------
+
+
+def _write_xml_meta(
+    path: Path,
+    tracks: list[str],
+    *,
+    start: int = 0,
+    stop: int | None = None,
+    step: int | None = None,
+    size: tuple[int, int] | None = (1920, 1080),
+) -> Path:
+    """XML có `<meta>` như bản xuất theo task của CVAT."""
+    task = f"<start_frame>{start}</start_frame>"
+    if stop is not None:
+        task += f"<stop_frame>{stop}</stop_frame>"
+    if step is not None:
+        task += f"<frame_filter>step={step}</frame_filter>"
+    if size is not None:
+        task += f"<original_size><width>{size[0]}</width><height>{size[1]}</height></original_size>"
+    path.write_text(
+        '<?xml version="1.0" encoding="utf-8"?>\n<annotations><version>1.1</version>'
+        f"<meta><task>{task}</task></meta>" + "".join(tracks) + "</annotations>",
+        encoding="utf-8",
+    )
+    return path
+
+
+def test_doc_meta_cua_task(tmp_path: Path):
+    xml = _write_xml_meta(tmp_path / "a.xml", [_track(0, [_box(0)])], start=30, stop=90, step=3)
+    meta = parse_cvat_meta(xml)
+    assert (meta.start_frame, meta.stop_frame, meta.step) == (30, 90, 3)
+    assert (meta.width, meta.height) == (1920, 1080)
+    assert list(meta.task_frames(0))[:3] == [30, 33, 36]
+
+
+def test_meta_doc_ca_ban_xuat_theo_job(tmp_path: Path):
+    """CVAT bản mới xuất theo job: `meta/job/...` chứ không phải `meta/task/...`."""
+    xml = tmp_path / "job.xml"
+    xml.write_text(
+        "<annotations><meta><job><start_frame>0</start_frame><stop_frame>9</stop_frame>"
+        "<frame_filter>step=2</frame_filter></job></meta></annotations>",
+        encoding="utf-8",
+    )
+    assert parse_cvat_meta(xml).step == 2
+
+
+def test_khong_co_meta_thi_mac_dinh_tron_video(tmp_path: Path):
+    xml = _write_xml(tmp_path / "a.xml", [_track(0, [_box(0)])])
+    meta = parse_cvat_meta(xml)
+    assert (meta.start_frame, meta.stop_frame, meta.step) == (0, None, 1)
+    assert meta.width is None
+
+
+def _boxes(frames: list[int]) -> list[CvatBox]:
+    return [CvatBox(f, 0, "P01", 0.0, 0.0, 10.0, 20.0) for f in frames]
+
+
+def test_so_khung_tuyet_doi_giu_nguyen():
+    meta = CvatMeta(start_frame=30, stop_frame=90, step=3)
+    out, kind = to_video_frames(_boxes([30, 33, 36]), meta)
+    assert kind == "abs"
+    assert [b.frame for b in out] == [30, 33, 36]
+
+
+def test_so_khung_tuong_doi_duoc_quy_doi():
+    """Track nội suy có khung lệch lưới step → chắc chắn là đánh số theo task."""
+    meta = CvatMeta(start_frame=30, stop_frame=90, step=3)
+    out, kind = to_video_frames(_boxes([0, 1, 2]), meta)
+    assert kind == "rel"
+    assert [b.frame for b in out] == [30, 33, 36]
+
+
+def test_ep_kieu_danh_so_sai_thi_no():
+    """Ép `abs` cho khung 0,1,2 của task start=30 step=3: khung ngoài tập → nổ, không chấm lệch."""
+    meta = CvatMeta(start_frame=30, stop_frame=90, step=3)
+    with pytest.raises(CvatError, match="không thuộc tập khung"):
+        to_video_frames(_boxes([0, 1, 2]), meta, numbering="abs")
+
+
+def test_khung_vuot_stop_frame_thi_no():
+    meta = CvatMeta(start_frame=0, stop_frame=10, step=1)
+    with pytest.raises(CvatError):
+        to_video_frames(_boxes([9, 10, 11]), meta)
+
+
+def test_fixture_gt_co_ca_khung_rong():
+    """Khung đã chú thích mà không có ai vẫn phải có message (rỗng)."""
+    per_cam = {"cam01": _boxes([0, 6])}
+    msgs = build_gt_fixture(per_cam, {"cam01": range(0, 7, 3)}, {"cam01": (640, 480)}, fps=25.0)
+    assert [m.frame_id for m in msgs] == [0, 3, 6]
+    assert [len(m.detections) for m in msgs] == [1, 0, 1]
+    assert msgs[2].ts_ms - msgs[0].ts_ms == 240  # 6 khung ở 25 fps
+    det = msgs[0].detections[0]
+    assert det.bbox == (0.0, 0.0, 10.0, 20.0)
+    assert det.confidence == 1.0 and det.embedding is None
+
+
+def test_chay_tron_co_fixture_out_va_nhay_khung(tmp_path: Path):
+    """Task nhảy 3 khung, CVAT đánh số tương đối → fixture GT mang số khung của video."""
+    a = _write_xml_meta(
+        tmp_path / "a.xml",
+        [_track(0, [_box(0), _box(1), _box(2)], person="P01")],
+        stop=8,
+        step=3,
+    )
+    b = _write_xml_meta(tmp_path / "b.xml", [_track(4, [_box(2)], person="P01")], stop=8, step=3)
+    fixture = tmp_path / "fx" / "lab_gt.jsonl"
+    code = main(
+        [
+            "--annotation",
+            f"cam01={a}",
+            "--annotation",
+            f"cam02={b}",
+            "--out-dir",
+            str(tmp_path / "gt"),
+            "--fixture-out",
+            str(fixture),
+            "--fps",
+            "30",
+        ]
+    )
+    assert code == 0
+    msgs = list(read_jsonl(fixture))
+    assert {(m.cam_id, m.frame_id) for m in msgs} == {
+        (c, f) for c in ("cam01", "cam02") for f in (0, 3, 6)
+    }
+    assert all(not validate(m) for m in msgs)
+    table = load_gt_table(fixture.with_name("lab_gt.gt.json"))
+    assert table[("cam01", 0)] == table[("cam02", 4)]
+    payload = json.loads(fixture.with_name("lab_gt.gt.json").read_text(encoding="utf-8"))
+    row = next(t for t in payload["tracklets"] if t["cam_id"] == "cam02")
+    assert row["start_frame"] == 6
+    assert payload["meta"]["identities"] == {"1": "P01"}
+    assert payload["meta"]["frames"]["cam01"]["numbering"] == "rel"
+    # gt.txt cũng mang số khung của video (MOT đếm từ 1)
+    assert [r.frame for r in parse_mot(tmp_path / "gt" / "cam01.gt.txt")] == [1, 4, 7]
+
+
+def test_fixture_out_thieu_fps_thi_bao_loi(tmp_path: Path):
+    a = _write_xml_meta(tmp_path / "a.xml", [_track(0, [_box(0)], person="P01")])
+    with pytest.raises(SystemExit):
+        main(
+            [
+                "--annotation",
+                f"cam01={a}",
+                "--out-dir",
+                str(tmp_path / "gt"),
+                "--fixture-out",
+                str(tmp_path / "x.jsonl"),
+            ]
+        )

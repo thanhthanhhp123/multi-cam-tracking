@@ -92,6 +92,24 @@ class AffinityConfig:
     max_cost: float = 0.30
     """Ngưỡng chấp nhận một cặp gán. Đây là tham số nhạy nhất của cả hệ thống."""
 
+    max_cost_geometric: float | None = None
+    """Ngưỡng riêng cho ô CÓ bằng chứng vị trí; `None` = dùng chung `max_cost`.
+
+    "Có bằng chứng vị trí" = thành phần hình học đã ĐO được một khoảng cách mặt đất và
+    khoảng cách đó qua cổng: cặp camera chồng lấn (trùng thời gian hoặc nới theo tốc độ đi
+    bộ), hoặc hai mảnh cùng camera nối bằng `same_camera_stitch`. Ô chỉ có ngoại hình (cặp
+    không chồng lấn, camera chưa hiệu chỉnh, không có mốc chung) vẫn dùng `max_cost`.
+
+    Vì sao cần: hai chế độ đòi hai vùng ngưỡng NGƯỢC nhau (configs/mct.yaml, đo trên
+    WildTrack 2026-09-04) — chỉ có ngoại hình thì phải siết (0.08–0.30), có vị trí thì siết
+    ngoại hình chỉ ném đi cặp đúng (F1 tăng tới ~0.80 rồi bão hoà). Một hệ HỖN HỢP chồng
+    lấn/không chồng lấn với một ngưỡng chung buộc phải hy sinh một trong hai.
+
+    Khi đặt, Hungarian chạy trên chi phí CHIA cho ngưỡng của từng ô (tỉ lệ ngân sách đã
+    dùng), để ô hai loại so được với nhau trên cùng một thang; chấp nhận khi tỉ lệ < 1. Khi
+    `None`, đường gán cũ giữ nguyên từng bit (`mct.associator`).
+    """
+
     homography_weight: float = 0.4
     """λ — trọng số của khoảng cách mặt đất, chỉ áp dụng cho cặp camera chồng lấn."""
 
@@ -167,6 +185,11 @@ class AffinityConfig:
         defaults = cls()
         return cls(
             max_cost=float(association.get("max_cost", defaults.max_cost)),
+            max_cost_geometric=(
+                None
+                if association.get("max_cost_geometric") is None
+                else float(association["max_cost_geometric"])
+            ),
             homography_weight=float(
                 association.get("homography_weight", defaults.homography_weight)
             ),
@@ -200,6 +223,10 @@ class AffinityConfig:
     def __post_init__(self) -> None:
         if not 0.0 < self.max_cost <= 2.0:
             raise ValueError(f"max_cost phải nằm trong (0, 2], nhận {self.max_cost}")
+        if self.max_cost_geometric is not None and not 0.0 < self.max_cost_geometric <= 3.0:
+            raise ValueError(
+                f"max_cost_geometric phải nằm trong (0, 3], nhận {self.max_cost_geometric}"
+            )
         if self.homography_weight < 0.0:
             raise ValueError(f"homography_weight phải >= 0, nhận {self.homography_weight}")
         if self.max_ground_dist_m <= 0.0:
@@ -233,6 +260,18 @@ class CostMatrix:
 
     reasons: dict[tuple[int, int], str] = field(default_factory=dict)
     """(hàng, cột) → vì sao ô đó bị loại. Chỉ lưu ô bị loại, không lưu ô hợp lệ."""
+
+    geometric: np.ndarray | None = None
+    """(n_tracklet, n_track) bool: ô có bằng chứng vị trí (xem `max_cost_geometric`)."""
+
+    def limits(self, config: AffinityConfig) -> np.ndarray | None:
+        """Ngưỡng của từng ô, hoặc `None` khi mọi ô dùng chung `max_cost` (đường cũ)."""
+        if config.max_cost_geometric is None:
+            return None
+        geometric = (
+            self.geometric if self.geometric is not None else np.zeros(self.costs.shape, dtype=bool)
+        )
+        return np.where(geometric, config.max_cost_geometric, config.max_cost)
 
     @property
     def shape(self) -> tuple[int, int]:
@@ -282,6 +321,7 @@ def build_cost_matrix(
     tracklets = list(tracklets)
     tracks = list(tracks)
     costs = np.full((len(tracklets), len(tracks)), INFEASIBLE, dtype=np.float64)
+    geometric = np.zeros((len(tracklets), len(tracks)), dtype=bool)
     reasons: dict[tuple[int, int], str] = {}
     # Lọc nhiễu rồi chiếu quỹ đạo về mét là phần đắt nhất của cả engine (82% thời gian
     # vòng gán, đo 2026-09-06) và lặp lại y hệt cho mọi cột, mọi cửa sổ.
@@ -293,14 +333,17 @@ def build_cost_matrix(
     for i, tracklet in enumerate(tracklets):
         query = tracklet.query_embedding(config.topk_query)
         for j, track in enumerate(tracks):
-            cost, reason = _pair_cost(
+            cost, reason, measured = _pair_cost(
                 tracklet, query, track, topology, config, ground_mapper, cache
             )
             costs[i, j] = cost
+            geometric[i, j] = measured
             if reason:
                 reasons[(i, j)] = reason
 
-    return CostMatrix(tracklets=tracklets, tracks=tracks, costs=costs, reasons=reasons)
+    return CostMatrix(
+        tracklets=tracklets, tracks=tracks, costs=costs, reasons=reasons, geometric=geometric
+    )
 
 
 def _pair_cost(
@@ -311,14 +354,15 @@ def _pair_cost(
     config: AffinityConfig,
     ground_mapper: GroundMapper | None,
     cache: GroundCache | None = None,
-) -> tuple[float, str]:
+) -> tuple[float, str, bool]:
+    """(chi phí, lý do loại, ô có bằng chứng vị trí hay không)."""
     if track.closed:
-        return INFEASIBLE, f"GlobalTrack #{track.global_id} đã đóng"
+        return INFEASIBLE, f"GlobalTrack #{track.global_id} đã đóng", False
 
     # Tracklet đang chạy và đã thuộc về track này: giữ nguyên, đừng để tracklet khác
     # giành mất chỉ vì tình cờ giống hơn ở cửa sổ hiện tại.
     if track.owns_tracklet(tracklet):
-        return 0.0, ""
+        return 0.0, "", False
 
     if track.overlaps_in(
         tracklet.cam_id,
@@ -327,39 +371,48 @@ def _pair_cost(
         config.exclusion_slack_ms,
         ignore_tracklet_id=tracklet.tracklet_id,
     ):
-        return INFEASIBLE, (
+        return (
+            INFEASIBLE,
             f"GlobalTrack #{track.global_id} có mặt ở chính {tracklet.cam_id} dưới một "
-            "local track khác TRÙNG khoảng thời gian này (ràng buộc loại trừ)"
+            "local track khác TRÙNG khoảng thời gian này (ràng buộc loại trừ)",
+            False,
         )
 
     if query is None:
-        return INFEASIBLE, "tracklet chưa có embedding (ReID đang tắt?)"
+        return INFEASIBLE, "tracklet chưa có embedding (ReID đang tắt?)", False
 
     if topology is not None:
         elapsed = tracklet.start_ms - track.last_seen_ms
         verdict = topology.check(track.last_cam_id, tracklet.cam_id, elapsed)
         if not verdict.feasible:
-            return INFEASIBLE, verdict.reason
+            return INFEASIBLE, verdict.reason, False
 
     similarity = track.similarity(query, config.similarity_mode)
     if similarity < -1.0 + 1e-9:  # -1.0 = GlobalTrack chưa có ngoại hình nào
-        return INFEASIBLE, f"GlobalTrack #{track.global_id} chưa có embedding để so"
+        return INFEASIBLE, f"GlobalTrack #{track.global_id} chưa có embedding để so", False
 
     cost = 1.0 - float(similarity)
+    measured = False
 
     if ground_mapper is not None and config.same_camera_stitch:
-        stitch_cost, reason = _same_camera_term(tracklet, track, config, ground_mapper, cache)
+        stitch_cost, reason, stitched = _same_camera_term(
+            tracklet, track, config, ground_mapper, cache
+        )
         if reason:
-            return INFEASIBLE, reason
+            return INFEASIBLE, reason, False
         cost += stitch_cost
+        measured = measured or stitched
 
     if ground_mapper is not None and topology is not None:
-        ground_cost, reason = _ground_term(tracklet, track, topology, config, ground_mapper, cache)
+        ground_cost, reason, grounded = _ground_term(
+            tracklet, track, topology, config, ground_mapper, cache
+        )
         if reason:
-            return INFEASIBLE, reason
+            return INFEASIBLE, reason, False
         cost += ground_cost
+        measured = measured or grounded
 
-    return cost, ""
+    return cost, "", measured
 
 
 def _same_camera_term(
@@ -368,7 +421,7 @@ def _same_camera_term(
     config: AffinityConfig,
     ground_mapper: GroundMapper,
     cache: GroundCache | None = None,
-) -> tuple[float, str]:
+) -> tuple[float, str, bool]:
     """Nối hai mảnh tracklet của CÙNG một camera: liên tục về vị trí, hợp lý về tốc độ.
 
     Đây là chỗ bằng chứng mạnh nhất mà hệ thống có, và nó gần như miễn phí: hai mảnh nằm
@@ -391,12 +444,12 @@ def _same_camera_term(
     """
     path = track.cam_ground_path.get(tracklet.cam_id)
     if not path:
-        return 0.0, ""
+        return 0.0, "", False
 
     own = _world_path(tracklet.cam_id, tracklet.ground_path, ground_mapper, cache, config)
     other = _world_path(tracklet.cam_id, path, ground_mapper, cache, config)
     if len(own) == 0 or len(other) == 0:  # camera chưa hiệu chỉnh
-        return 0.0, ""
+        return 0.0, "", False
 
     if other[-1, 0] <= own[0, 0]:  # mảnh của track ở TRƯỚC
         gap_ms = float(own[0, 0] - other[-1, 0])
@@ -405,15 +458,17 @@ def _same_camera_term(
         gap_ms = float(other[0, 0] - own[-1, 0])
         distance = float(np.hypot(*(other[0, 1:] - own[-1, 1:])))
     else:
-        return 0.0, ""
+        return 0.0, "", False
 
     budget = config.max_ground_dist_m + config.max_speed_m_s * gap_ms / 1000.0
     if distance > budget:
-        return 0.0, (
+        return (
+            0.0,
             f"cùng {tracklet.cam_id}: hai mảnh cách nhau {distance:.2f} m sau {gap_ms / 1000:.1f}s "
-            f"> ngân sách {budget:.2f} m (đi nhanh nhất {config.max_speed_m_s} m/s)"
+            f"> ngân sách {budget:.2f} m (đi nhanh nhất {config.max_speed_m_s} m/s)",
+            False,
         )
-    return config.homography_weight * min(distance, config.max_ground_dist_m), ""
+    return config.homography_weight * min(distance, config.max_ground_dist_m), "", True
 
 
 def _ground_term(
@@ -423,7 +478,7 @@ def _ground_term(
     config: AffinityConfig,
     ground_mapper: GroundMapper,
     cache: GroundCache | None = None,
-) -> tuple[float, str]:
+) -> tuple[float, str, bool]:
     """Thành phần hình học, CHỈ cho cặp camera chồng lấn.
 
     Với cặp không chồng lấn, hai người ở hai đầu hành lang cách nhau vài chục mét vẫn là
@@ -446,7 +501,7 @@ def _ground_term(
         if cam_id != tracklet.cam_id and topology.is_overlapping(cam_id, tracklet.cam_id)
     ]
     if not topology.is_overlapping(track.last_cam_id, tracklet.cam_id) and not cams:
-        return 0.0, ""
+        return 0.0, "", False
 
     own = _world_path(tracklet.cam_id, tracklet.ground_path, ground_mapper, cache, config)
     matched: list[float] = []
@@ -459,11 +514,13 @@ def _ground_term(
     if matched:
         distance = min(matched)
         if distance > config.max_ground_dist_m:
-            return 0.0, (
+            return (
+                0.0,
                 f"cách {distance:.2f} m trên mặt phẳng tham chiếu tại CÙNG thời điểm "
-                f"> {config.max_ground_dist_m} m (cặp camera chồng lấn)"
+                f"> {config.max_ground_dist_m} m (cặp camera chồng lấn)",
+                False,
             )
-        return config.homography_weight * distance, ""
+        return config.homography_weight * distance, "", True
 
     # Không phải camera chồng lấn nào cũng có quyền phủ quyết. Quỹ đạo CŨ ở một camera mà
     # track đã rời khỏi từ lâu thì vốn dĩ KHÔNG THỂ có mốc chung với tracklet này, nên vắng
@@ -482,13 +539,15 @@ def _ground_term(
         or track.overlaps_in(cam_id, tracklet.start_ms, tracklet.end_ms, tol)
     ]
     if veto and config.ground_gap_policy == "reject" and len(own):
-        return 0.0, (
+        return (
+            0.0,
             f"cặp camera chồng lấn ({', '.join(sorted(veto))} ↔ {tracklet.cam_id}) nhưng "
-            "không có mốc thời gian chung để so vị trí (ground_gap_policy=reject)"
+            "không có mốc thời gian chung để so vị trí (ground_gap_policy=reject)",
+            False,
         )
 
     if not topology.is_overlapping(track.last_cam_id, tracklet.cam_id):
-        return 0.0, ""
+        return 0.0, "", False
 
     # Không có mốc thời gian chung: so một điểm với một điểm, ngưỡng nới theo Δt.
     # Điểm đầu/cuối lấy từ quỹ đạo ĐÃ LỌC khi có — đây là chỗ nhiễu điểm chân gây hại
@@ -501,16 +560,18 @@ def _ground_term(
         _edge_point(tracklet.ground_path, 0, config, cache) or tracklet.first_ground_point,
     )
     if distance is None:  # cặp chưa hiệu chỉnh homography
-        return 0.0, ""
+        return 0.0, "", False
 
     elapsed_s = abs(tracklet.start_ms - track.last_seen_ms) / 1000.0
     budget = config.max_ground_dist_m + config.max_speed_m_s * elapsed_s
     if distance > budget:
-        return 0.0, (
+        return (
+            0.0,
             f"cách {distance:.2f} m trên mặt phẳng tham chiếu > ngân sách {budget:.2f} m "
-            f"(đi nhanh nhất {config.max_speed_m_s} m/s trong {elapsed_s:.1f}s)"
+            f"(đi nhanh nhất {config.max_speed_m_s} m/s trong {elapsed_s:.1f}s)",
+            False,
         )
-    return config.homography_weight * min(distance, config.max_ground_dist_m), ""
+    return config.homography_weight * min(distance, config.max_ground_dist_m), "", True
 
 
 def _edge_point(

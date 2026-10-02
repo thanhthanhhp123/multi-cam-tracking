@@ -692,3 +692,89 @@ def test_noi_manh_khong_dung_cho_hai_manh_chong_thoi_gian(rng):
 
     assert cost == INFEASIBLE
     assert "ràng buộc loại trừ" in reason
+
+
+# --------------------------------------------------------------------------- #
+# Ngưỡng riêng cho ô có bằng chứng vị trí (`max_cost_geometric`)
+# --------------------------------------------------------------------------- #
+
+
+def _similar(vec: np.ndarray, rng, cos: float) -> np.ndarray:
+    """Vector đơn vị có cosine với `vec` đúng bằng `cos`."""
+    noise = rng.standard_normal(vec.shape[0])
+    noise -= noise.dot(vec) * vec
+    noise /= np.linalg.norm(noise)
+    return l2_normalize(cos * vec + np.sqrt(1 - cos**2) * noise)
+
+
+def test_o_co_khoang_cach_mat_dat_duoc_danh_dau_hinh_hoc(rng):
+    vec = l2_normalize(rng.standard_normal(DIM))
+    gallery = Gallery()
+    track = gallery.create(_tracklet("cam01", 1, start_ms=0, embedding=vec, tracklet_id=1))
+    near = _tracklet("cam02", 1, start_ms=200, embedding=vec, tracklet_id=2)
+
+    overlap = build_cost_matrix(
+        [near], [track], topology=OVERLAP_TOPO, ground_mapper=_FakeGround(0.5)
+    )
+    assert overlap.geometric is not None and overlap.geometric[0, 0]
+
+    # Cặp không chồng lấn: không đo khoảng cách → chỉ có ngoại hình.
+    far = _tracklet("cam02", 1, start_ms=10_000, embedding=vec, tracklet_id=3)
+    plain = build_cost_matrix([far], [track], topology=TOPO, ground_mapper=_FakeGround(0.5))
+    assert not plain.geometric[0, 0]
+
+    # Chồng lấn nhưng chưa hiệu chỉnh: cũng không có bằng chứng vị trí.
+    blind = build_cost_matrix(
+        [near], [track], topology=OVERLAP_TOPO, ground_mapper=_FakeGround(None)
+    )
+    assert not blind.geometric[0, 0]
+
+
+def test_nguong_theo_o_chi_khi_dat_max_cost_geometric(rng):
+    vec = l2_normalize(rng.standard_normal(DIM))
+    gallery = Gallery()
+    track = gallery.create(_tracklet("cam01", 1, start_ms=0, embedding=vec, tracklet_id=1))
+    tracklet = _tracklet("cam02", 1, start_ms=200, embedding=vec, tracklet_id=2)
+    matrix = build_cost_matrix(
+        [tracklet], [track], topology=OVERLAP_TOPO, ground_mapper=_FakeGround(0.5)
+    )
+    assert matrix.limits(AffinityConfig(max_cost=0.3)) is None
+    limits = matrix.limits(AffinityConfig(max_cost=0.3, max_cost_geometric=0.9))
+    assert limits is not None and limits[0, 0] == pytest.approx(0.9)
+
+
+def test_max_cost_geometric_doc_tu_yaml_va_kiem_gia_tri():
+    cfg = AffinityConfig.from_mapping({"association": {"max_cost_geometric": 0.85}})
+    assert cfg.max_cost_geometric == pytest.approx(0.85)
+    assert AffinityConfig.from_mapping({"association": {}}).max_cost_geometric is None
+    assert (
+        AffinityConfig.from_mapping(
+            {"association": {"max_cost_geometric": None}}
+        ).max_cost_geometric
+        is None
+    )
+    with pytest.raises(ValueError):
+        AffinityConfig(max_cost_geometric=0.0)
+
+
+def test_associator_nguong_hinh_hoc_long_hon_nguong_ngoai_hinh(rng):
+    """Cùng cosine 0.5 (cost ≈ 0.5 + λ·d): cặp chồng lấn đo được vị trí thì nhận với ngưỡng
+    hình học 0.9; cùng ngoại hình đó ở cặp không chồng lấn thì vẫn bị ngưỡng 0.3 chặn.
+    Không đặt ngưỡng hình học thì cả hai bị chặn — hành vi cũ."""
+    from mct.associator import Associator
+
+    vec = l2_normalize(rng.standard_normal(DIM))
+    other = _similar(vec, rng, 0.5)
+
+    def run(config: AffinityConfig, topology: Topology, start_ms: int) -> bool:
+        assoc = Associator(topology=topology, config=config, ground_mapper=_FakeGround(0.2))
+        first = assoc.assign([_tracklet("cam01", 1, start_ms=0, embedding=vec, tracklet_id=1)])
+        second = assoc.assign(
+            [_tracklet("cam02", 1, start_ms=start_ms, embedding=other, tracklet_id=2)]
+        )
+        return second[0].global_id == first[0].global_id
+
+    split = AffinityConfig(max_cost=0.3, max_cost_geometric=0.9)
+    assert run(split, OVERLAP_TOPO, 200)  # có vị trí: nhận
+    assert not run(split, TOPO, 10_000)  # chỉ ngoại hình: chặn
+    assert not run(AffinityConfig(max_cost=0.3), OVERLAP_TOPO, 200)  # hành vi cũ
