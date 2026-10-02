@@ -42,6 +42,8 @@ from typing import Any
 import yaml
 
 from common.latency import (
+    T0_CAPTURE,
+    T0_FIRST,
     T3_ASSOC,
     T3D_DB,
     T3W_WINDOW,
@@ -181,6 +183,8 @@ class Engine:
             stamps[T3W_WINDOW] = t3w
             stamps[T3_ASSOC] = t3
             stamps[T3D_DB] = t3d
+            if not assignment.is_update and T0_CAPTURE in tracklet.first_stamps:
+                stamps[T0_FIRST] = tracklet.first_stamps[T0_CAPTURE]
             self._pending_latency.append(
                 LatencyRecord(
                     run_id=self.latency.run_id,

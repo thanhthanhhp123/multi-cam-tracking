@@ -169,6 +169,9 @@ class Tracklet:
     của khung mới nhất, không phải của khung mở tracklet.
     """
 
+    first_stamps: dict[str, float] = field(default_factory=dict)
+    """Mốc đo độ trễ của khung MỞ tracklet — để đo thời gian tới Global ID."""
+
     ground_path: list[tuple[int, tuple[float, float]]] = field(default_factory=list)
     """(ts_ms, điểm chân trong ảnh) đã tỉa thưa — quỹ đạo để so vị trí theo thời gian.
 
@@ -217,6 +220,7 @@ class Tracklet:
             self.start_frame_id = obs.frame_id
             self.first_bbox = obs.bbox
             self.first_ground_point = obs.ground_point
+            self.first_stamps = obs.stamps
 
         self.n_frames += 1
         self.confidence_sum += obs.confidence

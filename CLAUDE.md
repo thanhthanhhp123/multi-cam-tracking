@@ -226,6 +226,13 @@ Mọi ngưỡng nằm trong `configs/mct.yaml`, **không hardcode trong code** �
 - **Cross-camera**: ghép các camera thành một chuỗi ảo (offset `frame_id` theo camera),
   dùng `global_id` làm ID, rồi chạy nhóm chỉ số Identity/HOTA — cách làm quen thuộc của AI City Challenge.
 - **Hiệu năng**: FPS/luồng, độ trễ end-to-end, GPU/VRAM. Mục tiêu đề cương: 3–4 luồng, ≥15 FPS/luồng, <1s.
+  - **Định nghĩa "<1 s"** (chốt phiên 32, `docs/worklog/2026-10-02-32-*`): p95 của HAI đại lượng
+    phải < 1 s. Cả hai tính từ lúc khung tới DeepStream (`t0`) đến lúc kết quả lên `mct:global`.
+    (1) **Độ trễ theo khung**: mọi khung của người đã có Global ID.
+    (2) **Thời gian tới Global ID**: từ khung đầu tiên của tracklet đến lần phát đầu tiên.
+    Chấm bằng `tools.latency_report`. Đừng dùng cột end-to-end của bảng đoạn: cột đó chỉ đo khung
+    mới nhất của mỗi lần phát. Camera, mạng, jitter buffer (trước `t0`) và trình duyệt (sau `t4`)
+    không nằm trong định nghĩa; đo riêng ở M6.
 - Ground-truth tự gán bằng CVAT → `tools/cvat_to_mot.py` → `eval/gt/`.
 
 **Số đo trên fixture WildTrack cũ (`wildtrack_to_fixture.py`) là CẬN TRÊN, không phải hiệu

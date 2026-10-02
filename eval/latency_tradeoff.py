@@ -59,7 +59,7 @@ from common.schema import read_jsonl
 from mct.__main__ import build_engine, load_config
 from mct.associator import Assignment
 
-PERCENTILES = (0.5, 0.9, 0.99)
+PERCENTILES = (0.5, 0.9, 0.95, 0.99)
 SCORE_COLUMNS = ("HOTA", "DetA", "AssA", "IDF1", "IDs")
 
 

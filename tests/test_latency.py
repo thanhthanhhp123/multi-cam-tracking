@@ -25,6 +25,7 @@ from common.latency import (
     END_TO_END,
     FINE_SEGMENTS,
     T0_CAPTURE,
+    T0_FIRST,
     T0_IS_NTP,
     T1_PROBE,
     T1B_DEQUEUE,
@@ -618,15 +619,143 @@ def test_log_cu_suy_ra_first_theo_thu_tu_tracklet():
     assert records[0].kind == "", "không được sửa bản ghi gốc"
 
 
-def test_muc_tieu_1s_cham_tren_ban_ghi_first_khong_tren_moi_ban_ghi():
-    """Đuôi 2 s nằm ở bản ghi phát lại (cùng tracklet với bản ghi trước) -> không được tính
-    vào độ trễ chốt danh tính, dù p90 trên mọi bản ghi vượt 1 s."""
+def test_muc_tieu_khong_cham_tren_ban_ghi_phat_lai():
+    """Đuôi 2 s nằm ở bản ghi phát lại lúc đóng (cùng tracklet với bản ghi trước) -> không
+    vào độ trễ theo khung, dù p90 trên mọi bản ghi vượt 1 s."""
     records = _synthetic_records(20)
     for record in records[-10:]:  # 10 bản ghi chậm = phát lại của tracklet 0..9
         record.tracklet_id -= 10
     payload = latency_report.report(records, as_json=True)
-    identity = [w for w in payload["warnings"] if "CHỐT DANH TÍNH" in w]
-    assert identity and "ĐẠT" in identity[0] and "KHÔNG ĐẠT" not in identity[0]
+    # Mỗi tracklet chỉ một lần phát mang tin mới -> không có cặp nào để dựng độ trễ theo khung.
+    assert "frame" not in payload["target"]
     assert any("MỌI bản ghi" in w for w in payload["warnings"])
     groups = latency_report._by_group(latency_report.with_kinds(records), "kind", as_json=True)
     assert groups["first"]["n"] == 10 and groups["repeat"]["n"] == 10
+
+
+# --------------------------------------------------------------------------- mục tiêu < 1 s
+
+
+def _tracklet_records(
+    tracklet_id: int,
+    n_updates: int,
+    *,
+    gap_ms: float = 1_000.0,
+    newest_ms: float = 100.0,
+    first_wait_ms: float | None = None,
+    kinds: bool = True,
+) -> list[LatencyRecord]:
+    """Một tracklet được phát mỗi `gap_ms`; khung mới nhất của mỗi lần phát trễ `newest_ms`.
+
+    Bản ghi cuối là lần phát lại lúc đóng (khung cũ, trễ 2.5 s). `first_wait_ms` gắn
+    `t0_first` sao cho thời gian tới Global ID bằng đúng giá trị đó. `kinds=False` mô phỏng
+    log cũ chưa có trường `kind`.
+    """
+    out: list[LatencyRecord] = []
+    for i in range(n_updates + 1):
+        t0 = BASE_WALL + i * gap_ms
+        stamps = {T0_CAPTURE: t0, T0_IS_NTP: 1.0, T4_OUT: t0 + newest_ms}
+        if i == 0 and first_wait_ms is not None:
+            stamps[T0_FIRST] = t0 + newest_ms - first_wait_ms
+        kind = ("first" if i == 0 else "update") if kinds else ""
+        out.append(LatencyRecord(run_id="r1", tracklet_id=tracklet_id, kind=kind, stamps=stamps))
+    t0 = BASE_WALL + n_updates * gap_ms
+    out.append(
+        LatencyRecord(
+            run_id="r1",
+            tracklet_id=tracklet_id,
+            kind="close" if kinds else "",
+            stamps={T0_CAPTURE: t0, T0_IS_NTP: 1.0, T4_OUT: t0 + 2_500.0},
+        )
+    )
+    return out
+
+
+def test_do_tre_theo_khung_la_rang_cua_chu_khong_phai_khung_moi_nhat():
+    """Phát mỗi 1000 ms, khung mới nhất trễ 100 ms -> các khung trải đều 100..1100 ms.
+
+    Bảng end-to-end chỉ thấy 100 ms. Theo định nghĩa phiên 32 thì p95 ~1.05 s: KHÔNG ĐẠT.
+    """
+    records = [r for tid in range(5) for r in _tracklet_records(tid, 20)]
+    frames = latency_report.frame_latencies(records)
+    assert frames is not None
+    assert frames.update_gap_ms == pytest.approx(1_000.0)
+    assert (frames.n_tracklets, frames.n_pairs) == (5, 100)
+    assert min(frames.samples) == pytest.approx(100.0)
+    assert max(frames.samples) < 1_100.0
+    assert percentile(frames.samples, 0.5) == pytest.approx(600.0, abs=15)
+
+    verdict = latency_report.target_verdict(records, as_json=True)
+    assert verdict["frame"]["p95_ms"] == pytest.approx(1_050.0, abs=15)
+    assert verdict["frame"]["pass"] is False
+
+
+def test_nhip_phat_ngan_hon_thi_dat():
+    records = [r for tid in range(5) for r in _tracklet_records(tid, 20, gap_ms=500.0)]
+    verdict = latency_report.target_verdict(records, as_json=True)
+    assert verdict["frame"]["p95_ms"] == pytest.approx(575.0, abs=15)
+    assert verdict["frame"]["pass"] is True
+
+
+def test_phat_lai_luc_dong_va_vong_cuoi_khong_tinh_vao_do_tre_theo_khung():
+    """`close` mang khung cũ (trễ 2.5 s), `final_flush` là vòng gán lúc hết nguồn."""
+    closed = _tracklet_records(1, 5)
+    flushed = _tracklet_records(2, 5)
+    flushed[-1].final_flush = True
+    frames = latency_report.frame_latencies(closed + flushed)
+    assert frames is not None
+    assert frames.n_pairs == 10
+    assert max(frames.samples) < 1_100.0
+
+
+def test_log_cu_bo_ban_ghi_repeat_cuoi_cung_cua_tracklet():
+    """Log trước phiên 28 không có `kind`: lần phát lại lúc đóng là bản ghi cuối."""
+    old = latency_report.frame_latencies(_tracklet_records(1, 5, kinds=False))
+    new = latency_report.frame_latencies(_tracklet_records(1, 5))
+    assert old is not None and new is not None
+    assert old.samples == new.samples
+
+
+def test_quang_vang_cua_tracklet_khong_bi_tinh_thanh_tre():
+    """Tracklet vắng 3 nhịp (không có detection): quãng vắng không có khung nào để mà trễ."""
+    records = _tracklet_records(1, 10)
+    del records[4:7]
+    frames = latency_report.frame_latencies(records)
+    assert frames is not None
+    assert frames.update_gap_ms == pytest.approx(1_000.0)
+    assert max(frames.samples) < 1_100.0
+
+
+def test_thoi_gian_toi_global_id_tinh_tu_khung_dau_tien():
+    records = [
+        r for tid in range(10) for r in _tracklet_records(tid, 3, first_wait_ms=700.0 + 50 * tid)
+    ]
+    ttid = latency_report.target_verdict(records, as_json=True)["time_to_id"]
+    assert ttid["n"] == 10
+    assert ttid["p50_ms"] == pytest.approx(925.0)
+    assert ttid["max_ms"] == pytest.approx(1_150.0)
+    assert ttid["p95_ms"] == pytest.approx(1_127.5)
+    assert ttid["pass"] is False
+
+
+def test_log_khong_co_t0_first_thi_canh_bao_chu_khong_bia_so():
+    records = [r for tid in range(3) for r in _tracklet_records(tid, 3)]
+    payload = latency_report.report(records, as_json=True)
+    assert "time_to_id" not in payload["target"]
+    assert any("t0_first" in w for w in payload["warnings"])
+
+
+def test_engine_gan_t0_first_cho_ban_ghi_first(tmp_path):
+    path = tmp_path / "latency.jsonl"
+    with LatencyLog(path) as log:
+        engine, _ = _run_engine(latency=log)
+
+    records = read_records(path)
+    firsts = [r for r in records if r.kind == "first"]
+    assert firsts
+    for record in firsts:
+        tracklet = engine.builder.by_id(record.tracklet_id)
+        assert tracklet is not None
+        assert record.stamps[T0_FIRST] == pytest.approx(tracklet.first_stamps[T0_CAPTURE])
+        assert record.stamps[T0_FIRST] < record.stamps[T0_CAPTURE]
+    assert all(T0_FIRST not in r.stamps for r in records if r.kind != "first")

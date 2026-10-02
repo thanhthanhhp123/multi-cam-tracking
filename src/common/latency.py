@@ -67,6 +67,15 @@ có một kiểu giá trị nên msgpack/JSONL không phải xử lý ngoại l�
 `t0_source_from()`.
 """
 
+T0_FIRST = "t0_first_ms"
+"""`t0` của khung ĐẦU TIÊN của tracklet — chỉ có ở bản ghi `kind = first`.
+
+Mọi mốc khác là của khung mới nhất. Mốc này để đo vế thứ hai của mục tiêu < 1 s: thời
+gian từ lúc một người xuất hiện ở một camera tới lúc họ có Global ID trên `mct:global`
+(`t4 - t0_first`, định nghĩa ở docs/worklog/2026-10-02-32-*). Do engine gắn, không đi
+trên wire.
+"""
+
 MESSAGE_STAMPS = (T0_CAPTURE, T1_PROBE, T1B_DEQUEUE, T2_XADD, T3A_RECV)
 """Các mốc đi kèm message. `t2`/`t3a` do phía ĐỌC gắn (xem `FrameConsumer._parse`)."""
 
