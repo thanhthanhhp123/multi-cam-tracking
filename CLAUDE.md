@@ -30,7 +30,8 @@ Detector và Re-ID dùng model có sẵn (fine-tune nếu cần), không train f
 > **2026-09-10: `ut-hpc` ĐÃ MẤT — tài khoản cụm bị khoá.** Cột `ut-hpc` trong bảng dưới và
 > mọi mục `ut-hpc` ở §11 giờ là ngữ cảnh lịch sử. Test/lint chuyển về venv Python 3.10 trên
 > máy dev (xem ngay dưới bảng). Fixture WildTrack của pipeline thật (`ds_wildtrack_7cam*`)
-> chỉ nằm trên cụm, coi như mất cho tới khi tìm được bản sao hoặc sinh lại trên `vast-gpu`.
+> mất theo cụm, nhưng ĐÃ SINH LẠI trên `vast-gpu` ở phiên 22 và đang nằm ở `data/fixtures/` trên
+> máy dev (gitignored; dùng lại ở các phiên 24–33).
 > Chỗ fine-tune ở M6 (nếu cần) CHƯA CHỐT.
 
 Có ba máy, mỗi máy một vai trò. Đừng gộp việc của máy này sang máy khác.
