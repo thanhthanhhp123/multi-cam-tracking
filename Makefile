@@ -1,6 +1,7 @@
 .PHONY: help dev test lint fmt up down replay record fixture wildtrack-annotations \
         wildtrack-fixture wildtrack-homography engine engine-fixture dashboard compare eval \
         wildtrack-video wildtrack-ds-gt engine-latency latency-report \
+        lab-check lab-homography lab-gt lab-transit lab-eval \
         ds-build ds-run ds-run-reid ds-run-wildtrack clean
 .DEFAULT_GOAL := help
 
@@ -100,6 +101,35 @@ record:  ## Ghi Redis stream ra fixture — make record OUT=...
 
 eval:  ## Chạy TrackEval trên kết quả trong eval/   (M6)
 	$(PY) eval/run_trackeval.py
+
+# ---------- Dữ liệu tự thu (M6) — quy trình đầy đủ: docs/m6/README.md ----------
+
+LAB_SESSION ?= s1
+LAB_CAMS    ?= cam01 cam02 cam03 cam04
+LAB_FPS     ?= 25
+LAB_GT      := data/fixtures/lab_$(LAB_SESSION)_gt.jsonl
+
+lab-check:  ## Kiểm cấu hình lab TRƯỚC khi thuê GPU — make lab-check LAB_SESSION=s1
+	$(PY) -m tools.check_lab_setup --session $(LAB_SESSION) \
+		$(if $(wildcard $(LAB_GT)),--gt-fixture $(LAB_GT),)
+
+lab-homography:  ## Hiệu chỉnh homography camera lab từ configs/lab/ground_points.yaml
+	$(PY) -m tools.calibrate_homography --points configs/lab/ground_points.yaml \
+		--out configs/lab/homography
+
+lab-gt:  ## CVAT (data/cvat/<buổi>/camXX.xml) -> GT MOT + fixture GT — make lab-gt LAB_SESSION=s1
+	$(PY) -m tools.cvat_to_mot $(foreach c,$(LAB_CAMS),--annotation $(c)=data/cvat/$(LAB_SESSION)/$(c).xml) \
+		--out-dir eval/gt/lab_$(LAB_SESSION) --fixture-out $(LAB_GT) --fps $(LAB_FPS)
+
+lab-transit:  ## Transit time từ GT của đoạn HIỆU CHỈNH — make lab-transit LAB_SESSION=calib
+	$(PY) -m tools.estimate_transit --gt-fixture $(LAB_GT) --topology configs/lab/topology.yaml \
+		--yaml-out data/lab/transitions_$(LAB_SESSION).suggest.yaml
+
+lab-eval:  ## Chấm 3 lần chạy pipeline của một buổi (thêm biến thể: LAB_EVAL_ARGS="--variant ...")
+	$(PY) -m eval.run_lab_eval --config configs/lab/lab.mct.yaml \
+		--topology configs/lab/topology.yaml --homography-dir configs/lab/homography \
+		--gt-fixture $(LAB_GT) $(foreach n,1 2 3,--run r$(n) data/fixtures/lab_$(LAB_SESSION)_r$(n).jsonl) \
+		--work-dir data/lab/eval/$(LAB_SESSION) --fps $(LAB_FPS) $(LAB_EVAL_ARGS)
 
 clean:  ## Xoá venv và cache
 	rm -rf $(VENV) .pytest_cache .ruff_cache

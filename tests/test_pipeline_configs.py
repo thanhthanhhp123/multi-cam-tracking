@@ -402,9 +402,11 @@ def test_pnt_labels(repo_root: Path) -> None:
 
 
 def _moi_file_streams(repo_root: Path) -> list[Path]:
-    return sorted((repo_root / "configs" / "pipeline").glob("streams*.yaml")) + sorted(
-        (repo_root / "configs" / "demo").glob("streams*.yaml")
-    )
+    return [
+        path
+        for sub in ("pipeline", "demo", "lab")
+        for path in sorted((repo_root / "configs" / sub).glob("streams*.yaml"))
+    ]
 
 
 def test_person_class_id_khop_lop_lot_qua_pgie(repo_root: Path) -> None:
@@ -441,3 +443,17 @@ def test_streams_reid_pnt_chi_khac_o_pgie(tag: str, pipeline_dir: Path) -> None:
         k: v for k, v in reid.items() if k != "pgie"
     }
     assert moi["pgie"]["config_file"].endswith(PNT_CONFIGS[0 if tag == "pnt" else 1])
+
+
+def test_streams_lab_chi_khac_streams_reid_o_nguon_va_sync(pipeline_dir: Path) -> None:
+    """Dữ liệu tự thu (M6) phải đi đúng đường đã đo ở M3/M5 (cùng tracker ReID, cùng engine
+    batch 4, cùng streammux) — khác duy nhất ở nguồn file và `sync: true` bắt buộc."""
+    lab = yaml.safe_load(
+        (pipeline_dir.parent / "lab" / "streams_lab.yaml").read_text(encoding="utf-8")
+    )
+    reid = yaml.safe_load((pipeline_dir / "streams_reid.yaml").read_text(encoding="utf-8"))
+    assert lab["sink"]["sync"] is True
+    for key in ("streammux", "tracker", "pgie"):
+        assert lab[key] == reid[key], key
+    assert [s["cam_id"] for s in lab["sources"]] == ["cam01", "cam02", "cam03", "cam04"]
+    assert all("${LAB_SESSION}" in s["uri"] for s in lab["sources"])

@@ -62,6 +62,13 @@ Correspondences = tuple[list[tuple[float, float]], list[tuple[float, float]]]
 def load_point_file(path: Path) -> tuple[dict[str, Correspondences], dict[str, Any]]:
     """Đọc file cặp điểm thủ công. Trả về ({cam_id: (điểm ảnh, điểm mét)}, siêu dữ liệu)."""
     data = yaml.safe_load(path.read_text(encoding="utf-8")) or {}
+    if data.get("status") == "template":
+        # Bản mẫu (configs/lab/ground_points.yaml) chứa toạ độ GIỮ CHỖ: hiệu chỉnh bằng nó
+        # vẫn ra một ma trận hợp lệ về hình thức, và mọi khoảng cách mét sau đó vô nghĩa.
+        raise ValueError(
+            f"{path}: còn `status: template` — thay toạ độ giữ chỗ bằng điểm đo thật rồi xoá "
+            "dòng status (docs/m6/README.md, mục Hiệu chỉnh)"
+        )
     cameras = data.get("cameras") or {}
     if not cameras:
         raise ValueError(f"{path}: thiếu khối `cameras`")

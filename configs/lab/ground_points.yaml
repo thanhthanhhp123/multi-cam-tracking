@@ -1,0 +1,49 @@
+# Cặp điểm ảnh ↔ sàn để hiệu chỉnh homography các camera TỰ THU (M6).
+#
+# ĐÂY LÀ BẢN MẪU — toạ độ dưới đây là CHỖ GIỮ CHỖ, chạy hiệu chỉnh bằng nó ra ma trận vô
+# nghĩa. `tools.check_lab_setup` báo FAIL khi còn `status: template`.
+#
+# Cách lấy (docs/m6/README.md, mục "Hiệu chỉnh"):
+#   1. Chọn một gốc toạ độ sàn chung cho CẢ khu thực nghiệm (vd góc tường khu A), trục x dọc
+#      hành lang, trục y vuông góc. Đơn vị mét.
+#   2. Mỗi camera chọn ≥ 4 điểm (nên 6–8) NẰM TRÊN SÀN, trải rộng khắp vùng nhìn, không ba
+#      điểm nào thẳng hàng: góc gạch, chân tường, vạch sơn, hoặc miếng băng dính dán xuống.
+#   3. Đo toạ độ mét của từng điểm bằng thước (`world`), đọc toạ độ pixel trên MỘT KHUNG của
+#      video ĐÃ ĐỒNG BỘ (`data/lab/<buổi>/camXX.mp4`, sau tools.sync_recordings — để kích thước
+#      ảnh và chiều xoay đúng như pipeline thấy) bằng bất kỳ trình xem ảnh nào (`image`).
+#   4. Chạy:
+#        PYTHONPATH=src python -m tools.calibrate_homography \
+#            --points configs/lab/ground_points.yaml --out configs/lab/homography
+#      và đọc p95 sai số chiếu nó in ra cho từng camera: > 0.3 m là có điểm đo sai.
+#
+# Cặp chồng lấn cam01–cam02 BẮT BUỘC phải có (không có thì thành phần hình học bị bỏ qua
+# im lặng). cam03/cam04 rất nên có (nối mảnh tracklet cùng camera).
+
+status: template
+plane: ground
+image_size: [1920, 1080]
+cameras:
+  cam01:
+    points:
+      - {image: [412, 903], world: [0.00, 0.00]}    # GIỮ CHỖ
+      - {image: [1385, 887], world: [4.20, 0.00]}   # GIỮ CHỖ
+      - {image: [1102, 615], world: [4.20, 6.50]}   # GIỮ CHỖ
+      - {image: [530, 622], world: [0.00, 6.50]}    # GIỮ CHỖ
+  cam02:
+    points:
+      - {image: [300, 880], world: [4.20, 0.00]}    # GIỮ CHỖ
+      - {image: [1500, 900], world: [4.20, 6.50]}   # GIỮ CHỖ
+      - {image: [1200, 600], world: [0.00, 6.50]}   # GIỮ CHỖ
+      - {image: [600, 610], world: [0.00, 0.00]}    # GIỮ CHỖ
+  cam03:
+    points:
+      - {image: [500, 950], world: [16.0, 0.50]}    # GIỮ CHỖ
+      - {image: [1400, 950], world: [16.0, 2.00]}   # GIỮ CHỖ
+      - {image: [1150, 500], world: [22.0, 2.00]}   # GIỮ CHỖ
+      - {image: [750, 500], world: [22.0, 0.50]}    # GIỮ CHỖ
+  cam04:
+    points:
+      - {image: [500, 950], world: [26.0, 0.50]}    # GIỮ CHỖ
+      - {image: [1400, 950], world: [26.0, 2.00]}   # GIỮ CHỖ
+      - {image: [1150, 500], world: [32.0, 2.00]}   # GIỮ CHỖ
+      - {image: [750, 500], world: [32.0, 0.50]}    # GIỮ CHỖ

@@ -33,6 +33,7 @@ import argparse
 import json
 import math
 import statistics
+import sys
 from collections import defaultdict
 from dataclasses import asdict, dataclass, field
 from pathlib import Path
@@ -227,6 +228,10 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--yaml-out", type=Path, default=None)
     p.add_argument("--json", type=Path, default=None)
     args = p.parse_args(argv)
+    # Windows chuyển hướng stdout bằng cp1252: tiêu đề tiếng Việt làm chết chương trình
+    # (lộ ra khi diễn tập M6 trên dữ liệu giả lập, phiên 33).
+    if hasattr(sys.stdout, "reconfigure"):
+        sys.stdout.reconfigure(encoding="utf-8")
 
     table_path = args.gt_fixture_table or Path(str(args.gt_fixture).replace(".jsonl", ".gt.json"))
     apps = build_appearances(

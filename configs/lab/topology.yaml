@@ -1,0 +1,76 @@
+# Topology của bố trí camera TỰ THU (M6) — đề cương mục 4.2 + 4.3.2 bước 1.
+#
+# ĐÂY LÀ BẢN MẪU. `status: template` làm `python -m tools.check_lab_setup` báo FAIL cho tới
+# khi mọi số dưới đây được đo thật và đổi thành `status: measured`. Quy trình đo và bố trí:
+# docs/m6/README.md.
+#
+# Bố trí đề xuất (đề cương mục 4.2: một cặp chồng lấn + các camera còn lại không chồng lấn):
+#
+#     ┌──────── khu A (sảnh/phòng) ────────┐          hành lang            đầu kia
+#     │  cam01 ◣              ◢ cam02      │  ~10–15 m  ── cam03 ── ~10 m ── cam04
+#     │      vùng sàn chung ~4 × 6 m       │
+#     └────────────────────────────────────┘
+#
+#  - cam01, cam02: nhìn CHUNG một vùng sàn từ hai góc → liên kết bằng homography
+#    (kịch bản 1 của đề cương mục 6.2).
+#  - cam03, cam04: không thấy khu A và không thấy nhau → liên kết bằng ngoại hình + thời
+#    gian di chuyển (kịch bản 2).
+#  - MỌI camera hiệu chỉnh về CÙNG một hệ toạ độ sàn (một gốc, đo bằng thước) — kể cả
+#    cam03/cam04: `same_camera_stitch` cần homography của chính camera đó để nối mảnh
+#    tracklet (+27% AssA trên WildTrack, phiên 18), và HomographyMapper chỉ nạp các camera
+#    cùng một `plane`.
+#
+# Số transit dưới đây là CHỖ GIỮ CHỖ. Lấy số thật bằng:
+#   python -m tools.estimate_transit --gt-fixture <fixture GT của đoạn HIỆU CHỈNH> \
+#       --topology configs/lab/topology.yaml --yaml-out data/lab/transitions.suggest.yaml
+# trên một đoạn quay riêng (không phải đoạn dùng để chấm điểm — xem docstring công cụ đó).
+
+status: template
+
+cameras:
+  cam01:
+    name: "Khu A - góc trái"
+    resolution: [1920, 1080]
+    fps: 25
+    overlaps_with: [cam02]
+  cam02:
+    name: "Khu A - góc phải"
+    resolution: [1920, 1080]
+    fps: 25
+    overlaps_with: [cam01]
+  cam03:
+    name: "Hành lang - giữa"
+    resolution: [1920, 1080]
+    fps: 25
+    overlaps_with: []
+  cam04:
+    name: "Hành lang - đầu kia"
+    resolution: [1920, 1080]
+    fps: 25
+    overlaps_with: []
+
+# `allow` cho tới khi đã đo đủ mọi cặp; sau đó đổi `reject` để topology là bộ lọc thật.
+unknown_pair_policy: allow
+
+transitions:
+  # Ra khỏi khu A (thấy lần cuối ở cam01 HOẶC cam02) rồi hiện ở cam03.
+  - from: cam01
+    to: cam03
+    bidirectional: true
+    min_ms: 3000      # GIỮ CHỖ
+    max_ms: 30000     # GIỮ CHỖ
+    distance_m: 12.0  # GIỮ CHỖ
+  - from: cam02
+    to: cam03
+    bidirectional: true
+    min_ms: 3000      # GIỮ CHỖ
+    max_ms: 30000     # GIỮ CHỖ
+    distance_m: 12.0  # GIỮ CHỖ
+  - from: cam03
+    to: cam04
+    bidirectional: true
+    min_ms: 3000      # GIỮ CHỖ
+    max_ms: 30000     # GIỮ CHỖ
+    distance_m: 10.0  # GIỮ CHỖ
+
+homography: {}

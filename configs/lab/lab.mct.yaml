@@ -1,0 +1,63 @@
+# Tham số engine cho dữ liệu TỰ THU (M6): 4 camera, 25 fps, một cặp chồng lấn + hai camera
+# không chồng lấn (configs/lab/topology.yaml).
+#
+# Đây là ĐIỂM XUẤT PHÁT của phép quét ở M6, không phải giá trị đã chốt. Giải thích đầy đủ
+# từng khoá nằm ở configs/mct.yaml (cấu hình hệ thống); ở đây chỉ ghi chỗ KHÁC và vì sao.
+# Quét bằng:  python -m eval.run_lab_eval ... --variant <tên>:association.max_cost=0.25 ...
+#
+# Mọi kết quả trên WildTrack (2 fps, mọi camera chồng lấn) KHÔNG chuyển thẳng sang đây:
+# chính các khoá dưới đây là thứ M6 phải đo lại.
+
+mode: online
+
+tracklet:
+  min_frames: 5
+  # 2000 ms ở 25 fps = 50 khung — đủ chịu một lần bị che ngắn. (WildTrack 2 fps phải dùng
+  # 30000, xem configs/demo/wildtrack_ds.mct.yaml: giá trị đúng phụ thuộc fps.)
+  idle_timeout_ms: 2000
+  # 750 = 25 fps × 30 s: một người đứng 30 s trong khung không bị tỉa thưa quỹ đạo, mà
+  # quỹ đạo thưa là mất mốc thời gian chung của cặp chồng lấn (phiên 16).
+  ground_path_max_points: 750
+  max_embeddings: 32
+
+gallery:
+  max_size: 32
+  topk_query: 8
+  ema_alpha: 0.3
+  similarity_mode: max
+
+association:
+  # Treo chờ GVHD: 500 đạt "thời gian tới Global ID" p95 < 1 s (≈ 0.94 s), 1000 thì không
+  # (≈ 1.11 s), và trên WildTrack 2 fps hai giá trị cho độ chính xác ngang nhau (phiên 32).
+  # Ở 25 fps cửa sổ ngắn hơn = lần gán đầu dựa trên ít embedding hơn — phải đo lại ở đây.
+  window_ms: 1000
+  exclusion_slack_ms: 0
+  # Ngưỡng cho ô CHỈ có ngoại hình (cặp không chồng lấn): phải siết (configs/mct.yaml).
+  max_cost: 0.30
+  # Ngưỡng cho ô CÓ bằng chứng vị trí (cặp cam01–cam02 đã hiệu chỉnh, nối mảnh cùng
+  # camera). 0.90 là giá trị đã chọn trên WildTrack có `same_camera_stitch` (phiên 18).
+  # Đặt khoá này làm Hungarian chạy trên chi phí / ngưỡng của từng ô (mct.affinity).
+  max_cost_geometric: 0.90
+  homography_weight: 0.4
+  # 2.0 m với hộp detector (phiên 13/16); 1.0 chỉ đúng với hộp ground-truth.
+  max_ground_dist_m: 2.0
+  # 25 fps: một khung 40 ms. 200 ms = ±5 khung — đủ cho sai số đồng bộ bằng vỗ tay
+  # (≤ 1 khung) cộng lệch audio/hình của điện thoại (vài chục ms).
+  ground_time_tol_ms: 200
+  same_camera_stitch: true
+  max_speed_m_s: 2.5
+  ground_smooth: none
+  ground_smooth_window: 5
+  ground_smooth_max_gap_ms: 1000
+  # allow: hệ HỖN HỢP — chưa kiểm `reject` gây hại thế nào cho cặp không chồng lấn
+  # (configs/mct.yaml). Ứng viên quét.
+  ground_gap_policy: allow
+  global_track_ttl_ms: 120000
+
+publish:
+  position_interval_ms: 100
+
+store:
+  db_path: ${MCT_DB_PATH}
+  batch_size: 64
+  flush_interval_ms: 1000
