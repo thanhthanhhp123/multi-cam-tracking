@@ -21,11 +21,19 @@ PERSON_CLASS_ID = 0
 
 # Một file config nvinfer cho mỗi batch size: engine TensorRT gắn chặt với batch, và
 # nvinfer chỉ nạp lại engine đã build khi `model-engine-file` trùng đúng tên.
-PGIE_BATCHES = {
-    "config_infer_yolo11.txt": 1,
-    "config_infer_yolo11_b4.txt": 4,
-    "config_infer_yolo11_b7.txt": 7,
+# Mỗi họ: một model, nhiều batch. YOLO26 (phiên 32) là ablation cho tầng detector.
+PGIE_FAMILIES = {
+    "yolo11": {
+        "config_infer_yolo11.txt": 1,
+        "config_infer_yolo11_b4.txt": 4,
+        "config_infer_yolo11_b7.txt": 7,
+    },
+    "yolo26": {
+        "config_infer_yolo26_b4.txt": 4,
+        "config_infer_yolo26_b7.txt": 7,
+    },
 }
+PGIE_BATCHES = {name: batch for fam in PGIE_FAMILIES.values() for name, batch in fam.items()}
 PGIE_CONFIGS = sorted(PGIE_BATCHES)
 
 
@@ -82,24 +90,44 @@ def test_moi_ban_config_chi_khac_batch_va_ten_engine(pipeline_dir: Path) -> None
     Lệch một trong những khoá đó là đo FPS 4 hay 7 luồng trên một model khác với 1 luồng,
     và bảng số liệu chương 6 mất giá trị so sánh.
     """
-    goc = _read(pipeline_dir / "config_infer_yolo11.txt")["property"]
+    for family in PGIE_FAMILIES.values():
+        goc = _read(pipeline_dir / min(family))["property"]
+        for ten, batch in sorted(family.items()):
+            prop = _read(pipeline_dir / ten)["property"]
+            for khoa in (
+                "onnx-file",
+                "labelfile-path",
+                "custom-lib-path",
+                "parse-bbox-func-name",
+                "network-mode",
+                "num-detected-classes",
+                "cluster-mode",
+            ):
+                assert goc[khoa] == prop[khoa], f"{khoa} lệch ở {ten}"
 
-    for ten, batch in sorted(PGIE_BATCHES.items()):
-        prop = _read(pipeline_dir / ten)["property"]
-        for khoa in (
-            "onnx-file",
-            "labelfile-path",
-            "custom-lib-path",
-            "parse-bbox-func-name",
-            "network-mode",
-            "num-detected-classes",
-        ):
-            assert goc[khoa] == prop[khoa], f"{khoa} lệch ở {ten}"
+            assert prop["batch-size"] == str(batch), ten
+            # Tên engine PHẢI mang đúng batch: đây là thứ quyết định engine có được nạp lại
+            # hay build lại ~4 phút mỗi lần chạy.
+            assert f"_b{batch}_" in prop["model-engine-file"], ten
 
-        assert prop["batch-size"] == str(batch), ten
-        # Tên engine PHẢI mang đúng batch: đây là thứ quyết định engine có được nạp lại
-        # hay build lại ~4 phút mỗi lần chạy.
-        assert f"_b{batch}_" in prop["model-engine-file"], ten
+
+@pytest.mark.parametrize("batch", [4, 7])
+def test_yolo26_chi_khac_yolo11_o_model_va_cluster_mode(pipeline_dir: Path, batch: int) -> None:
+    """So detector chỉ công bằng khi MỌI thứ khác giống hệt: tiền xử lý, parser, ngưỡng.
+
+    YOLO26 dùng head một-một nên tắt gom cụm (cluster-mode=4, khuyến nghị DeepStream-Yolo);
+    đo CPU 2026-10-02: bật NMS chỉ đổi 2% số hộp (docs/worklog/2026-10-02-32-*).
+    """
+    y11 = _read(pipeline_dir / f"config_infer_yolo11_b{batch}.txt")
+    y26 = _read(pipeline_dir / f"config_infer_yolo26_b{batch}.txt")
+
+    khac = {k for k in y11["property"] if y11["property"][k] != y26["property"].get(k)}
+    assert khac == {"onnx-file", "model-engine-file", "cluster-mode"}
+    assert y26["property"]["onnx-file"].endswith("/yolo26s.onnx")
+    assert y11["property"]["cluster-mode"] == "2" and y26["property"]["cluster-mode"] == "4"
+    assert set(y26["property"]) == set(y11["property"])
+    for section in ("class-attrs-all", f"class-attrs-{PERSON_CLASS_ID}"):
+        assert dict(y26[section]) == dict(y11[section]), section
 
 
 # --------------------------------------------------------------------------------------

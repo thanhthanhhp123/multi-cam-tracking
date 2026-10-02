@@ -334,6 +334,13 @@ giữ nguyên engine thì HOTA mặt đất tăng 31.1 → 63.8.
   - ROI mặt đất (phiên 31, lọc sau tracker) cũng không cứu được PNT. HOTA mặt đất: PNT
     28.4 → 28.0, YOLO 31.1 → 32.5 (sát nhiễu). Phần PNT kém trên mặt đất là do điểm trùng/ma
     sau khi gộp đa camera, không phải do hình học điểm chân. Chỗ nghẽn vẫn là liên kết.
+- **YOLO26s (phiên 32): mới kiểm ở mức detector trên CPU, chưa chạy GPU.**
+  - Trên COCO, YOLO26s chỉ hơn YOLO11s 1.6 mAP (0.8 nếu ở chế độ không NMS). Điểm mạnh của nó là
+    tốc độ CPU/edge, không phải độ chính xác.
+  - `eval/check_detector_cpu.py`, 280 ảnh WildTrack, ngưỡng 0.25: recall 0.552 so với 0.572 của
+    YOLO11s; precision trong lưới 0.734 so với 0.741; ít hộp ngoài lưới hơn 19%.
+  - Kết luận: không hơn ở mức detector, nên chưa đáng thuê GPU. Mọi thứ đã sẵn nếu cần chạy:
+    `tools/export_yolo26.py` và `configs/pipeline/config_infer_yolo26_b{4,7}.txt`.
 
 Bảng trên là **kế hoạch tham chiếu**, không phải tiến độ thật.
 
@@ -461,6 +468,13 @@ và trong worklog chỉ link tới nó.
   được. Chỉ đổi numpy về `pip install numpy==1.26.4` là pipeline chạy lại (đo 2026-09-20). Làm bước
   đó sau khi export ONNX xong. Ngoài ra `export_yolo11.py` đòi `yolo11s.pt` có sẵn ở cwd, không tự
   tải; đừng bọc nó trong `| tail` (che mất mã thoát).
+- **Export YOLO26 hỏng theo hai cách nếu để phiên bản mặc định** (phiên 32). Dùng
+  `python -m tools.export_yolo26` trong venv `mct-export` trên máy dev; không export trên `vast-gpu`.
+  - ultralytics mới (8.4.171) làm `Detect.fuse()` bỏ nhánh một-một, export chết ở
+    `KeyError: 'feats'`. Phải ghim `ultralytics==8.4.7`.
+  - torch 2.14 mặc định exporter dynamo, và exporter này không trace được `.item()`. Phải dùng
+    `dynamo=False`.
+  Công cụ còn ghim commit và sha256 của script DeepStream-Yolo. Export lại cho ra file trùng từng byte.
 - **CLI `vastai` trên máy dev** nằm ở `%APPDATA%\Python\Python313\Scripts\vastai.exe` (không trên
   PATH), khóa API ở `~/.config/vastai/vast_api_key`. `vastai destroy instance <id>` hỏi xác nhận và
   tự hủy bỏ khi không có stdin — phải thêm `-y`, rồi kiểm `vastai show instances` = 0. Lọc offer

@@ -1,6 +1,6 @@
-# 2026-10-02 (phiên 32): Chốt định nghĩa độ trễ "< 1 s"; đường phát vị trí đưa độ trễ theo khung từ 1.05 s xuống ≈ 0.19 s mà không đổi kết quả liên kết
+# 2026-10-02 (phiên 32): Chốt định nghĩa độ trễ "< 1 s"; đường phát vị trí đưa độ trễ theo khung từ 1.05 s xuống ≈ 0.19 s mà không đổi kết quả liên kết; `window_ms` 500 không mất độ chính xác (n = 3); YOLO26s không hơn YOLO11s ở mức detector (kiểm CPU)
 
-- **Mốc:** M5 (độ trễ) + chuẩn bị báo cáo GVHD | **Máy:** máy dev (CPU, không thuê GPU) | **Thời lượng:** ~3h
+- **Mốc:** M5 (độ trễ) + M2 (detector) + chuẩn bị báo cáo GVHD | **Máy:** máy dev (CPU, không thuê GPU) | **Thời lượng:** ~5h
 
 ## Mục tiêu phiên
 
@@ -8,6 +8,10 @@
   từ phiên 9, rồi giải thích các vấn đề liên quan. Trước đây định chờ GVHD chốt (phiên 28).
 - Phần 2, sau khi commit phần 1 (`394c5a8`): làm luôn hướng sửa 1, tức **tách đường phát vị trí
   khỏi cửa sổ gán** (QĐ 4.1).
+- Phần 3: chạy WildTrack n = 3 cho `window_ms` 500 so với 1000, giữ nguyên `min_frames`. Mục đích
+  là biết giá độ chính xác của QĐ 4.2.
+- Phần 4: người dùng đề xuất thay YOLO11 bằng YOLO26 ("có vẻ SOTA"). Chuẩn bị script export và
+  kiểm trên CPU trước khi thuê GPU.
 
 ## Đã làm
 
@@ -83,6 +87,43 @@
 14. `src/common/streams.py`: sửa docstring của `GlobalPublisher`. Câu "mỗi tracklet chỉ sinh vài cập
     nhật" không còn đúng.
 
+**Phần 3: `window_ms` 500 so với 1000, n = 3.**
+
+15. `eval.latency_tradeoff` trên `ds_wildtrack_7cam_r640n_r{1,2,3}`, `w{500,1000} × m{3,5}`, chấm hộp
+    ảnh. Sau đó chấm `eval.eval_ground_plane` (trong vùng, T = 1 m, NMS 0 và 0.5 m) trên 12 DB.
+    - Kết quả: `data/s32/wt3/tradeoff.json`, `data/s32/wt3/ground_plane.json`.
+    - Bước mặt đất phải chạy bằng venv `mct-eval`. Lần đầu gọi nhầm `mct-test`: numpy 2 không có
+      `np.float` nên TrackEval chết. Phần hộp ảnh không bị ảnh hưởng.
+    - Đối chứng: `w1000_m3` cho đúng 15.79 ± 0.47 (phiên 28) và mặt đất 31.1 ± 0.8 (phiên 26).
+
+**Phần 4: YOLO26.**
+
+16. Tra cứu nguồn:
+    - COCO: YOLO26s 48.6 mAP (47.8 khi không NMS) so với 47.0 của YOLO11s; T4 TensorRT cùng
+      2.5 ms. YOLO26 quảng bá tốc độ CPU/edge, không phải độ chính xác.
+    - DeepStream-Yolo hỗ trợ chính thức (`export_yolo26.py`, DS 7.1 có trong bảng CUDA), có một
+      issue mở "no detections" (#688).
+17. `src/tools/export_yolo26.py`: xuất ONNX trên CPU máy dev, trong venv riêng `~/.venvs/mct-export`
+    (torch 2.14 CPU). Dính và sửa hai lỗi, ghi ở CLAUDE.md §11:
+    - `KeyError: 'feats'` với ultralytics 8.4.171 → ghim 8.4.7;
+    - exporter dynamo của torch 2.14 không trace được `.item()` → dùng `dynamo=False`.
+    - Ghim commit `2894bab` và sha256 của script DeepStream-Yolo, sha256 của weight. Thêm
+      `--simplify` để đầu ra là `[batch, 8400, 6]`, cùng dạng YOLO11.
+    - Chạy lại từ đầu cho file **trùng từng byte** (sha256 `e5414663…`).
+    - Xuất trên máy dev để máy thuê không phải cài ultralytics, tránh bẫy numpy 2 làm nvtracker
+      segfault.
+18. `eval/check_detector_cpu.py`: so nhiều ONNX trên ảnh WildTrack.
+    - Mô phỏng `nvinfer`: letterbox đệm đều hai phía bằng 0, giải mã như `NvDsInferParseYolo`,
+      `cluster-mode` 2 hoặc 4, topk 300.
+    - Phân loại từng hộp bằng `eval.diagnose_fp_region.classify_frame` (khớp / lệch hoặc trùng /
+      ma / ngoài lưới).
+    - Chạy trong venv `mct-reid` (có cv2 + onnxruntime).
+19. `configs/pipeline/config_infer_yolo26_b{4,7}.txt`: chỉ khác bản YOLO11 ở file model và
+    `cluster-mode=4`. Test ghim điều đó.
+20. Test: `tests/test_check_detector_cpu.py` (+9), `tests/test_pipeline_configs.py` (thêm họ YOLO26
+    và một test "chỉ khác model và cluster-mode"). Toàn bộ bộ test **688 passed, 5 skipped**, ruff
+    sạch.
+
 Lệnh tái lập (Git Bash, máy dev):
 ```
 PYTHONPATH=src ~/.venvs/mct-test/Scripts/python.exe -m tools.latency_report --log data/latency-run2.jsonl
@@ -98,6 +139,17 @@ PYTHONPATH="src;." ~/.venvs/mct-test/Scripts/python.exe -m eval.latency_tradeoff
     --topology configs/demo/wildtrack.topology.yaml --homography-dir configs/cameras/homography/wildtrack \
     --window-ms 1000 --min-frames 3 --position-interval-ms off 100 --work-dir data/s32/wt
 # rồi so data/s32/wt/w1000_m3_p{off,100}_r1/mct.db bảng global_tracks + appearances
+# phần 3: lệnh đầy đủ ở docstring eval/latency_tradeoff.py với --window-ms 500 1000 --min-frames 3 5
+#   --run r1/r2/r3 ... --work-dir data/s32/wt3, rồi (venv mct-eval!)
+PYTHONPATH="src;." ~/.venvs/mct-eval/Scripts/python.exe -m eval.eval_ground_plane --trackeval-path ~/TrackEval \
+    --wildtrack-dir data/wildtrack --homography-dir configs/cameras/homography/wildtrack --area in \
+    --threshold-m 1.0 --nms-m 0 0.5 --run w500_m3:r1 <fixture r1> data/s32/wt3/w500_m3_r1/mct.db ...
+# phần 4
+PYTHONPATH=src ~/.venvs/mct-export/Scripts/python.exe -m tools.export_yolo26
+PYTHONPATH="src;." ~/.venvs/mct-reid/Scripts/python.exe -m eval.check_detector_cpu \
+    --model yolo11s models/detector/yolo11s.onnx --model yolo26s models/detector/yolo26s.onnx \
+    --wildtrack data/wildtrack --homography-dir configs/cameras/homography/wildtrack \
+    --n-frames 40 --thresholds 0.25 --json data/s32/detcheck/yolo11_vs_26_40f.json
 ```
 
 ## Quyết định kỹ thuật
@@ -171,7 +223,7 @@ Mục tiêu "< 1 s" của đề cương ĐẠT khi và chỉ khi **p95 của c�
    - Tracklet đã có chủ thì không bao giờ đổi chủ (phiên 28, QĐ 1). Vậy có thể phát vị trí của nó
      ngay khi có khung mới, có giới hạn tần số, mà không cần chờ vòng gán.
    - Kết quả gán và SQLite không đổi, nên **độ chính xác không đổi theo cấu trúc**.
-2. **Chọn `window_ms` cho (B) theo quy tắc ràng buộc** (chưa làm): ở M6, trên dữ liệu 25–30 fps, chọn cấu hình
+2. **Chọn `window_ms` cho (B) theo quy tắc ràng buộc** (phần 3 đã đo trên WildTrack, xem QĐ 6): ở M6, trên dữ liệu 25–30 fps, chọn cấu hình
    có HOTA cao nhất **trong số** các cấu hình đạt (B) p95 < 1 s.
    - Ứng viên: `window_ms` 500, (B) p95 ≈ 0.94 s.
    - Bằng chứng duy nhất hiện có về giá độ chính xác: WildTrack r1 với `min_frames` 5 cho `w500`
@@ -203,6 +255,48 @@ Mục tiêu "< 1 s" của đề cương ĐẠT khi và chỉ khi **p95 của c�
   không tăng theo số cập nhật.
 - **Bật mặc định ở `configs/mct.yaml`** (hệ thống thật). Cấu hình WildTrack để tắt; bật hay tắt
   thì HOTA cũng như nhau.
+
+### 6. Chỉ đổi `window_ms` 1000 → 500 thì không mất độ chính xác đo được trên WildTrack
+
+- Bảng 7, n = 3, giữ nguyên `min_frames`.
+  - Hộp ảnh: m3 cho 15.55 so với 15.79 (Δ −0.24, t ≈ 0.6); m5 cho 16.14 so với 16.39 (Δ −0.25,
+    t ≈ 0.9).
+  - Mặt đất trong vùng: m3 cho 31.6 so với 31.1; m5 cho 32.6 so với 32.7.
+  - Mọi chênh lệch đều trong nhiễu và không cùng dấu giữa hai giao thức.
+- **Đính chính phiên 28.** Câu "giá ≈ 1 HOTA" ở đó đến từ việc đổi cả `min_frames`
+  (`w500_m1` so với `w1000_m3`), không phải từ việc đổi cửa sổ.
+- **Theo quy tắc ở QĐ 4.2, `window_ms` 500 được chọn.** Hai cửa sổ cho độ chính xác ngang nhau, và
+  chỉ 500 đạt (B): khoảng 0.94 s p95, còn 1000 cho khoảng 1.11 s.
+- **Giới hạn của bằng chứng.** WildTrack chạy 2 fps, nên cửa sổ 500 ms chỉ chứa 1 khung mỗi camera.
+  Ở 25–30 fps, cửa sổ ngắn hơn nghĩa là lần gán đầu dựa trên ít embedding hơn (khoảng 7 so với
+  khoảng 15 khung). Ảnh hưởng đó chưa đo được.
+- **Chưa đổi `configs/mct.yaml`.** Chờ người dùng/GVHD chốt, vì đây là đổi mặc định của hệ thống
+  thật dựa trên bằng chứng 2 fps.
+
+### 7. YOLO26s: không đổi detector, chưa thuê GPU cho nó
+
+- **"SOTA" không đứng vững với YOLO26s.**
+  - COCO chỉ hơn YOLO11s 1.6 mAP (0.8 ở chế độ không NMS) với cùng 2.5 ms trên T4.
+  - Ultralytics quảng bá nó ở tốc độ CPU/edge.
+  - Về độ chính xác thời gian thực, các dòng DETR (RF-DETR…) mới là ứng viên. Đó cũng là lý do
+    CLAUDE.md §9 xếp YOLO26 vào nhóm dự phòng.
+- **Kiểm CPU trên WildTrack (bảng 8): không hơn ở mức detector.**
+  - Recall 0.552 so với 0.572 (khoảng −2.6 sai số chuẩn).
+  - Precision trong lưới 0.734 so với 0.741.
+  - Ít hộp ngoài lưới hơn 19% (1014 so với 1258). Đây là điểm cộng nhỏ cho bước liên kết, vì track
+    ngoài vùng từng làm hỏng liên kết (phiên 30).
+  - Nhưng ROI bỏ hẳn 28% hộp YOLO cũng chỉ được +1.4 HOTA, sát nhiễu (phiên 31). Vì vậy dự đoán
+    HOTA của YOLO26s nằm trong nhiễu.
+- **Phương án bị loại:**
+  - *đổi thẳng vì "mới hơn":* không có bằng chứng, trái nguyên tắc 2 của CLAUDE.md §1;
+  - *thuê GPU chạy n = 3 ngay:* tốn một phiên GPU cho một kết quả dự đoán là trong nhiễu.
+  Nếu sau này có phiên GPU vì lý do khác (ví dụ đo (A)/(B) bằng đồng hồ thật), thêm YOLO26 vào rất
+  rẻ: ONNX và config đã sẵn.
+- **`cluster-mode=4` cho YOLO26.** Head một-một đúng là không cần NMS: bật NMS chỉ đổi 2% số hộp,
+  còn YOLO11 bỏ NMS thì nổ ra 7.5 lần số hộp. Đây là khuyến nghị của DeepStream-Yolo, và cũng là
+  cách dùng đúng thiết kế của model.
+- **Kiểm CPU là bộ lọc, không phải phán quyết.** Phiên 25 cho thấy recall tăng mà HOTA vẫn có thể
+  giảm. Nhưng ở đây recall còn KHÔNG tăng, nên không có lý do để kỳ vọng ngược lại.
 
 ## Số liệu đo được
 
@@ -244,6 +338,7 @@ nhiễu. Cột cuối cộng khoảng 75 ms pipeline (bảng 1).
 - Phần 1: `pytest tests/test_latency.py tests/test_latency_tradeoff.py tests/test_engine_online.py
   tests/test_no_gpu_imports.py tests/test_tracklet.py tests/test_associator.py`: **198 passed**.
 - Phần 2: toàn bộ bộ test **668 passed, 5 skipped**.
+- Phần 4: toàn bộ bộ test **688 passed, 5 skipped**.
 - Ruff check và format sạch trên `src tests eval` ở cả hai phần.
 
 ### 4. Đường phát vị trí trên fixture tốc độ thật (thời gian dữ liệu)
@@ -296,6 +391,41 @@ WildTrack r1 (`ds_wildtrack_7cam_r640n_r1`, `configs/demo/wildtrack_ds.mct.yaml`
 - Độ trễ theo khung ở 2 fps không có nghĩa, vì nhịp khung 500 ms đã lớn hơn khoảng phát: p95
   1 765 → 1 079 ms. Kết quả: `data/s32/wt/`.
 
+### 7. `window_ms` 500 so với 1000 trên WildTrack, n = 3
+
+Fixture `ds_wildtrack_7cam_r640n_r{1,2,3}` (phiên 25: T4, DeepStream 7.1, YOLO11s FP16 640, NvDCF +
+ReID OSNet DG), `configs/demo/wildtrack_ds.mct.yaml`, chỉ đổi `window_ms` và `min_frames`.
+
+| cấu hình | Hộp ảnh HOTA | AssA | IDF1 | Global ID | Mặt đất trong vùng HOTA (400 khung) | + NMS 0.5 m | 40 khung test |
+|---|---|---|---|---|---|---|---|
+| w500_m3 | 15.55 ± 0.53 | 10.30 ± 0.70 | 19.98 ± 1.03 | 408 | 31.6 ± 1.0 | 31.9 ± 1.4 | 42.7 ± 1.2 |
+| w1000_m3 | 15.79 ± 0.47 | 10.62 ± 0.66 | 20.27 ± 0.59 | 406 | 31.1 ± 0.8 | 32.1 ± 0.8 | 41.4 ± 1.1 |
+| w500_m5 | 16.14 ± 0.48 | 11.12 ± 0.69 | 20.76 ± 0.50 | 356 | 32.6 ± 0.4 | 33.4 ± 0.2 | 42.3 ± 1.5 |
+| w1000_m5 | 16.39 ± 0.08 | 11.44 ± 0.14 | 21.15 ± 0.11 | 355 | 32.7 ± 0.5 | 33.3 ± 1.2 | 41.7 ± 1.2 |
+
+Mặt đất: T = 1 m, chỉ trong lưới. Hộp ảnh: IoU 0.5, toàn khung, TrackEval. `w1000_m3` trùng đúng
+đối chứng của phiên 28 (hộp ảnh) và phiên 26 (mặt đất).
+
+### 8. YOLO11s so với YOLO26s trên CPU (ONNX FP32, ngưỡng 0.25)
+
+`eval/check_detector_cpu.py`: 40 khung chú thích rải đều × 7 camera = **280 ảnh**, 4 181 hộp GT.
+- Recall tính trên mọi người được chú thích (tất cả trong lưới).
+- "Precision trong lưới" = TP / (TP + hộp lệch/trùng + hộp ma có chân trong lưới).
+- CPU s/ảnh đo trên máy dev đang chạy kém, chỉ đọc tỉ lệ.
+- Kết quả: `data/s32/detcheck/`.
+
+| Model | Gom cụm | Hộp | TP | Recall | Precision toàn khung | Precision trong lưới | Ngoài lưới | Lệch/trùng trong lưới | Ma trong lưới |
+|---|---|---|---|---|---|---|---|---|---|
+| YOLO11s | NMS (cấu hình pipeline) | 4 488 | 2 392 | **0.572** | 0.533 | **0.741** | 1 258 | 205 | 633 |
+| YOLO11s | không | 33 588 | 2 637 | 0.631 | 0.079 | 0.101 | 7 526 | 18 928 | 4 497 |
+| YOLO26s | NMS | 4 060 | 2 298 | 0.550 | 0.566 | 0.750 | 998 | 189 | 575 |
+| YOLO26s | không (cấu hình đề xuất) | 4 159 | 2 309 | **0.552** | 0.555 | **0.734** | 1 014 | 238 | 598 |
+
+Cùng kết luận trên 70 ảnh (10 khung), ở cả ngưỡng 0.25 và 0.4. Ở ngưỡng 0.4: YOLO11s recall 0.460,
+precision trong lưới 0.772; YOLO26s 0.442 và 0.768. Nghĩa là không có ngưỡng nào để YOLO26s vượt
+lên. Đối chiếu pipeline thật: phiên 25 đo precision trong vùng 0.760 cho YOLO11s 640, cùng cỡ với
+0.741 ở đây.
+
 ## Vướng mắc / chưa xong
 
 - **(B) chưa từng đo bằng đồng hồ tường.** Hiện chỉ có số theo thời gian dữ liệu cộng một hằng số.
@@ -307,19 +437,25 @@ WildTrack r1 (`ds_wildtrack_7cam_r640n_r1`, `configs/demo/wildtrack_ds.mct.yaml`
   chế độ tắt (bảng 4), nhưng chưa kiểm ở chế độ bật. Cũng chưa đo chi phí XADD thật, và chưa đo
   trên dữ liệu đông người.
 - Glass-to-glass (camera → màn hình) chưa đo. Cần camera thật (đang chờ phần cứng).
-- Phiên 28 báo "giá ≈ 1 HOTA khi hạ `window_ms` 1000 → 500". Số đó so `w1000_m3` với `w500_m1`,
-  tức đổi cả `min_frames`. Giữ nguyên `min_frames` 5 thì một lần chạy r1 cho chênh lệch gần 0.
-  Cần n = 3 trước khi dùng.
+- `window_ms` 500 mới được chứng minh "không mất độ chính xác" ở 2 fps (QĐ 6). Ở 25–30 fps, lần
+  gán đầu dựa trên ít embedding hơn, và ảnh hưởng đó chưa đo được.
+- YOLO26s mới kiểm ở mức detector trên CPU (FP32 ONNX Runtime), chưa qua TensorRT FP16, tracker
+  và HOTA. Issue #688 ("có engine nhưng không ra hộp") cũng chưa loại trừ được trên DS 7.1. ONNX
+  thì đã chắc ra hộp người đúng định dạng.
 
 ## Bước tiếp theo
 
 1. Báo cáo GVHD (03–04/10). Trình bày:
    - định nghĩa ở QĐ 1;
    - (A) từ 1.05 s xuống ≈ 0.19 s nhờ đường phát vị trí, không mất độ chính xác (QĐ 5);
-   - (B) còn ≈ 1.11 s ở `window_ms` 1000, và quy tắc chọn cửa sổ ở QĐ 4.2.
+   - (B) còn ≈ 1.11 s ở `window_ms` 1000, và ≈ 0.94 s ở 500 mà không mất độ chính xác (QĐ 6);
+   - YOLO26 đã kiểm và không hơn YOLO11s (QĐ 7). Đây thêm một bằng chứng cho luận điểm "detector
+     không phải đòn bẩy".
    Hỏi thầy có chấp nhận ranh giới `t0` không, hay muốn glass-to-glass làm số chính.
-2. Chạy n = 3 trên WildTrack cho `w500_m5` so với `w1000_m5`, để biết giá độ chính xác khi chỉ đổi
-   cửa sổ. Nếu nằm trong nhiễu thì hạ `window_ms` xuống 500 để (B) đạt (≈ 0.94 s, vẫn sát).
-3. Lượt `vast-gpu` kế tiếp (nhớ hỏi người dùng trước): chạy `make engine-latency` với engine mới,
-   Redis thật, `--publish`. Mục đích: lần đầu có (A) và (B) bằng đồng hồ thật, vì log mới có cả
-   `t0_first` lẫn bản ghi `position`.
+2. Đổi `configs/mct.yaml` `window_ms` 1000 → 500 khi người dùng/GVHD đồng ý (QĐ 6). Kiểm lại ở M6
+   trên dữ liệu 25–30 fps.
+3. Lượt `vast-gpu` kế tiếp (nhớ hỏi người dùng trước):
+   - chạy `make engine-latency` với engine mới, Redis thật, `--publish`. Mục đích: lần đầu có (A)
+     và (B) bằng đồng hồ thật, vì log mới có cả `t0_first` lẫn bản ghi `position`;
+   - nếu còn thời gian, thêm YOLO26 n = 3 (rsync `models/detector/yolo26s.onnx`, dùng
+     `config_infer_yolo26_b7.txt`) để khép hẳn câu hỏi ở mức HOTA.
