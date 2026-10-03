@@ -27,10 +27,11 @@ gallery:
   similarity_mode: max
 
 association:
-  # Treo chờ GVHD: 500 đạt "thời gian tới Global ID" p95 < 1 s (≈ 0.94 s), 1000 thì không
-  # (≈ 1.11 s), và trên WildTrack 2 fps hai giá trị cho độ chính xác ngang nhau (phiên 32).
-  # Ở 25 fps cửa sổ ngắn hơn = lần gán đầu dựa trên ít embedding hơn — phải đo lại ở đây.
-  window_ms: 1000
+  # 500 như configs/mct.yaml (chốt 2026-10-03): đạt "thời gian tới Global ID" p95 < 1 s
+  # (≈ 0.94 s; 1000 cho ≈ 1.11 s), và trên WildTrack 2 fps hai giá trị cho độ chính xác ngang
+  # nhau (phiên 32). Ở 25 fps cửa sổ ngắn hơn = lần gán đầu dựa trên ít embedding hơn — đo lại
+  # ở đây bằng biến thể `w1000:association.window_ms=1000`.
+  window_ms: 500
   exclusion_slack_ms: 0
   # Ngưỡng cho ô CHỈ có ngoại hình (cặp không chồng lấn): phải siết (configs/mct.yaml).
   max_cost: 0.30

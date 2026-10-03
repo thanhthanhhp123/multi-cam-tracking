@@ -234,7 +234,7 @@ Xong thì `vastai destroy instance <id> -y` và kiểm `vastai show instances` k
 make lab-eval LAB_SESSION=s1
 make lab-eval LAB_SESSION=s2 LAB_EVAL_ARGS="--variant base \
     --variant mot_nguong:association.max_cost_geometric=null \
-    --variant w500:association.window_ms=500 \
+    --variant w1000:association.window_ms=1000 \
     --variant gap_reject:association.ground_gap_policy=reject"
 ```
 
@@ -253,7 +253,7 @@ Bảng thứ hai là con số trực tiếp nhất cho đóng góp chính của 
 |---|---|---|
 | `association.max_cost` | 0.20, 0.25, 0.30, 0.35 | ngưỡng ngoại hình cho cặp không chồng lấn |
 | `association.max_cost_geometric` | null, 0.6, 0.9, 1.2 | ngưỡng riêng cho ô có vị trí có đáng không (null = một ngưỡng chung) |
-| `association.window_ms` | 500, 1000 | giá độ chính xác của (B) < 1 s ở 25 fps (phiên 32 mới đo ở 2 fps) |
+| `association.window_ms` | 500 (mặc định), 1000 | 500 có làm mất độ chính xác ở 25 fps không (phiên 32 mới đo ở 2 fps); 1000 không đạt (B) < 1 s |
 | `association.ground_gap_policy` | allow, reject | `reject` có hại cho cặp không chồng lấn không |
 | `tracklet.min_frames` | 3, 5, 10 | đánh đổi độ trễ chốt danh tính / độ chính xác (phiên 28) |
 

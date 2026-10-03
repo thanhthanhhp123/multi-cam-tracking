@@ -44,8 +44,14 @@ gallery:
   similarity_mode: max
 
 association:
-  # Chu kỳ chạy vòng gán (ms).
-  window_ms: 1000
+  # Chu kỳ chạy vòng gán (ms). 500 từ 2026-10-03 (người dùng duyệt, phiên 33), trước là 1000.
+  # Đây là núm duy nhất của "thời gian tới Global ID" (định nghĩa "< 1 s", CLAUDE.md §7):
+  # p95 ≈ 0.94 s ở 500 (ĐẠT) so với ≈ 1.11 s ở 1000 (KHÔNG ĐẠT) — fixture 4 luồng ~31 fps,
+  # 64 tracklet, thời gian dữ liệu + ~75 ms pipeline (phiên 32, bảng 2). Độ chính xác: trên
+  # WildTrack n = 3, 500 so với 1000 nằm trong nhiễu ở cả hai giao thức (phiên 32, bảng 7).
+  # CHƯA đo: độ chính xác ở 25–30 fps (lần gán đầu dựa trên ít embedding hơn) và (B) bằng
+  # đồng hồ thật — cả hai đo ở M6 (`docs/m6/README.md`, 1000 là biến thể quét).
+  window_ms: 500
   # Ràng buộc loại trừ cùng camera: một người không thể là hai local track khác nhau của
   # cùng một camera TẠI CÙNG MỘT LÚC. Khoá này chỉ nới hai đầu khoảng thời gian khi hỏi
   # "hai tracklet có trùng nhau không", để chịu jitter mốc thời gian giữa các luồng.

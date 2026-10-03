@@ -239,7 +239,9 @@ Mọi ngưỡng nằm trong `configs/mct.yaml`, **không hardcode trong code** �
   - Vế (1) đạt nhờ **đường phát vị trí** (`publish.position_interval_ms`, mặc định 100): người đã
     có Global ID được phát ngay khi có khung, không chờ cửa sổ. Nhờ vậy p95 giảm từ 1.05 s xuống
     khoảng 0.19 s, mà kết quả liên kết không đổi. Vế (2) chỉ phụ thuộc `window_ms`: p95 khoảng
-    1.11 s ở 1000 ms, khoảng 0.94 s ở 500 ms.
+    1.11 s ở 1000 ms, khoảng 0.94 s ở 500 ms. **Mặc định là 500 từ 2026-10-03** (người dùng duyệt;
+    WildTrack n = 3 không mất độ chính xác). Còn phải đo ở M6: độ chính xác ở 25 fps và (B) bằng
+    đồng hồ thật.
 - Ground-truth tự gán bằng CVAT → `tools/cvat_to_mot.py` → `eval/gt/`.
 - **Dữ liệu tự thu (M6)**: quy trình đầy đủ ở `docs/m6/README.md`, chấm bằng `eval.run_lab_eval`
   (n lần chạy pipeline × biến thể cấu hình). Ngoài HOTA/IDF1 còn báo **độ chính xác bàn giao

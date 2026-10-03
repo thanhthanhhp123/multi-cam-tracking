@@ -131,7 +131,8 @@ Measured on rented GPUs, DeepStream 7.1 / CUDA 12.6 / TensorRT 10, YOLO11s FP16 
 | Frame latency (camera frame → shown on `mct:global`), p50 / p95 | ≈ 0.13 s / ≈ 0.19 s | ~31 fps replay, position path at 100 ms (+~75 ms pipeline) |
 | — same, position path off (updates only when the window closes) | 0.61 s / 1.05 s | 4 × 1080p, Tesla T4, real-time source, `window_ms` 1000 |
 | — of which is not waiting for the association window | ≈ 80 ms (p99) | same |
-| Time to Global ID (person's first frame in a camera → first Global ID on `mct:global`), p50 / p95 | ≈ 0.94 s / ≈ 1.11 s | ~31 fps replay, `window_ms` 1000, `min_frames` 5 (+~75 ms pipeline) |
+| Time to Global ID (person's first frame in a camera → first Global ID on `mct:global`), p50 / p95 | ≈ 0.55 s / ≈ 0.94 s | ~31 fps replay, `window_ms` 500 (default), `min_frames` 5 (+~75 ms pipeline) |
+| — same, `window_ms` 1000 (default until session 33) | ≈ 0.94 s / ≈ 1.11 s | same |
 
 **Latency definition** (fixed in session 32, `docs/worklog/2026-10-02-32-*`). The < 1 s target
 applies to two quantities, both measured from the frame reaching DeepStream to the result
@@ -154,10 +155,11 @@ and off is identical row for row. The cost is about 7× more updates on `mct:glo
 instead of 28/s on 4 streams) and about 4% engine throughput.
 
 Thesis targets: 3–4 streams at ≥ 15 FPS/stream — met with headroom (7 crowded WildTrack
-streams on a T4 give 13.5 FPS/stream). < 1 s latency — met for frame latency (≈ 0.19 s p95).
-Time to Global ID is **narrowly not met** with the default `window_ms` 1000 (≈ 1.11 s p95). At
-500 ms it is ≈ 0.94 s p95. The accuracy cost of that window at 25–30 fps is not measured yet. On
-WildTrack at 2 fps with `min_frames` 5, a single run puts it within noise.
+streams on a T4 give 13.5 FPS/stream). < 1 s latency — met for frame latency (≈ 0.19 s p95), and
+for time to Global ID since the default window became 500 ms (≈ 0.94 s p95; 1000 ms gave ≈ 1.11 s).
+On WildTrack (n = 3, both protocols) the 500 ms window costs no measurable accuracy. Still open:
+the accuracy cost at 25–30 fps, and a wall-clock (not data-time) measurement of time to Global
+ID — both are part of the self-collected-data runs.
 
 ## Demo
 
