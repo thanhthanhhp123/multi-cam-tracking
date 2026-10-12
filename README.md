@@ -240,13 +240,17 @@ is a config change.
 
 ## Self-collected data (M6)
 
-The full procedure — camera layout, floor markers, recording scenarios, clap sync, CVAT
-conventions, GPU runs, scoring — is in [`docs/m6/README.md`](docs/m6/README.md) (Vietnamese),
-with a printable [recording-day checklist](docs/m6/checklist-ngay-quay.md). The toolchain:
+Recorded with three IP cameras: an overlapping pair plus one non-overlapping camera, so a single
+session contains all three hand-over types. The full procedure — camera layout, floor markers,
+recording scenarios, sync, CVAT conventions, GPU runs, scoring — is in
+[`docs/m6/README.md`](docs/m6/README.md) (Vietnamese), with a printable
+[recording-day checklist](docs/m6/checklist-ngay-quay.md) and the
+[recording-laptop setup](docs/m6/laptop-ghi-hinh.md). The toolchain:
 
 | Step | Tool |
 |---|---|
-| sync phone recordings by a clap, cut to a common window, VFR → CFR | `tools.sync_recordings` |
+| record all RTSP streams on one laptop (stream copy, stdlib + ffmpeg only) and measure inter-camera offsets from the laptop's receive clock | `tools.record_rtsp` |
+| cut to a common window with those offsets (or a clap, for phones), VFR → CFR | `tools.sync_recordings` |
 | floor points → homography (refuses the placeholder template) | `tools.calibrate_homography` |
 | CVAT (frame step, abs/rel numbering auto-detected) → MOT GT + GT fixture | `tools.cvat_to_mot --fixture-out` |
 | transit times between cameras from a calibration walk | `tools.estimate_transit` |

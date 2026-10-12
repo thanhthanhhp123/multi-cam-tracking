@@ -4,19 +4,21 @@
 # khi mọi số dưới đây được đo thật và đổi thành `status: measured`. Quy trình đo và bố trí:
 # docs/m6/README.md.
 #
-# Bố trí đề xuất (đề cương mục 4.2: một cặp chồng lấn + các camera còn lại không chồng lấn):
+# Bố trí với 3 camera IP (từ 2026-10-12; đề cương mục 4.2: một cặp chồng lấn + camera còn
+# lại không chồng lấn):
 #
-#     ┌──────── khu A (sảnh/phòng) ────────┐          hành lang            đầu kia
-#     │  cam01 ◣              ◢ cam02      │  ~10–15 m  ── cam03 ── ~10 m ── cam04
+#     ┌──────── khu A (sảnh/phòng) ────────┐          lối đi / hành lang
+#     │  cam01 ◣              ◢ cam02      │  ~8–15 m  ──────────  cam03
 #     │      vùng sàn chung ~4 × 6 m       │
 #     └────────────────────────────────────┘
 #
 #  - cam01, cam02: nhìn CHUNG một vùng sàn từ hai góc → liên kết bằng homography
 #    (kịch bản 1 của đề cương mục 6.2).
-#  - cam03, cam04: không thấy khu A và không thấy nhau → liên kết bằng ngoại hình + thời
-#    gian di chuyển (kịch bản 2).
+#  - cam03: không thấy khu A → liên kết bằng ngoại hình + thời gian di chuyển (kịch bản 2).
+#    Đi A → cam03 → A → cam03 còn cho cả loại "quay lại cùng camera".
+#  - Cả ba loại cặp nằm trong CÙNG một buổi quay — đúng cấu hình hỗn hợp mà đồ án nhắm tới.
 #  - MỌI camera hiệu chỉnh về CÙNG một hệ toạ độ sàn (một gốc, đo bằng thước) — kể cả
-#    cam03/cam04: `same_camera_stitch` cần homography của chính camera đó để nối mảnh
+#    cam03: `same_camera_stitch` cần homography của chính camera đó để nối mảnh
 #    tracklet (+27% AssA trên WildTrack, phiên 18), và HomographyMapper chỉ nạp các camera
 #    cùng một `plane`.
 #
@@ -39,12 +41,7 @@ cameras:
     fps: 25
     overlaps_with: [cam01]
   cam03:
-    name: "Hành lang - giữa"
-    resolution: [1920, 1080]
-    fps: 25
-    overlaps_with: []
-  cam04:
-    name: "Hành lang - đầu kia"
+    name: "Lối đi"
     resolution: [1920, 1080]
     fps: 25
     overlaps_with: []
@@ -66,11 +63,5 @@ transitions:
     min_ms: 3000      # GIỮ CHỖ
     max_ms: 30000     # GIỮ CHỖ
     distance_m: 12.0  # GIỮ CHỖ
-  - from: cam03
-    to: cam04
-    bidirectional: true
-    min_ms: 3000      # GIỮ CHỖ
-    max_ms: 30000     # GIỮ CHỖ
-    distance_m: 10.0  # GIỮ CHỖ
 
 homography: {}

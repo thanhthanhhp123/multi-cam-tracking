@@ -6,10 +6,12 @@
 #   1. bash docker/vast_bootstrap.sh            (khong can FORCE_EXPORT_DEPS)
 #   2. bash docker/vast_lab.sh ffmpeg           sua ffmpeg cua image DS 7.1 (chi khi can buoc 3)
 #   3. bash docker/vast_lab.sh sync s1          dong bo + CFR video tho data/lab/raw/s1/cam0N.*
+#        co data/lab/raw/s1/record.json (tools.record_rtsp, camera IP) thi dung do lech trong do;
+#        khong co thi dong bo bang tieng vo tay (dien thoai)
 #        (bo qua neu da dong bo tren may khac va da day len data/lab/s1/cam0N.mp4)
-#   4. bash docker/vast_lab.sh engine s1        build engine TensorRT (b4 YOLO + ReID), ~3-5 phut
+#   4. bash docker/vast_lab.sh engine s1        build engine TensorRT (YOLO b<so camera> + ReID), ~3-5 phut
 #   5. bash docker/vast_lab.sh run s1 3         3 lan chay pipeline: fixture + log do tre dong ho that
-#   6. bash docker/vast_lab.sh fps s1           FPS 4 luong khong sync (hai lan, lay lan 2)
+#   6. bash docker/vast_lab.sh fps s1           FPS moi luong khong sync (hai lan, lay lan 2)
 #   7. bash docker/vast_lab.sh pack s1          gom ket qua -> data/lab_s1_results.tar
 #   Tren may dev: scp vast-gpu:/workspace/mct-repo/data/lab_s1_results.tar . && tar xf ...
 #   roi:  python -m eval.run_lab_eval ... (docs/m6/README.md, buoc "Cham")
@@ -36,6 +38,9 @@ ENGINE_CFG=configs/lab/lab.mct.yaml
 TOPO=configs/lab/topology.yaml
 HDIR=configs/lab/homography
 IDLE_LIMIT=15
+# Danh sach camera lay tu streams_lab.yaml (3 camera IP tu 2026-10-12), khong ghi cung o day.
+CAMS=$(grep -oE 'cam_id: *cam[0-9]+' "$STREAMS" | awk '{print $2}')
+NCAM=$(echo "$CAMS" | wc -w)
 
 # Giong vast_pnt.sh: ghi nhiet do / xung GPU suot lan do (phien 30: T4 ha xung 300 MHz).
 gpu_log_start() {
@@ -58,17 +63,19 @@ PY
 }
 
 # DeepStream-Yolo ghi engine vao <cwd>, khong vao cho config khai (CLAUDE.md §11).
+# builder.py dat batch = so nguon, nen engine mang so camera (config_infer_yolo11_b<N>.txt).
 cat_engine_yolo() {
-  if [ -f model_b4_gpu0_fp16.engine ] && [ ! -f models/detector/yolo11s.onnx_b4_gpu0_fp16.engine ]; then
-    mv model_b4_gpu0_fp16.engine models/detector/yolo11s.onnx_b4_gpu0_fp16.engine
-    echo "engine YOLO b4 -> models/detector/"
+  local b="b${NCAM}"
+  if [ -f "model_${b}_gpu0_fp16.engine" ] && [ ! -f "models/detector/yolo11s.onnx_${b}_gpu0_fp16.engine" ]; then
+    mv "model_${b}_gpu0_fp16.engine" "models/detector/yolo11s.onnx_${b}_gpu0_fp16.engine"
+    echo "engine YOLO ${b} -> models/detector/"
   fi
 }
 
 need_session() {
   session="${1:?ten buoi quay, vd s1}"
   export LAB_SESSION="$session"
-  for c in cam01 cam02 cam03 cam04; do
+  for c in $CAMS; do
     [ -f "data/lab/$session/$c.mp4" ] || { echo "FATAL: thieu data/lab/$session/$c.mp4 (chay buoc sync?)"; exit 1; }
   done
 }
@@ -85,8 +92,22 @@ ffmpeg)
 sync)
   session="${2:?ten buoi quay}"
   raw="data/lab/raw/$session"
+  if [ -f "$raw/record.json" ]; then
+    # Camera IP: tools.record_rtsp da do do lech theo dong ho may ghi va in san lenh.
+    mapfile -t cmd < <(python3 - "$raw/record.json" <<'PY'
+import json, sys
+rec = json.load(open(sys.argv[1], encoding="utf-8"))
+if not rec.get("ok") or not rec.get("sync"):
+    sys.exit("FATAL: record.json bao buoi ghi HONG - quay lai buoi nay")
+print(*["python3", *rec["sync"]["command"][1:]], sep=chr(10))
+PY
+    )
+    [ "${#cmd[@]}" -gt 1 ] || exit 1
+    "${cmd[@]}"
+    exit 0
+  fi
   args=()
-  for c in cam01 cam02 cam03 cam04; do
+  for c in $CAMS; do
     f=$(ls "$raw/$c".* 2>/dev/null | head -1 || true)
     [ -n "$f" ] || { echo "FATAL: khong co $raw/$c.*"; exit 1; }
     args+=(--video "$c=$f")

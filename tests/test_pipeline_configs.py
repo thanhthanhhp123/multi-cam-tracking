@@ -25,6 +25,7 @@ PERSON_CLASS_ID = 0
 PGIE_FAMILIES = {
     "yolo11": {
         "config_infer_yolo11.txt": 1,
+        "config_infer_yolo11_b3.txt": 3,
         "config_infer_yolo11_b4.txt": 4,
         "config_infer_yolo11_b7.txt": 7,
     },
@@ -35,6 +36,9 @@ PGIE_FAMILIES = {
 }
 PGIE_BATCHES = {name: batch for fam in PGIE_FAMILIES.values() for name, batch in fam.items()}
 PGIE_CONFIGS = sorted(PGIE_BATCHES)
+PGIE_FAMILY_PATHS = {
+    fam: {f"configs/pipeline/{name}" for name in names} for fam, names in PGIE_FAMILIES.items()
+}
 
 
 @pytest.fixture(scope="module")
@@ -446,14 +450,20 @@ def test_streams_reid_pnt_chi_khac_o_pgie(tag: str, pipeline_dir: Path) -> None:
 
 
 def test_streams_lab_chi_khac_streams_reid_o_nguon_va_sync(pipeline_dir: Path) -> None:
-    """Dữ liệu tự thu (M6) phải đi đúng đường đã đo ở M3/M5 (cùng tracker ReID, cùng engine
-    batch 4, cùng streammux) — khác duy nhất ở nguồn file và `sync: true` bắt buộc."""
+    """Dữ liệu tự thu (M6) phải đi đúng đường đã đo ở M3/M5 (cùng tracker ReID, cùng
+    streammux, cùng model detector) — khác ở nguồn file, `sync: true` bắt buộc, và batch của
+    engine theo số camera (3 camera IP từ 2026-10-12)."""
     lab = yaml.safe_load(
         (pipeline_dir.parent / "lab" / "streams_lab.yaml").read_text(encoding="utf-8")
     )
     reid = yaml.safe_load((pipeline_dir / "streams_reid.yaml").read_text(encoding="utf-8"))
     assert lab["sink"]["sync"] is True
-    for key in ("streammux", "tracker", "pgie"):
+    for key in ("streammux", "tracker"):
         assert lab[key] == reid[key], key
-    assert [s["cam_id"] for s in lab["sources"]] == ["cam01", "cam02", "cam03", "cam04"]
+    assert [s["cam_id"] for s in lab["sources"]] == ["cam01", "cam02", "cam03"]
     assert all("${LAB_SESSION}" in s["uri"] for s in lab["sources"])
+    # builder.py đặt batch = số nguồn; engine khai trong config phải cùng batch, không thì
+    # mỗi lần chạy build lại engine (~4 phút tiền thuê GPU).
+    pgie = _read(pipeline_dir.parent.parent / lab["pgie"]["config_file"])
+    assert pgie.getint("property", "batch-size") == len(lab["sources"])
+    assert lab["pgie"]["config_file"] in PGIE_FAMILY_PATHS["yolo11"]

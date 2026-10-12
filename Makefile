@@ -105,7 +105,7 @@ eval:  ## Chạy TrackEval trên kết quả trong eval/   (M6)
 # ---------- Dữ liệu tự thu (M6) — quy trình đầy đủ: docs/m6/README.md ----------
 
 LAB_SESSION ?= s1
-LAB_CAMS    ?= cam01 cam02 cam03 cam04
+LAB_CAMS    ?= cam01 cam02 cam03
 LAB_FPS     ?= 25
 LAB_GT      := data/fixtures/lab_$(LAB_SESSION)_gt.jsonl
 

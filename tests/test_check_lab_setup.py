@@ -221,12 +221,12 @@ def test_hieu_chinh_tu_choi_file_diem_ban_mau(repo_root: Path, tmp_path: Path):
     template = repo_root / "configs" / "lab" / "ground_points.yaml"
     with pytest.raises(ValueError, match="template"):
         load_point_file(template)
-    # Bỏ dòng status thì cấu trúc của bản mẫu đọc được: đủ 4 camera, mỗi camera >= 4 điểm.
+    # Bỏ dòng status thì cấu trúc của bản mẫu đọc được: đủ 3 camera, mỗi camera >= 4 điểm.
     data = yaml.safe_load(template.read_text(encoding="utf-8"))
     data.pop("status")
     measured = tmp_path / "points.yaml"
     measured.write_text(yaml.safe_dump(data), encoding="utf-8")
     points, meta = load_point_file(measured)
-    assert sorted(points) == ["cam01", "cam02", "cam03", "cam04"]
+    assert sorted(points) == ["cam01", "cam02", "cam03"]
     assert all(len(img) >= 4 for img, _ in points.values())
     assert meta["image_size"] == (1920, 1080)

@@ -17,7 +17,7 @@
 #      và đọc p95 sai số chiếu nó in ra cho từng camera: > 0.3 m là có điểm đo sai.
 #
 # Cặp chồng lấn cam01–cam02 BẮT BUỘC phải có (không có thì thành phần hình học bị bỏ qua
-# im lặng). cam03/cam04 rất nên có (nối mảnh tracklet cùng camera).
+# im lặng). cam03 rất nên có (nối mảnh tracklet cùng camera).
 
 status: template
 plane: ground
@@ -41,9 +41,3 @@ cameras:
       - {image: [1400, 950], world: [16.0, 2.00]}   # GIỮ CHỖ
       - {image: [1150, 500], world: [22.0, 2.00]}   # GIỮ CHỖ
       - {image: [750, 500], world: [22.0, 0.50]}    # GIỮ CHỖ
-  cam04:
-    points:
-      - {image: [500, 950], world: [26.0, 0.50]}    # GIỮ CHỖ
-      - {image: [1400, 950], world: [26.0, 2.00]}   # GIỮ CHỖ
-      - {image: [1150, 500], world: [32.0, 2.00]}   # GIỮ CHỖ
-      - {image: [750, 500], world: [32.0, 0.50]}    # GIỮ CHỖ

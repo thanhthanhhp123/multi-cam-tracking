@@ -144,7 +144,7 @@ src/
   mct/           tracklet.py, gallery.py, affinity.py, associator.py,
                  topology.py, homography.py, store.py
   dashboard/     app.py, live.py, static/, templates/
-  tools/         replay_metadata.py, record_metadata.py, rtsp_sim.py,
+  tools/         replay_metadata.py, record_metadata.py, rtsp_sim.py, record_rtsp.py,
                  calibrate_homography.py, cvat_to_mot.py, export_trackeval.py
 eval/            run_trackeval.py, gt/ (ground-truth MOT format + bảng global_id)
 tests/           fixtures/*.jsonl + test_*.py
@@ -360,6 +360,12 @@ giữ nguyên engine thì HOTA mặt đất tăng 31.1 → 63.8.
   cũ, trùng từng dòng SQLite).
 Phần còn lại của M6 là quay, chú thích, rồi chạy theo `docs/m6/README.md`.
 
+**Thiết bị M6 chốt ở phiên 34 (2026-10-12): 3 camera IP Tiandy TC-C131N**, không dùng điện thoại.
+cam01 và cam02 chồng lấn, cam03 không chồng lấn, nên mỗi buổi có đủ ba loại bàn giao. Ghi trên
+một laptop bằng `tools.record_rtsp` (chỉ cần thư viện chuẩn + ffmpeg), độ lệch đo theo đồng hồ
+laptop. Engine YOLO dùng batch 3 (`config_infer_yolo11_b3.txt`). Cách làm ở
+`docs/m6/laptop-ghi-hinh.md`.
+
 Bảng trên là **kế hoạch tham chiếu**, không phải tiến độ thật.
 
 **Trạng thái hiện tại:** xem 2–3 file mới nhất trong `docs/worklog/` (quy ước ở mục 10) —
@@ -429,6 +435,9 @@ và trong worklog chỉ link tới nó.
   Bật NTP trên mọi nguồn; điện thoại Android phát RTSP thường lệch — đo và ghi lại offset.
   Điện thoại tự quay ra FILE thì đồng bộ bằng tiếng vỗ tay (`tools.sync_recordings`). Công cụ đó
   cũng chuyển VFR → fps cố định; không chuyển thì "khung thứ i" của pipeline và của CVAT lệch nhau.
+  Camera IP ghi trên cùng một laptop (`tools.record_rtsp`) thì độ lệch đo theo đồng hồ laptop.
+  Ở hiện trường không có Internet nên camera không có NTP, vì thế **đừng dùng giờ in trên hình
+  để đồng bộ**.
 - **Công cụ in tiếng Việt ra stdout chết trên Windows khi chuyển hướng đầu ra** (cp1252,
   `UnicodeEncodeError` sau khi đã tính xong). Mọi `main()` có `print` phải gọi
   `sys.stdout.reconfigure(encoding="utf-8")`. Đã dính ở `compare_oracle_tracker` và
@@ -540,6 +549,8 @@ make engine-latency     # engine + đo mốc t0..t4 ra data/latency.jsonl
 make latency-report     # trung vị/p90/p99 TỪNG ĐOẠN — tìm khâu gây đuôi trễ
 
 # Dữ liệu tự thu (M6) — docs/m6/README.md; máy dev Windows không có make, lệnh Python ở đó
+python src/tools/record_rtsp.py check                  # trên laptop ghi hình: camera, ffmpeg, đĩa
+python src/tools/record_rtsp.py record --session s1    # ghi 3 camera -> data/lab/raw/s1/ + record.json
 make lab-homography     # điểm sàn configs/lab/ground_points.yaml -> configs/lab/homography/
 make lab-gt LAB_SESSION=s1       # CVAT data/cvat/s1/*.xml -> eval/gt/lab_s1 + fixture GT
 make lab-transit LAB_SESSION=calib   # transit time từ đoạn hiệu chỉnh -> đề xuất topology
