@@ -491,6 +491,18 @@ def test_record_camera_chet_giua_chung_thi_buoi_hong(tmp_path: Path, capsys) -> 
     assert "HỎNG" in out
 
 
+def test_eof_tren_stdin_khong_phai_enter() -> None:
+    """Máy dev 2026-10-12: stdin báo TTY nhưng đọc ra EOF ngay → buổi ghi dừng sau 0.9 s."""
+    import io
+    import threading
+
+    stop = threading.Event()
+    record_rtsp.wait_enter(io.StringIO(""), stop)
+    assert not stop.is_set()
+    record_rtsp.wait_enter(io.StringIO("\n"), stop)
+    assert stop.is_set()
+
+
 def test_record_tu_choi_ghi_de_buoi_da_co(tmp_path: Path) -> None:
     session = tmp_path / "raw" / "t1"
     session.mkdir(parents=True)

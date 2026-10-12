@@ -135,6 +135,49 @@
 - Ghi bằng ffmpeg giả (3 camera bắt đầu lệch nhau 0 / +0.4 / −0.2 s, 2.5 s): độ lệch tìm ra
   nằm trong ±0.06 s. Đây chỉ là kiểm cơ chế ghép nối, không phải độ chính xác đồng bộ thật.
 
+### Bổ sung cuối phiên: chạy thật với 3 camera (người dùng cho mật khẩu và duyệt tải ffmpeg)
+
+**Cấu hình:**
+- máy dev Windows 11, ffmpeg 9.0.2 essentials (gyan.dev, sha256 khớp);
+- 3 × Tiandy TC-C131N trên LAN nhà: 192.168.1.3 / .2 / .4 (con thứ ba đã cắm sẵn ở .4, MAC
+  Tiandy `e4-e6-6c-c8-cf-b3`);
+- luồng chính `s0`, RTSP qua TCP.
+
+**`check`:** cả 3 camera đang phát cấu hình mặc định của hãng:
+- **H.265, 2304×1296, ~25 fps, có audio** (pcm_alaw 8 kHz, tức camera có micro);
+- 0 FAIL, 4 WARN, đều vì độ phân giải khác 1920×1080.
+
+**Lần ghi đầu dừng sau 0.9 s (24 khung) mà vẫn báo `ok`.**
+- Nguyên nhân: stdin của môi trường chạy báo là TTY nhưng đọc ra EOF ngay, và luồng "Enter để
+  dừng" coi EOF là Enter.
+- Sửa: `wait_enter` chỉ dừng khi đọc được một dòng thật. +1 test. Nhờ `stopped_by: "user"`
+  trong `record.json` mà tìm ra ngay.
+
+**Ghi 60 s sau khi sửa** (`data/lab/raw/thu/`):
+
+| | cam01 | cam02 | cam03 |
+|---|---|---|---|
+| khung / thời lượng | 1494 / 59.8 s | 1494 / 59.8 s | 1494 / 59.7 s |
+| fps đo được | 24.96 | 24.96 | 25.00 |
+| bước dấu thời gian (trung vị / max) | 40 / 41 ms | 40 / 41 ms | 40 / 41 ms |
+| khoảng trống > 60 ms (mất khung) | 0 | 0 | 0 |
+| jitter trên đường bao | 21 ms | 20 ms | 20 ms |
+| trôi đồng hồ so với máy ghi | +105 ppm | +74 ppm | +103 ppm |
+| khoảng cách khung khoá | ~3.5 s | ~3.5 s | ~3.75 s |
+| dung lượng | 16.5 MB | 16.2 MB | 15.8 MB |
+
+- **fps đủ, không mất khung.**
+- Chênh trôi giữa các camera ≤ 31 ppm, tức ≤ 6 ms trên một buổi 3 phút. `edge_error_ms` ≤ 1 ms
+  trên 60 s.
+- Kiểm 4 giả định ở mục dưới:
+  1. `-progress` báo `frame`/`out_time_us` cho luồng chép: **ĐÚNG**;
+  2. "Timestamps are unset" xuất hiện **đúng 1 lần mỗi file**: chỉ gói đầu tiên, không còn gói
+     nào thiếu dấu thời gian trong file, chỉ để lại một bước 0 ms ở đầu. Bước CFR của
+     `sync_recordings` xử lý được, nên không thêm `-fflags +genpts`;
+  3. `-timeout`: chưa thử rút dây;
+  4. jitter và độ trôi: hợp lý.
+- Việc còn lại trên camera: đặt 1920×1080, H.264, I-frame interval 25.
+
 ## Vướng mắc / chưa xong
 
 - **Chưa chạy với ffmpeg thật và camera thật.** Bốn giả định cần kiểm ở lần ghi thử đầu tiên:

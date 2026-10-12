@@ -901,6 +901,21 @@ def record_session(
 # --------------------------------------------------------------------------------------
 
 
+def wait_enter(stream, stop: threading.Event) -> None:
+    """Đặt `stop` khi người dùng bấm Enter — CHỈ khi đọc được một dòng thật.
+
+    EOF (`readline()` trả chuỗi rỗng) không phải Enter: có môi trường báo stdin là TTY mà đọc
+    ra EOF ngay, và coi EOF là Enter thì mọi buổi ghi tự dừng sau chưa tới 1 giây (đo trên máy
+    dev 2026-10-12: 24 khung rồi dừng). Khi đó vẫn dừng được bằng Ctrl+C hoặc `--duration`.
+    """
+    try:
+        line = stream.readline()
+    except (OSError, ValueError):
+        return
+    if line:
+        stop.set()
+
+
 def _parse_camera(value: str) -> tuple[str, str]:
     if "=" not in value:
         raise argparse.ArgumentTypeError(f"cần dạng cam01=rtsp://..., nhận {redact(value)!r}")
@@ -1038,15 +1053,7 @@ def main(
 
     stop = threading.Event()
     if sys.stdin is not None and sys.stdin.isatty():
-
-        def _wait_enter() -> None:
-            try:
-                sys.stdin.readline()
-            except (OSError, ValueError):
-                return
-            stop.set()
-
-        threading.Thread(target=_wait_enter, daemon=True).start()
+        threading.Thread(target=wait_enter, args=(sys.stdin, stop), daemon=True).start()
     until = f"tự dừng sau {args.duration:g} s" if args.duration else "Enter hoặc Ctrl+C để dừng"
     print(f"Ghi buổi {args.session}: {', '.join(cameras)} -> {_rel_posix(out_dir)} ({until})")
     result = record_session(
