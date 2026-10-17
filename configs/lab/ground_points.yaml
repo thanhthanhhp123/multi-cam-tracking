@@ -1,43 +1,77 @@
 # Cặp điểm ảnh ↔ sàn để hiệu chỉnh homography các camera TỰ THU (M6).
 #
-# ĐÂY LÀ BẢN MẪU — toạ độ dưới đây là CHỖ GIỮ CHỖ, chạy hiệu chỉnh bằng nó ra ma trận vô
-# nghĩa. `tools.check_lab_setup` báo FAIL khi còn `status: template`.
+# Đo 2026-10-17, hành lang tầng (sàn gạch caro; một viên 67 cm, nhưng BƯỚC LƯỚI
+# kể cả ron = 18.4 m / 27 viên = 0.6815 m, người dùng đo bằng thước từ hộp tới túi đỏ — dùng số này).
+# Điểm ảnh = GIAO ĐIỂM ĐƯỜNG RON GẠCH, không click tay:
+#   - khung trung vị 30 ảnh / 20 s từ RTSP luồng chính 1920x1080 (xoá người đi qua),
+#     data/lab/calib_frames/r2/camXX_median.png. Video đồng bộ (tools.sync_recordings) giữ
+#     nguyên 1920x1080 nên toạ độ pixel dùng thẳng được.
+#   - Canny + HoughLinesP trong đa giác sàn, gom đoạn thành đường ron, khớp đường bằng bình
+#     phương tối thiểu toàn phần, rồi lấy giao điểm hai họ đường (ngang x dọc).
+#   - Fit thử trên lưới viên gạch: sai số chiếu trung vị 1.0 cm, lớn nhất 4.1 cm (cam01)
+#     và 2.3 cm (cam02). Các đường ron khác rơi đúng số nguyên viên (lệch <= 0.05 viên).
+# Nối lưới hai camera bằng 5 đồ vật đặt trên sàn (hộp, ba lô, túi đỏ, cặp nằm, quần), cùng
+# một quan hệ cho cả 5: hàng(cam02) = 9 - hàng(cam01), cột(cam02) = 1 - cột(cam01), lệch
+# <= 0.15 viên.
 #
-# Cách lấy (docs/m6/README.md, mục "Hiệu chỉnh"):
-#   1. Chọn một gốc toạ độ sàn chung cho CẢ khu thực nghiệm (vd góc tường khu A), trục x dọc
-#      hành lang, trục y vuông góc. Đơn vị mét.
-#   2. Mỗi camera chọn ≥ 4 điểm (nên 6–8) NẰM TRÊN SÀN, trải rộng khắp vùng nhìn, không ba
-#      điểm nào thẳng hàng: góc gạch, chân tường, vạch sơn, hoặc miếng băng dính dán xuống.
-#   3. Đo toạ độ mét của từng điểm bằng thước (`world`), đọc toạ độ pixel trên MỘT KHUNG của
-#      video ĐÃ ĐỒNG BỘ (`data/lab/<buổi>/camXX.mp4`, sau tools.sync_recordings — để kích thước
-#      ảnh và chiều xoay đúng như pipeline thấy) bằng bất kỳ trình xem ảnh nào (`image`).
-#   4. Chạy:
-#        PYTHONPATH=src python -m tools.calibrate_homography \
-#            --points configs/lab/ground_points.yaml --out configs/lab/homography
-#      và đọc p95 sai số chiếu nó in ra cho từng camera: > 0.3 m là có điểm đo sai.
+# HỆ TOẠ ĐỘ SÀN (mét), dùng chung cho mọi camera:
+#   gốc (0, 0) = góc gạch ngay cạnh cái HỘP (lượt 1), trên đường ron dọc GẦN bức tường có
+#                hộp/ba lô/túi đỏ nhất. Chân tường đó ở y ~ -0.50 m.
+#   x: dọc hành lang, dương về phía cam02.  y: ngang hành lang, dương đi ra xa bức tường đó.
+#   Hành lang rộng ~2.4 viên ~ 1.6 m (ước từ ảnh, cả hai camera khớp nhau ở phía tường hộp).
 #
-# Cặp chồng lấn cam01–cam02 BẮT BUỘC phải có (không có thì thành phần hình học bị bỏ qua
-# im lặng). cam03 rất nên có (nối mảnh tracklet cùng camera).
+# cam03: cùng hành lang thẳng, về phía cam02, quay lưng về phía hộp. Mốc = túi đỏ đặt sát
+#   cùng bức tường, cách hộp 27 viên (18.4 m, thước dây); túi nằm trên đường ron ngang hàng 0
+#   của cam03 (lệch 0.08 viên). Lưới cam03: khung trung vị r3/cam03_median.png, hàng 0..6.
 
-status: template
 plane: ground
 image_size: [1920, 1080]
 cameras:
   cam01:
     points:
-      - {image: [412, 903], world: [0.00, 0.00]}    # GIỮ CHỖ
-      - {image: [1385, 887], world: [4.20, 0.00]}   # GIỮ CHỖ
-      - {image: [1102, 615], world: [4.20, 6.50]}   # GIỮ CHỖ
-      - {image: [530, 622], world: [0.00, 6.50]}    # GIỮ CHỖ
+      - {image: [991.3, 1023.5], world: [0.000, 0.000]}   # hàng 7, cột 1
+      - {image: [745.1, 1076.8], world: [0.000, 0.681]}   # hàng 7, cột 0
+      - {image: [927.4, 929.7], world: [0.681, 0.000]}   # hàng 6, cột 1
+      - {image: [709.6, 965.6], world: [0.681, 0.681]}   # hàng 6, cột 0
+      - {image: [877.4, 856.2], world: [1.363, 0.000]}   # hàng 5, cột 1
+      - {image: [683.5, 883.8], world: [1.363, 0.681]}   # hàng 5, cột 0
+      - {image: [835.0, 794.0], world: [2.044, 0.000]}   # hàng 4, cột 1
+      - {image: [662.8, 818.9], world: [2.044, 0.681]}   # hàng 4, cột 0
+      - {image: [801.6, 744.9], world: [2.726, 0.000]}   # hàng 3, cột 1
+      - {image: [646.0, 766.4], world: [2.726, 0.681]}   # hàng 3, cột 0
+      - {image: [773.2, 703.1], world: [3.407, 0.000]}   # hàng 2, cột 1
+      - {image: [631.8, 722.1], world: [3.407, 0.681]}   # hàng 2, cột 0
+      - {image: [749.6, 668.4], world: [4.089, 0.000]}   # hàng 1, cột 1
+      - {image: [620.1, 685.4], world: [4.089, 0.681]}   # hàng 1, cột 0
+      - {image: [728.8, 638.0], world: [4.770, 0.000]}   # hàng 0, cột 1
+      - {image: [610.0, 653.6], world: [4.770, 0.681]}   # hàng 0, cột 0
   cam02:
     points:
-      - {image: [300, 880], world: [4.20, 0.00]}    # GIỮ CHỖ
-      - {image: [1500, 900], world: [4.20, 6.50]}   # GIỮ CHỖ
-      - {image: [1200, 600], world: [0.00, 6.50]}   # GIỮ CHỖ
-      - {image: [600, 610], world: [0.00, 0.00]}    # GIỮ CHỖ
+      - {image: [1029.7, 688.5], world: [-1.363, 0.000]}   # hàng 0, cột 0
+      - {image: [1178.8, 705.0], world: [-1.363, 0.681]}   # hàng 0, cột 1
+      - {image: [1002.5, 730.6], world: [-0.681, 0.000]}   # hàng 1, cột 0
+      - {image: [1163.9, 748.8], world: [-0.681, 0.681]}   # hàng 1, cột 1
+      - {image: [971.5, 778.7], world: [0.000, 0.000]}   # hàng 2, cột 0
+      - {image: [1146.3, 800.4], world: [0.000, 0.681]}   # hàng 2, cột 1
+      - {image: [932.3, 839.4], world: [0.681, 0.000]}   # hàng 3, cột 0
+      - {image: [1125.0, 862.9], world: [0.681, 0.681]}   # hàng 3, cột 1
+      - {image: [881.3, 918.4], world: [1.363, 0.000]}   # hàng 4, cột 0
+      - {image: [1096.7, 946.1], world: [1.363, 0.681]}   # hàng 4, cột 1
+      - {image: [821.8, 1010.6], world: [2.044, 0.000]}   # hàng 5, cột 0
+      - {image: [1061.8, 1048.6], world: [2.044, 0.681]}   # hàng 5, cột 1
   cam03:
     points:
-      - {image: [500, 950], world: [16.0, 0.50]}    # GIỮ CHỖ
-      - {image: [1400, 950], world: [16.0, 2.00]}   # GIỮ CHỖ
-      - {image: [1150, 500], world: [22.0, 2.00]}   # GIỮ CHỖ
-      - {image: [750, 500], world: [22.0, 0.50]}    # GIỮ CHỖ
+      - {image: [896.9, 1043.7], world: [18.400, 0.000]}   # hàng 0, cột 1
+      - {image: [676.4, 1071.4], world: [18.400, 0.681]}   # hàng 0, cột 0
+      - {image: [846.0, 965.8], world: [19.081, 0.000]}   # hàng 1, cột 1
+      - {image: [650.2, 988.3], world: [19.081, 0.681]}   # hàng 1, cột 0
+      - {image: [805.8, 904.2], world: [19.763, 0.000]}   # hàng 2, cột 1
+      - {image: [629.6, 922.9], world: [19.763, 0.681]}   # hàng 2, cột 0
+      - {image: [770.5, 850.2], world: [20.444, 0.000]}   # hàng 3, cột 1
+      - {image: [612.2, 867.9], world: [20.444, 0.681]}   # hàng 3, cột 0
+      - {image: [744.5, 810.3], world: [21.126, 0.000]}   # hàng 4, cột 1
+      - {image: [598.5, 824.6], world: [21.126, 0.681]}   # hàng 4, cột 0
+      - {image: [719.2, 771.6], world: [21.807, 0.000]}   # hàng 5, cột 1
+      - {image: [585.8, 784.4], world: [21.807, 0.681]}   # hàng 5, cột 0
+      - {image: [699.7, 741.8], world: [22.489, 0.000]}   # hàng 6, cột 1
+      - {image: [576.2, 753.9], world: [22.489, 0.681]}   # hàng 6, cột 0

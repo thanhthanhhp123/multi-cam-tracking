@@ -51,17 +51,21 @@ unknown_pair_policy: allow
 
 transitions:
   # Ra khỏi khu A (thấy lần cuối ở cam01 HOẶC cam02) rồi hiện ở cam03.
+  # distance_m đo 2026-10-17 trên hệ toạ độ sàn của configs/lab/ground_points.yaml (hành lang
+  # thẳng, x dọc hành lang): vùng sàn cam03 bắt đầu ở x = 18.4 m (27 viên, thước dây); cam02
+  # thấy sàn tới x ~ 2.0 m. cam01 nhìn dọc hành lang thấy tới tận vùng cam03 (x = 18.4 m rơi
+  # vào pixel ~(561, 418)) — 12.4 m ở dưới giả định cam01 bị cắt ở x <= 6 m (ROI, CHƯA LÀM).
   - from: cam01
     to: cam03
     bidirectional: true
-    min_ms: 3000      # GIỮ CHỖ
-    max_ms: 30000     # GIỮ CHỖ
-    distance_m: 12.0  # GIỮ CHỖ
+    min_ms: 3000      # GIỮ CHỖ — đo bằng buổi calib
+    max_ms: 30000     # GIỮ CHỖ — đo bằng buổi calib
+    distance_m: 12.4
   - from: cam02
     to: cam03
     bidirectional: true
-    min_ms: 3000      # GIỮ CHỖ
-    max_ms: 30000     # GIỮ CHỖ
-    distance_m: 12.0  # GIỮ CHỖ
+    min_ms: 3000      # GIỮ CHỖ — đo bằng buổi calib
+    max_ms: 30000     # GIỮ CHỖ — đo bằng buổi calib
+    distance_m: 16.4
 
 homography: {}

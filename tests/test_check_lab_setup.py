@@ -181,7 +181,8 @@ def test_ground_truth_thieu_loai_cap_thi_warn(tmp_path: Path):
 # --------------------------------------------------------------------------------------
 
 
-def test_ban_mau_cua_repo_chi_fail_o_cho_giu_cho(repo_root: Path, capsys, tmp_path: Path):
+def test_cau_hinh_lab_cua_repo_chi_fail_o_cho_chua_do(repo_root: Path, capsys, tmp_path: Path):
+    """Homography đo thật 2026-10-17; topology còn `status: template` tới khi đo transit."""
     code = main(
         [
             "--lab-dir",
@@ -195,9 +196,9 @@ def test_ban_mau_cua_repo_chi_fail_o_cho_giu_cho(repo_root: Path, capsys, tmp_pa
     out = capsys.readouterr().out
     assert code == 1
     fails = [line for line in out.splitlines() if line.startswith("[FAIL]")]
-    assert len(fails) == 2, out
-    assert any("topology" in f and "template" in f for f in fails)
-    assert any("homography" in f and "template" in f for f in fails)
+    assert len(fails) == 1, out
+    assert "topology" in fails[0] and "template" in fails[0]
+    assert "[OK  ] homography" in out
 
 
 @pytest.mark.parametrize("name", ["lab.mct.yaml"])
@@ -218,14 +219,13 @@ def test_hieu_chinh_tu_choi_file_diem_ban_mau(repo_root: Path, tmp_path: Path):
     """Toạ độ giữ chỗ vẫn khớp ra một ma trận hợp lệ về hình thức — phải chặn từ cửa."""
     from tools.calibrate_homography import load_point_file
 
-    template = repo_root / "configs" / "lab" / "ground_points.yaml"
+    measured = repo_root / "configs" / "lab" / "ground_points.yaml"
+    data = yaml.safe_load(measured.read_text(encoding="utf-8"))
+    template = tmp_path / "points.yaml"
+    template.write_text(yaml.safe_dump({"status": "template", **data}), encoding="utf-8")
     with pytest.raises(ValueError, match="template"):
         load_point_file(template)
-    # Bỏ dòng status thì cấu trúc của bản mẫu đọc được: đủ 3 camera, mỗi camera >= 4 điểm.
-    data = yaml.safe_load(template.read_text(encoding="utf-8"))
-    data.pop("status")
-    measured = tmp_path / "points.yaml"
-    measured.write_text(yaml.safe_dump(data), encoding="utf-8")
+    # File điểm đo thật của repo: đủ 3 camera, mỗi camera >= 4 điểm.
     points, meta = load_point_file(measured)
     assert sorted(points) == ["cam01", "cam02", "cam03"]
     assert all(len(img) >= 4 for img, _ in points.values())
