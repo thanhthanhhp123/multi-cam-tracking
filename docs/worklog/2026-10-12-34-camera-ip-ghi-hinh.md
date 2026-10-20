@@ -180,24 +180,24 @@
 
 ## Vướng mắc / chưa xong
 
-- **Chưa chạy với ffmpeg thật và camera thật.** Bốn giả định cần kiểm ở lần ghi thử đầu tiên:
-  1. `-progress` báo `frame` và `out_time_us` cho luồng chép (`-c copy`);
-  2. dấu thời gian RTP của Tiandy vào Matroska không lỗi (`Timestamps are unset` thì thêm
-     `-fflags +genpts`);
-  3. `-timeout` (µs) làm ffmpeg thoát khi rút dây camera;
-  4. jitter và độ trôi trong `record.json` ở mức hợp lý (jitter vài ms, trôi vài chục ppm).
+Trạng thái cuối phiên (sau phần bổ sung ở trên):
+
+- Bốn giả định về ffmpeg/camera thật: (1), (2), (4) **đã kiểm, đúng** trên lần ghi 60 s.
+  Còn (3): `-timeout` (µs) làm ffmpeg thoát khi rút dây camera, chưa thử.
 - `sync_recordings` chưa chạy với ffmpeg thật (vẫn treo từ phiên 33). File vào giờ là `.mkv`.
-- Chưa biết camera thứ ba, nguồn điện (PoE hay adapter) và địa điểm quay.
+- Camera vẫn ở cấu hình mặc định của hãng (H.265, 2304×1296); phải đặt 1920×1080, H.264,
+  I-frame interval 25 trước khi quay.
+- Chưa biết nguồn điện (PoE hay adapter) và địa điểm quay.
 - Laptop của bạn: Python, ffmpeg, git, cổng LAN đều chưa kiểm.
-- Thay đổi chưa commit. Laptop clone từ GitHub nên phải commit và push trước khi đem đi.
+- Đã commit và push (`5123d24`, bản sửa `fe8c7db`), laptop clone được.
 - Vẫn treo: kết quả buổi gặp GVHD.
 
 ## Bước tiếp theo
 
-1. Người dùng thêm mật khẩu vào `.env` trên máy dev. Đồng ý thì tải ffmpeg static về máy dev
-   (~100 MB, chỉ chép luồng nên nhẹ máy), rồi chạy `check` và `record --session thu
-   --duration 60` với 2 camera đang cắm. Đọc `record.json` và log để kiểm 4 giả định ở trên.
-2. Commit, rồi push khi người dùng đồng ý, để laptop clone được.
-3. Diễn tập trên laptop ở nhà với cả 3 camera (`docs/m6/laptop-ghi-hinh.md` mục A.6).
+1. ~~Thêm mật khẩu vào `.env`, tải ffmpeg, chạy `check` và `record --session thu --duration 60`.~~
+   Xong cuối phiên, với cả 3 camera (xem phần bổ sung).
+2. ~~Commit và push.~~ Xong.
+3. Đặt cấu hình camera (1920×1080, H.264, I-frame 25), rồi diễn tập trên laptop với cả 3 camera
+   (`docs/m6/laptop-ghi-hinh.md` mục A.6).
 4. Quay theo `docs/m6/README.md` mục 3, rồi `vast_lab.sh sync` (đọc `record.json`) → hiệu chỉnh
    homography → CVAT.
