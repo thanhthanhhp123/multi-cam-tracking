@@ -31,6 +31,7 @@ from typing import Any, Literal
 
 from common.config import load_yaml
 from common.logging import get_logger
+from mct.roi import GroundRoi, RoiError
 
 log = get_logger(__name__)
 
@@ -50,6 +51,8 @@ class CameraSpec:
     resolution: tuple[int, int] = (1920, 1080)
     fps: int = 15
     overlaps_with: frozenset[str] = frozenset()
+    ground_roi: GroundRoi | None = None
+    """Vùng sàn camera này được tính là thấy (`mct/roi.py`). `None` = cả khung hình."""
 
 
 @dataclass(slots=True, frozen=True)
@@ -102,12 +105,18 @@ class Topology:
         for cam_id, spec in (data.get("cameras") or {}).items():
             spec = spec or {}
             resolution = spec.get("resolution") or [1920, 1080]
+            roi = spec.get("ground_roi")
+            try:
+                ground_roi = None if roi is None else GroundRoi.from_mapping(roi)
+            except RoiError as e:
+                raise TopologyError(f"camera '{cam_id}': {e}") from e
             cameras[str(cam_id)] = CameraSpec(
                 cam_id=str(cam_id),
                 name=str(spec.get("name", "")),
                 resolution=(int(resolution[0]), int(resolution[1])),
                 fps=int(spec.get("fps", 15)),
                 overlaps_with=frozenset(str(c) for c in (spec.get("overlaps_with") or [])),
+                ground_roi=ground_roi,
             )
 
         policy = str(data.get("unknown_pair_policy", "allow"))
@@ -182,6 +191,11 @@ class Topology:
     @property
     def camera_ids(self) -> list[str]:
         return sorted(self.cameras)
+
+    @property
+    def ground_rois(self) -> dict[str, GroundRoi]:
+        """{cam_id: ROI} của các camera có khai `ground_roi`."""
+        return {c: s.ground_roi for c, s in self.cameras.items() if s.ground_roi is not None}
 
     def is_overlapping(self, cam_a: str, cam_b: str) -> bool:
         spec = self.cameras.get(cam_a)

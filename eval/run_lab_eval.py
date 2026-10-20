@@ -47,7 +47,7 @@ from typing import Any
 
 import yaml
 
-from eval import compare_oracle_tracker, eval_handover
+from eval import compare_oracle_tracker, eval_handover, roi_filter_fixture
 from tools import assign_gt
 
 KINDS = ("overlap", "non_overlap", "same_camera")
@@ -186,6 +186,32 @@ def main(argv: list[str] | None = None) -> int:
     variants = args.variant or [("base", {})]
     if len({n for n, _ in variants}) != len(variants):
         p.error("trùng tên biến thể")
+
+    # 0. Lọc vùng sàn theo camera (`ground_roi` trong topology): cắt GT và kết quả theo CÙNG
+    # một vạch. Engine cũng tự lọc, nhưng chấm đơn camera và bảng GT đọc thẳng fixture.
+    roi_filter = (
+        roi_filter_fixture.topology_filter(args.topology, args.homography_dir)
+        if args.topology.is_file()
+        else None
+    )
+    roi_report: dict[str, Any] = {}
+    if roi_filter is not None:
+        roi_dir = work / "roi"
+        roi_dir.mkdir(parents=True, exist_ok=True)
+        gt_roi = roi_dir / args.gt_fixture.name
+        roi_report["gt"] = roi_filter_fixture.filter_fixture(args.gt_fixture, gt_roi, roi_filter)
+        args.gt_fixture = gt_roi
+        filtered = []
+        for name, fixture in runs:
+            out = roi_dir / f"{name}.jsonl"
+            roi_report[name] = roi_filter_fixture.filter_fixture(fixture, out, roi_filter)
+            filtered.append((name, out))
+        runs = filtered
+        roi_report["rois"] = {c: r.to_mapping() for c, r in sorted(roi_filter.rois.items())}
+        (roi_dir / "report.json").write_text(
+            json.dumps(roi_report, indent=2, ensure_ascii=False) + "\n", encoding="utf-8"
+        )
+        print(f"lọc vùng sàn {roi_report['rois']}: GT bỏ/tổng theo camera {roi_report['gt']}")
 
     # 1. Bảng GT cho từng lần chạy pipeline — một lần, dùng chung cho mọi biến thể.
     tables: dict[str, Path] = {}

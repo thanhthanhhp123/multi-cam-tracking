@@ -148,3 +148,75 @@ def test_noi_cac_cong_cu(tmp_path: Path, monkeypatch, capsys):
     assert str(work / "w500" / "w500_r2" / "mct.db") in dbs
     assert (work / "summary.md").is_file()
     assert "w500" in capsys.readouterr().out
+
+
+def test_loc_vung_san_ca_gt_lan_ket_qua_truoc_khi_cham(tmp_path: Path, monkeypatch):
+    """Topology có `ground_roi` thì GT và fixture pipeline đi qua CÙNG bộ lọc trước mọi bước."""
+    import numpy as np
+
+    from common.schema import Detection, FrameMessage, read_jsonl, write_jsonl
+    from mct.homography import CameraHomography, HomographyMapper
+
+    topo = tmp_path / "topology.yaml"
+    topo.write_text(
+        yaml.safe_dump({"cameras": {"cam01": {"ground_roi": {"x_m": [None, 6.0]}}}}),
+        encoding="utf-8",
+    )
+    hdir = tmp_path / "homography"
+    HomographyMapper({"cam01": CameraHomography(cam_id="cam01", matrix=np.eye(3))}).save(hdir)
+
+    def det(tid: int, foot_x: float) -> Detection:  # homography đơn vị: chân pixel = mét
+        return Detection(local_track_id=tid, bbox=(foot_x - 0.5, -2.0, 1.0, 2.0), confidence=0.9)
+
+    def fixture(path: Path) -> Path:
+        msg = FrameMessage(
+            cam_id="cam01", frame_id=0, ts_ms=1, frame_pts_ns=0, frame_width=1920,
+            frame_height=1080, detections=[det(1, 2.0), det(2, 18.4)],
+        )  # fmt: skip
+        write_jsonl(path, [msg])
+        return path
+
+    gt, fx = fixture(tmp_path / "gt.jsonl"), fixture(tmp_path / "fx1.jsonl")
+    seen: dict[str, list[str]] = {}
+
+    def fake_assign(argv):
+        seen["assign"] = argv
+        Path(argv[argv.index("--out") + 1]).write_text("{}", encoding="utf-8")
+        return 0
+
+    def fake_compare(argv):
+        seen["compare"] = argv
+        work = Path(argv[argv.index("--work-dir") + 1])
+        (work / "compare_oracle_tracker.json").write_text('{"mct": {}}', encoding="utf-8")
+        return 0
+
+    def fake_handover(argv):
+        out = Path(argv[argv.index("--json") + 1])
+        out.parent.mkdir(parents=True, exist_ok=True)
+        out.write_text(json.dumps(_handover(1.0, None)), encoding="utf-8")
+        return 0
+
+    monkeypatch.setattr(run_lab_eval.assign_gt, "main", fake_assign)
+    monkeypatch.setattr(run_lab_eval.compare_oracle_tracker, "main", fake_compare)
+    monkeypatch.setattr(run_lab_eval.eval_handover, "main", fake_handover)
+    config = tmp_path / "lab.mct.yaml"
+    config.write_text("{}", encoding="utf-8")
+    work = tmp_path / "work"
+    argv = [
+        "--config", str(config), "--topology", str(topo), "--homography-dir", str(hdir),
+        "--gt-fixture", str(gt), "--run", "r1", str(fx), "--work-dir", str(work),
+    ]  # fmt: skip
+    assert run_lab_eval.main(argv) == 0
+
+    a = seen["assign"]
+    assert Path(a[a.index("--gt-fixture") + 1]) == work / "roi" / "gt.jsonl"
+    assert Path(a[a.index("--fixture") + 1]) == work / "roi" / "r1.jsonl"
+    # bảng danh tính của GT không đổi: lọc chỉ bỏ hộp, không đổi id
+    assert Path(a[a.index("--gt-fixture-table") + 1]) == tmp_path / "gt.gt.json"
+    c = seen["compare"]
+    assert Path(c[c.index("--gt-fixture") + 1]) == work / "roi" / "gt.jsonl"
+    for name in ("gt.jsonl", "r1.jsonl"):
+        (msg,) = read_jsonl(work / "roi" / name)
+        assert [d.local_track_id for d in msg.detections] == [1]
+    report = json.loads((work / "roi" / "report.json").read_text(encoding="utf-8"))
+    assert report["gt"] == {"cam01": [1, 2]} and report["r1"] == {"cam01": [1, 2]}

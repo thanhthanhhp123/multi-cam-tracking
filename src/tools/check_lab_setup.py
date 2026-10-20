@@ -17,7 +17,8 @@ Kiểm những gì (mỗi dòng in OK / WARN / FAIL; có FAIL thì mã thoát 1)
 2. streams: cam_id trùng khớp topology, `${LAB_SESSION}` thế được, `sink.sync: true`,
    kích thước streammux = độ phân giải trong topology.
 3. homography: cặp chồng lấn PHẢI có đủ hai camera (FAIL), camera khác nên có (WARN: mất
-   nối mảnh cùng camera); `image_size` khớp topology; cùng một `plane`.
+   nối mảnh cùng camera); `image_size` khớp topology; cùng một `plane`; camera khai
+   `ground_roi` phải có homography (FAIL — engine sẽ dừng).
 4. ground_points: không còn `status: template` (nếu thư mục homography chưa có gì).
 5. engine: cấu hình đọc được bằng chính hàm của engine, và `ground_path_max_points` đủ cho
    fps (≥ fps × 20 s, không thì quỹ đạo bị tỉa thưa — phiên 16).
@@ -197,6 +198,12 @@ def check_homography(
         want = topo.cameras[cam].resolution
         if size is not None and tuple(size) != tuple(want):
             rep.fail("homography", f"{cam}: hiệu chỉnh ở {size} nhưng topology ghi {want}")
+    for cam, roi in sorted(topo.ground_rois.items()):
+        if cam in calibrated:
+            rep.ok("homography", f"{cam}: lọc vùng sàn {roi.to_mapping()}")
+        else:
+            # Engine dừng ngay với lỗi này (mct/roi.py) — báo ở đây cho khỏi tốn một lượt thuê.
+            rep.fail("homography", f"{cam} khai ground_roi nhưng chưa hiệu chỉnh")
     return mapper
 
 

@@ -209,10 +209,13 @@ def test_cau_hinh_engine_lab_dung_duoc_voi_engine(repo_root: Path, name: str):
     engine = build_engine(
         config,
         topology_path=repo_root / "configs" / "lab" / "topology.yaml",
+        homography_dir=repo_root / "configs" / "lab" / "homography",
         db_path=":memory:",
     )
     assert engine is not None
     assert config["association"]["max_cost_geometric"] > config["association"]["max_cost"]
+    # cam01 nhìn thấy tới vùng cam03: topology lab khai ROI, engine phải dựng được bộ lọc.
+    assert engine.roi_filter is not None and "cam01" in engine.roi_filter.rois
 
 
 def test_hieu_chinh_tu_choi_file_diem_ban_mau(repo_root: Path, tmp_path: Path):

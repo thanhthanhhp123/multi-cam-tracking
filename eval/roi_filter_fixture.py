@@ -26,6 +26,15 @@ Caveats, so the numbers are read correctly:
 
 Every frame message is kept, even when all its detections are dropped: the frame count is part
 of the contract with `tools.ds_wildtrack_gt` and the evaluators.
+
+**Per-camera mode** (`--topology`, phiên 36): instead of one rectangle for every camera, use the
+`ground_roi` each camera declares in `topology.yaml` (`mct/roi.py`) -- the self-collected lab
+needs it because cam01 sees far down the corridor into cam03's area. This is the SAME filter the
+engine applies on ingest; `eval.run_lab_eval` runs it over both the pipeline fixtures and the
+ground-truth fixture so that the system and its ground truth are cut along the same line:
+
+    PYTHONPATH=src python -m eval.roi_filter_fixture --topology configs/lab/topology.yaml \\
+        --homography-dir configs/lab/homography --in <fixture> --out <fixture_roi>
 """
 
 from __future__ import annotations
@@ -40,7 +49,9 @@ from pathlib import Path
 
 from common.schema import Detection, FrameMessage, read_jsonl, write_jsonl
 from eval.diagnose_fp_region import AREA_X_M, AREA_Y_M
-from mct.homography import CameraHomography
+from mct.homography import CameraHomography, HomographyMapper
+from mct.roi import RoiFilter, foot_point
+from mct.topology import Topology
 
 
 @dataclass(slots=True, frozen=True)
@@ -55,11 +66,6 @@ class GroundRoi:
         x, y = point
         m = self.margin_m
         return self.x_m[0] - m <= x < self.x_m[1] + m and self.y_m[0] - m <= y < self.y_m[1] + m
-
-
-def foot_point(det: Detection) -> tuple[float, float]:
-    x, y, w, h = det.bbox
-    return (x + w / 2.0, y + h)
 
 
 def filter_message(
@@ -91,6 +97,28 @@ def filter_messages(
         yield out
 
 
+def topology_filter(topology_path: Path, homography_dir: Path) -> RoiFilter | None:
+    """The engine's per-camera ROI filter, or None when no camera declares `ground_roi`."""
+    rois = Topology.load(topology_path).ground_rois
+    return RoiFilter.from_rois(rois, HomographyMapper.load(homography_dir) if rois else None)
+
+
+def filter_fixture(src: Path, out: Path, roi_filter: RoiFilter) -> dict[str, list[int]]:
+    """Write `src` through `roi_filter` to `out`; return {cam_id: [dropped, total]}."""
+    dropped: Counter[str] = Counter()
+    total: Counter[str] = Counter()
+
+    def _messages() -> Iterator[FrameMessage]:
+        for msg in read_jsonl(src):
+            kept, n_dropped = roi_filter.filter(msg)
+            dropped[msg.cam_id] += n_dropped
+            total[msg.cam_id] += len(msg.detections)
+            yield kept
+
+    write_jsonl(out, _messages())
+    return {c: [dropped[c], total[c]] for c in sorted(total)}
+
+
 def main(argv: list[str] | None = None) -> int:
     p = argparse.ArgumentParser(
         description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter
@@ -104,7 +132,29 @@ def main(argv: list[str] | None = None) -> int:
         default=0.0,
         help="grow the ROI by this many metres on every side (default: the WildTrack grid)",
     )
+    p.add_argument(
+        "--topology",
+        type=Path,
+        default=None,
+        help="use each camera's `ground_roi` from this topology instead of the WildTrack grid",
+    )
     args = p.parse_args(argv)
+
+    if args.topology is not None:
+        roi_filter = topology_filter(args.topology, args.homography_dir)
+        if roi_filter is None:
+            p.error(f"{args.topology}: no camera declares ground_roi")
+        per_cam = filter_fixture(args.src, args.out, roi_filter)
+        summary_topo = {
+            "in": str(args.src),
+            "out": str(args.out),
+            "rois": {c: r.to_mapping() for c, r in sorted(roi_filter.rois.items())},
+            "dropped": sum(d for d, _ in per_cam.values()),
+            "detections": sum(t for _, t in per_cam.values()),
+            "dropped_per_cam": per_cam,
+        }
+        print(json.dumps(summary_topo, ensure_ascii=False))
+        return 0
 
     roi = GroundRoi(margin_m=args.margin_m)
     dropped: Counter[str] = Counter()

@@ -70,6 +70,7 @@ from common.logging import get_logger
 from common.schema import FrameMessage, GlobalUpdate, read_jsonl
 from mct.associator import Assignment, Associator
 from mct.homography import HomographyMapper
+from mct.roi import RoiFilter
 from mct.store import Store, StoreConfig
 from mct.topology import Topology
 from mct.tracklet import Tracklet, TrackletBuilder, TrackletConfig
@@ -94,8 +95,13 @@ class Engine:
         position_interval_ms: int | None = None,
         latency: LatencyLog | None = None,
         window_observer: Callable[[int, list[Assignment]], None] | None = None,
+        roi_filter: RoiFilter | None = None,
     ) -> None:
         self.builder = TrackletBuilder(tracklet_config)
+        # Lọc vùng sàn theo camera (`ground_roi` trong topology, mct/roi.py), TRƯỚC khi dựng
+        # tracklet. None = không camera nào khai ROI: message đi qua nguyên vẹn.
+        self.roi_filter = roi_filter
+        self.n_roi_dropped = 0
         self.associator = associator or Associator()
         self.store = store
         self.window_ms = window_ms
@@ -117,6 +123,9 @@ class Engine:
     def feed(self, msg: FrameMessage) -> list[GlobalUpdate]:
         """Nạp một message. Trả về các cập nhật Global ID nếu cửa sổ vừa đóng."""
         self.n_messages += 1
+        if self.roi_filter is not None:
+            msg, n_dropped = self.roi_filter.filter(msg)
+            self.n_roi_dropped += n_dropped
         closed = self.builder.update(msg)
         if self._window_end_ms is None:
             self._window_end_ms = int(msg.ts_ms) + self.window_ms
@@ -398,6 +407,13 @@ def build_engine(
             len(mapper.calibrated),
         )
 
+    roi_filter = RoiFilter.from_rois(topology.ground_rois if topology else {}, mapper)
+    if roi_filter is not None:
+        log.info(
+            "Lọc vùng sàn: %s",
+            ", ".join(f"{c} {r.to_mapping()}" for c, r in sorted(roi_filter.rois.items())),
+        )
+
     associator = Associator.from_mapping(config, topology=topology, ground_mapper=mapper)
     store_config = StoreConfig.from_mapping(config)
     if db_path:
@@ -413,6 +429,7 @@ def build_engine(
         window_ms=int(association.get("window_ms", 1000)),
         position_interval_ms=None if interval is None else int(interval),
         latency=latency,
+        roi_filter=roi_filter,
     )
 
 
@@ -563,6 +580,8 @@ def main(argv: list[str] | None = None) -> int:
             stats.rejected_by_threshold,
             stats.no_candidate,
         )
+        if engine.roi_filter is not None:
+            log.info("lọc vùng sàn: bỏ %d detection ngoài ROI", engine.n_roi_dropped)
         if publisher is not None:
             publisher.close()
         if latency is not None:

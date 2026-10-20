@@ -189,6 +189,12 @@ PYTHONPATH=src python -m tools.sync_recordings \
    track mới, đều được, công cụ cắt lần xuất hiện theo khoảng trống.
 4. Người bị che quá nửa: đánh dấu **occluded**, vẫn giữ hộp.
 5. Hộp ôm sát người, gồm cả bàn chân, vì điểm chân là đáy hộp.
+6. **cam01 nhìn dọc hành lang tới tận vùng cam03**, nên hệ thống lọc bỏ mọi hộp cam01 có chân ở
+   x ≥ 6 m (`ground_roi` trong `configs/lab/topology.yaml`, phiên 36). GT đi qua đúng bộ lọc đó
+   (`eval.run_lab_eval` tự làm). Vì vậy người gán nhãn **không cần** vẽ người ở rất xa trên cam01,
+   nhưng phải chú thích **dư qua mốc**: mọi người có chân dưới hàng pixel y ≈ 270 của khung 1920×1080 (khoảng 7.5 m,
+   tức hơn 11 viên gạch tính từ chỗ đặt cái bát). Vạch cắt thật do bộ lọc quyết định, không do
+   người gán nhãn: dừng chú thích đúng ở 6 m bằng mắt thì người đứng sát mốc sẽ lúc có lúc không.
 
 **Xuất:** chọn định dạng **"CVAT for video 1.1"** (KHÔNG chọn MOT, vì bản MOT mất `person_id`),
 lưu thành `data/cvat/<buổi>/camXX.xml`. Sau đó chạy:
