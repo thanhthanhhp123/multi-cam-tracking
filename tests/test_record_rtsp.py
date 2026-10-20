@@ -503,6 +503,21 @@ def test_eof_tren_stdin_khong_phai_enter() -> None:
     assert stop.is_set()
 
 
+def test_file_stop_dung_buoi_ghi_va_tu_xoa(tmp_path: Path) -> None:
+    """Điều khiển từ xa không có bàn phím: tạo file STOP thì dừng sạch, file bị xoá ngay."""
+    import threading
+
+    stop = threading.Event()
+    stop_file = tmp_path / record_rtsp.STOP_FILE
+    t = threading.Thread(target=record_rtsp.watch_stop_file, args=(stop_file, stop, 0.01))
+    t.start()
+    assert not stop.wait(0.05)
+    stop_file.touch()
+    assert stop.wait(2.0)
+    t.join(2.0)
+    assert not stop_file.exists()
+
+
 def test_record_tu_choi_ghi_de_buoi_da_co(tmp_path: Path) -> None:
     session = tmp_path / "raw" / "t1"
     session.mkdir(parents=True)

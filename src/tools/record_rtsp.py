@@ -916,6 +916,22 @@ def wait_enter(stream, stop: threading.Event) -> None:
         stop.set()
 
 
+STOP_FILE = "STOP"
+"""Tạo file này trong thư mục buổi thì buổi ghi dừng sạch như bấm Enter.
+
+Dùng khi điều khiển từ xa (không có bàn phím gắn với tiến trình): buộc tắt tiến trình thì
+`record.json` — chỗ duy nhất giữ độ lệch đồng hồ giữa các camera — không được ghi.
+"""
+
+
+def watch_stop_file(path: Path, stop: threading.Event, poll_s: float = 0.5) -> None:
+    """Đặt `stop` khi `path` xuất hiện, rồi xoá nó để lần ghi sau không dừng ngay."""
+    while not stop.wait(poll_s):
+        if path.exists():
+            path.unlink(missing_ok=True)
+            stop.set()
+
+
 def _parse_camera(value: str) -> tuple[str, str]:
     if "=" not in value:
         raise argparse.ArgumentTypeError(f"cần dạng cam01=rtsp://..., nhận {redact(value)!r}")
@@ -1054,7 +1070,11 @@ def main(
     stop = threading.Event()
     if sys.stdin is not None and sys.stdin.isatty():
         threading.Thread(target=wait_enter, args=(sys.stdin, stop), daemon=True).start()
+    stop_file = out_dir / STOP_FILE
+    stop_file.unlink(missing_ok=True)
+    threading.Thread(target=watch_stop_file, args=(stop_file, stop), daemon=True).start()
     until = f"tự dừng sau {args.duration:g} s" if args.duration else "Enter hoặc Ctrl+C để dừng"
+    until += f"; hoặc tạo {_rel_posix(stop_file)}"
     print(f"Ghi buổi {args.session}: {', '.join(cameras)} -> {_rel_posix(out_dir)} ({until})")
     result = record_session(
         cameras,
