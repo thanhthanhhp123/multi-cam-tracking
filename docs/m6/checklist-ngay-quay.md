@@ -2,6 +2,9 @@
 
 Quy trình đầy đủ: [README.md](README.md). Laptop và mạng: [laptop-ghi-hinh.md](laptop-ghi-hinh.md).
 
+> Hiện trường hành lang (phiên 35) đã dựng và hiệu chỉnh xong; ngày quay lặp dùng
+> [checklist-quay-hanh-lang.md](checklist-quay-hanh-lang.md) thay cho bản này.
+
 ## Mang theo
 - [ ] 3 camera IP + giá đỡ/ốc vít để treo cao 2–2.5 m
 - [ ] Switch (PoE nếu dùng PoE) hoặc 3 adapter 12 V; 4 dây mạng đủ dài; ổ cắm kéo dài
