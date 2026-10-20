@@ -28,23 +28,28 @@ plane: ground
 image_size: [1920, 1080]
 cameras:
   cam01:
+    # Đo lại 2026-10-20 (phiên 36), tư thế cuối: cam01 ngẩng lại để thấy trọn người trong vùng chồng
+    # lấn (vùng xa x > 6 m lọc bằng phần mềm). Góc ron gạch: dự đoán -> cornerSubPix -> kiểm điểm
+    # yên ngựa, lan từng hàng, trên data/lab/calib_frames/2026-10-20e/cam01_median.png; loại góc lệch
+    # > 0.03 viên dưới mô hình méo division (k1 ~ -0.07). Mốc: cái bát đặt trên góc gạch gốc (0, 0),
+    # cam02 thấy đáy bát cách điểm gốc phiên 35 < 2 px; ở cam01 bát che đúng góc đó nên góc đó bị bỏ.
     points:
-      - {image: [991.3, 1023.5], world: [0.000, 0.000]}   # hàng 7, cột 1
-      - {image: [745.1, 1076.8], world: [0.000, 0.681]}   # hàng 7, cột 0
-      - {image: [927.4, 929.7], world: [0.681, 0.000]}   # hàng 6, cột 1
-      - {image: [709.6, 965.6], world: [0.681, 0.681]}   # hàng 6, cột 0
-      - {image: [877.4, 856.2], world: [1.363, 0.000]}   # hàng 5, cột 1
-      - {image: [683.5, 883.8], world: [1.363, 0.681]}   # hàng 5, cột 0
-      - {image: [835.0, 794.0], world: [2.044, 0.000]}   # hàng 4, cột 1
-      - {image: [662.8, 818.9], world: [2.044, 0.681]}   # hàng 4, cột 0
-      - {image: [801.6, 744.9], world: [2.726, 0.000]}   # hàng 3, cột 1
-      - {image: [646.0, 766.4], world: [2.726, 0.681]}   # hàng 3, cột 0
-      - {image: [773.2, 703.1], world: [3.407, 0.000]}   # hàng 2, cột 1
-      - {image: [631.8, 722.1], world: [3.407, 0.681]}   # hàng 2, cột 0
-      - {image: [749.6, 668.4], world: [4.089, 0.000]}   # hàng 1, cột 1
-      - {image: [620.1, 685.4], world: [4.089, 0.681]}   # hàng 1, cột 0
-      - {image: [728.8, 638.0], world: [4.770, 0.000]}   # hàng 0, cột 1
-      - {image: [610.0, 653.6], world: [4.770, 0.681]}   # hàng 0, cột 0
+      - {image: [1178.3, 975.4], world: [-1.363, 0.000]}   # hàng -2, cột 1
+      - {image: [796.7, 904.2], world: [-1.363, 0.681]}   # hàng -2, cột 0
+      - {image: [1059.1, 828.9], world: [-0.681, 0.000]}   # hàng -1, cột 1
+      - {image: [739.2, 776.5], world: [-0.681, 0.681]}   # hàng -1, cột 0
+      - {image: [694.2, 677.1], world: [0.000, 0.681]}   # hàng 0, cột 0
+      - {image: [661.8, 599.3], world: [0.681, 0.681]}   # hàng 1, cột 0
+      - {image: [635.3, 536.7], world: [1.363, 0.681]}   # hàng 2, cột 0
+      - {image: [613.4, 486.4], world: [2.044, 0.681]}   # hàng 3, cột 0
+      - {image: [595.7, 444.1], world: [2.726, 0.681]}   # hàng 4, cột 0
+      - {image: [581.2, 407.5], world: [3.407, 0.681]}   # hàng 5, cột 0
+      - {image: [711.1, 387.4], world: [4.089, 0.000]}   # hàng 6, cột 1
+      - {image: [568.5, 377.5], world: [4.089, 0.681]}   # hàng 6, cột 0
+      - {image: [689.4, 359.6], world: [4.770, 0.000]}   # hàng 7, cột 1
+      - {image: [548.1, 328.6], world: [5.452, 0.681]}   # hàng 8, cột 0
+      - {image: [654.0, 314.4], world: [6.133, 0.000]}   # hàng 9, cột 1
+      - {image: [639.5, 295.8], world: [6.815, 0.000]}   # hàng 10, cột 1
   cam02:
     points:
       - {image: [1029.7, 688.5], world: [-1.363, 0.000]}   # hàng 0, cột 0
