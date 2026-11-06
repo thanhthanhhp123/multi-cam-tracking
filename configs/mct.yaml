@@ -85,6 +85,12 @@ association:
   # Đây là phần "ngưỡng riêng theo cặp camera" của M6 ở trên — chọn bằng sweep trên dữ
   # liệu tự thu (eval.eval_handover tách kết quả theo loại cặp).
   max_cost_geometric: null
+  # Khoảng hở thời gian (ms) dài nhất mà cổng vị trí nới theo Δt (nối mảnh cùng camera, cặp
+  # chồng lấn không có mốc chung) còn được tính là bằng chứng vị trí, tức được hưởng
+  # max_cost_geometric. Vượt ngưỡng thì cổng vẫn LOẠI được, nhưng ô quay về max_cost như ô chỉ
+  # có ngoại hình. null = mọi cổng qua được đều là bằng chứng (hành vi cũ, giữ nguyên từng bit).
+  # Lý do và số đo: mct.affinity.AffinityConfig.evidence_max_gap_ms, worklog phiên 41.
+  evidence_max_gap_ms: null
   # Trọng số lambda của thành phần khoảng cách mặt đất (chỉ áp dụng cho cặp camera overlap).
   homography_weight: 0.4
   # Vượt khoảng cách này trên mặt phẳng tham chiếu thì loại thẳng, không cần xét ngoại hình.

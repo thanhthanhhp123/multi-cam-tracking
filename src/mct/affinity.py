@@ -110,6 +110,23 @@ class AffinityConfig:
     `None`, đường gán cũ giữ nguyên từng bit (`mct.associator`).
     """
 
+    evidence_max_gap_ms: int | None = None
+    """Khoảng hở thời gian dài nhất mà một cổng vị trí nới theo `Δt` còn được tính là BẰNG CHỨNG.
+
+    Hai đường so vị trí không trùng thời gian (`_same_camera_term` và nhánh "không có mốc
+    chung" của `_ground_term`) dùng ngân sách `max_ground_dist_m + max_speed_m_s · Δt`. Khi
+    `Δt` lớn, ngân sách đó phình tới mức gần như ai cũng lọt (2.4 s → 9 m, trong khi mọi người
+    vào cam03 qua cùng một cửa): qua được cổng chỉ nói "không bất khả thi", không nói "đúng
+    người". Vậy mà ô đó vẫn được coi là có bằng chứng vị trí và nhận ngân sách rộng
+    `max_cost_geometric`, nên thắng ô đúng người chỉ có ngoại hình. Đo trên dữ liệu lab (phiên
+    41, kịch bản tracker hoàn hảo): 27/45 lần gộp nhầm người là kiểu nối cùng camera này.
+
+    Đặt giá trị thì cổng vẫn giữ quyền LOẠI ở mọi `Δt`, nhưng chỉ khi `Δt` <= ngưỡng thì ô mới
+    được tính là có bằng chứng; vượt ngưỡng thì ô dùng `max_cost` như ô chỉ có ngoại hình.
+    `None` = hành vi cũ (mọi cổng qua được đều là bằng chứng), giữ nguyên từng bit kết quả cũ.
+    Cặp chồng lấn TRÙNG thời gian không bị ảnh hưởng: ở đó `Δt` = 0.
+    """
+
     homography_weight: float = 0.4
     """λ — trọng số của khoảng cách mặt đất, chỉ áp dụng cho cặp camera chồng lấn."""
 
@@ -190,6 +207,11 @@ class AffinityConfig:
                 if association.get("max_cost_geometric") is None
                 else float(association["max_cost_geometric"])
             ),
+            evidence_max_gap_ms=(
+                None
+                if association.get("evidence_max_gap_ms") is None
+                else int(association["evidence_max_gap_ms"])
+            ),
             homography_weight=float(
                 association.get("homography_weight", defaults.homography_weight)
             ),
@@ -227,6 +249,8 @@ class AffinityConfig:
             raise ValueError(
                 f"max_cost_geometric phải nằm trong (0, 3], nhận {self.max_cost_geometric}"
             )
+        if self.evidence_max_gap_ms is not None and self.evidence_max_gap_ms < 0:
+            raise ValueError(f"evidence_max_gap_ms phải >= 0, nhận {self.evidence_max_gap_ms}")
         if self.homography_weight < 0.0:
             raise ValueError(f"homography_weight phải >= 0, nhận {self.homography_weight}")
         if self.max_ground_dist_m <= 0.0:
@@ -468,7 +492,16 @@ def _same_camera_term(
             f"> ngân sách {budget:.2f} m (đi nhanh nhất {config.max_speed_m_s} m/s)",
             False,
         )
-    return config.homography_weight * min(distance, config.max_ground_dist_m), "", True
+    return (
+        config.homography_weight * min(distance, config.max_ground_dist_m),
+        "",
+        _counts_as_evidence(gap_ms, config),
+    )
+
+
+def _counts_as_evidence(gap_ms: float, config: AffinityConfig) -> bool:
+    """Cổng vị trí nới theo `Δt` có được tính là bằng chứng không (`evidence_max_gap_ms`)."""
+    return config.evidence_max_gap_ms is None or gap_ms <= config.evidence_max_gap_ms
 
 
 def _ground_term(
@@ -571,7 +604,11 @@ def _ground_term(
             f"(đi nhanh nhất {config.max_speed_m_s} m/s trong {elapsed_s:.1f}s)",
             False,
         )
-    return config.homography_weight * min(distance, config.max_ground_dist_m), "", True
+    return (
+        config.homography_weight * min(distance, config.max_ground_dist_m),
+        "",
+        _counts_as_evidence(elapsed_s * 1000.0, config),
+    )
 
 
 def _edge_point(

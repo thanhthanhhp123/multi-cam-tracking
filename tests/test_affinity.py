@@ -681,6 +681,51 @@ def test_tat_noi_manh_thi_khoang_cach_khong_con_loai_duoc(rng):
     assert reason == ""
 
 
+def test_noi_manh_sau_khoang_ho_dai_khong_con_la_bang_chung_vi_tri(rng):
+    """`evidence_max_gap_ms`: cổng vẫn cho qua, nhưng ô chỉ là "có vị trí" khi khoảng hở ngắn."""
+    vec = l2_normalize(rng.standard_normal(DIM))
+    gallery = Gallery()
+    track = gallery.create(_walking_tracklet("cam01", 1, vec, tracklet_id=1))
+    tiep = _shifted(_walking_tracklet("cam01", 2, vec, tracklet_id=2), dt_ms=5_000, dx_px=210.0)
+
+    def build(config: AffinityConfig):
+        return build_cost_matrix(
+            [tiep], [track], topology=_SAME_CAM_TOPO, config=config, ground_mapper=_MetricGround()
+        )
+
+    old = build(AffinityConfig(max_cost=0.9))
+    loose = build(AffinityConfig(max_cost=0.9, evidence_max_gap_ms=10_000_000))
+    tight = build(AffinityConfig(max_cost=0.9, evidence_max_gap_ms=0))
+
+    assert old.geometric is not None and old.geometric[0, 0]
+    assert loose.geometric[0, 0]
+    assert not tight.geometric[0, 0]
+    # Chỉ đổi cờ bằng chứng, không đổi chi phí hay tính khả thi.
+    assert tight.costs[0, 0] == pytest.approx(old.costs[0, 0])
+    limits = tight.limits(AffinityConfig(max_cost=0.3, max_cost_geometric=0.9))
+    assert limits is not None and limits[0, 0] == pytest.approx(0.3)
+
+
+def test_noi_manh_sau_khoang_ho_dai_van_bi_loai_khi_qua_xa(rng):
+    vec = l2_normalize(rng.standard_normal(DIM))
+    gallery = Gallery()
+    track = gallery.create(_walking_tracklet("cam01", 1, vec, tracklet_id=1))
+    nhay_xa = _shifted(
+        _walking_tracklet("cam01", 2, vec, tracklet_id=2), dt_ms=5_000, dx_px=6_000.0
+    )
+    cost, reason = _stitch_cost(track, nhay_xa, AffinityConfig(max_cost=0.9, evidence_max_gap_ms=0))
+    assert cost == INFEASIBLE
+    assert "ngân sách" in reason
+
+
+def test_evidence_max_gap_ms_doc_tu_yaml_va_kiem_gia_tri():
+    cfg = AffinityConfig.from_mapping({"association": {"evidence_max_gap_ms": 1500}})
+    assert cfg.evidence_max_gap_ms == 1500
+    assert AffinityConfig.from_mapping({"association": {}}).evidence_max_gap_ms is None
+    with pytest.raises(ValueError):
+        AffinityConfig(evidence_max_gap_ms=-1)
+
+
 def test_noi_manh_khong_dung_cho_hai_manh_chong_thoi_gian(rng):
     """Chồng thời gian là việc của ràng buộc loại trừ; nối mảnh không được nói gì thêm."""
     vec = l2_normalize(rng.standard_normal(DIM))
