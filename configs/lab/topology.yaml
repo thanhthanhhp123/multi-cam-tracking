@@ -27,7 +27,7 @@
 #       --topology configs/lab/topology.yaml --yaml-out data/lab/transitions.suggest.yaml
 # trên một đoạn quay riêng (không phải đoạn dùng để chấm điểm — xem docstring công cụ đó).
 
-status: template
+status: measured
 
 cameras:
   cam01:
@@ -65,14 +65,17 @@ transitions:
   - from: cam01
     to: cam03
     bidirectional: true
-    min_ms: 3000      # GIỮ CHỖ — đo bằng buổi calib
-    max_ms: 30000     # GIỮ CHỖ — đo bằng buổi calib
+    # Đo 2026-11-06 từ GT đã duyệt của calib (đi chậm, n = 5 + 5) bằng tools.estimate_transit
+    # (margin 0.3, slack 2 s). Hai chiều gộp: cam01->cam03 [3360, 19420], cam03->cam01 [3220, 14740].
+    # calib_2 (thường/nhanh, n = 6 + 4) nằm gọn trong khoảng này: 3.8-6.2 s và 4.0-5.8 s.
+    min_ms: 3220
+    max_ms: 19420
     distance_m: 12.4
   - from: cam02
     to: cam03
     bidirectional: true
-    min_ms: 3000      # GIỮ CHỖ — đo bằng buổi calib
-    max_ms: 30000     # GIỮ CHỖ — đo bằng buổi calib
+    min_ms: 3000      # GIỮ CHỖ — chưa đo: calib chỉ đi giữa cam01 và cam03
+    max_ms: 30000     # GIỮ CHỖ — chưa đo; `measured` ở trên KHÔNG bao gồm cặp này (chọn 2026-11-06)
     distance_m: 16.4
 
 homography: {}
