@@ -196,6 +196,45 @@ PYTHONPATH=src python -m tools.sync_recordings \
    tức hơn 11 viên gạch tính từ chỗ đặt cái bát). Vạch cắt thật do bộ lọc quyết định, không do
    người gán nhãn: dừng chú thích đúng ở 6 m bằng mắt thì người đứng sát mốc sẽ lúc có lúc không.
 
+**Gán nhãn trước bằng máy (phiên 38).** Vẽ tay từ đầu thì một lượt đi trên một camera mất khoảng
+10 phút, nên 42 task được gán trước bằng `tools.prelabel_cvat` (YOLO11x 1280 + ByteTrack, chạy
+trên `vast-gpu` bằng `docker/vast_prelabel.sh`). Công cụ ra các track có nguồn `AUTO` với
+`person_id` để trống. Sau đó Claude điền `person_id` cho track nào nhận ra chắc chắn bằng cách nhìn
+ảnh cắt của từng track, xoá track bóng phản chiếu, và để trống track lẫn hai người. Danh sách việc
+còn lại nằm ở `data/prelabel/REVIEW.md` (ngoài git; số khung trong đó là số khung CVAT). Detector
+dùng để gán trước cố ý khác YOLO11s 640 của pipeline đang chấm, và báo cáo phải ghi rõ: GT được gán
+trước bằng máy, mọi hộp và mọi danh tính đều đã qua người kiểm.
+
+**Kiểm bằng `tools.gt_review` thay CVAT** (phiên 38; CVAT tốn 3–4 GB RAM, máy dev không kham nổi):
+
+```powershell
+$env:PYTHONPATH = "src"
+& "$HOME\.venvs\mct-test\Scripts\python.exe" -m tools.gt_review extract   # một lần, ~35 phút CPU
+& "$HOME\.venvs\mct-test\Scripts\python.exe" -m tools.gt_review serve     # http://127.0.0.1:8770
+```
+
+- Công cụ đọc `data/prelabel/export_draft/` và ghi cả ba camera vào `data/cvat/<buổi>/` sau mỗi
+  thao tác, đúng chỗ `make lab-gt` đọc.
+- Mọi thao tác được ghi kèm giờ vào `edits.jsonl`.
+- Ba camera hiện cạnh nhau. Bấm vào hộp để sửa mã, tách track, ẩn một đoạn, bật "che", kéo cạnh
+  hộp (khung đó thành khung khoá và các khung giữa tự nội suy lại), hoặc vẽ người mới. Phím tắt
+  nằm ở tab "Phím".
+- Tab "Lỗi" là phép kiểm của `gt_edit.validate`: track trống mã, hoặc hai track cùng mã hiện cùng
+  một khung. Buổi chỉ đánh dấu "đã duyệt" được khi tab này trống.
+
+Khi kiểm từng task, làm theo thứ tự:
+1. **Xoá track rác**: bóng phản chiếu trên cửa kính (cam01, phía phải khung), hộp chỉ trúng một
+   phần người, hộp trùng nhau.
+2. **Điền `person_id` cho mọi track còn lại.** Một người bị tracker cắt thành nhiều mảnh thì mỗi
+   mảnh mang cùng `person_id`; không cần gộp (merge) các mảnh. `cvat_to_mot` báo lỗi nếu còn
+   track nào để trống, nên không có track nào lọt qua mà chưa được kiểm.
+3. **Tách track bị tráo người** (hai người đi ngang nhau, nhất là ở s3): dùng công cụ Split ở
+   khung tráo, rồi đặt `person_id` riêng cho từng nửa.
+4. **Sửa hộp lệch.** Tracker chỉ để lại ít khung khoá (nội suy khớp IoU ≥ 0.85), nên sửa một khung
+   khoá là kéo theo cả đoạn. Chú ý hộp phải tới tận chân. Máy không bao giờ bật **occluded**, nên
+   bạn tự bật ở những chỗ người bị che quá nửa.
+5. **Thêm người bị sót**, nhất là người đứng sát mép khung hoặc bị che lâu.
+
 **Xuất:** chọn định dạng **"CVAT for video 1.1"** (KHÔNG chọn MOT, vì bản MOT mất `person_id`),
 lưu thành `data/cvat/<buổi>/camXX.xml`. Sau đó chạy:
 

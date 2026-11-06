@@ -1,0 +1,354 @@
+<!doctype html>
+<html lang="vi">
+<head>
+<meta charset="utf-8">
+<title>GT review M6</title>
+<style>
+  :root { --bg:#16181d; --panel:#1f2229; --line:#353a45; --fg:#e6e6e6; --dim:#9aa0aa; --acc:#4da3ff; --bad:#ff5a5a; --ok:#4cd07d; }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:13px/1.35 system-ui, sans-serif; height:100vh; display:flex; flex-direction:column; }
+  header { display:flex; gap:8px; align-items:center; padding:6px 10px; background:var(--panel); border-bottom:1px solid var(--line); flex-wrap:wrap; }
+  header input[type=range] { flex:1; min-width:200px; }
+  button, select, input { background:#2a2e37; color:var(--fg); border:1px solid var(--line); border-radius:4px; padding:3px 7px; font:inherit; }
+  button:hover { border-color:var(--acc); cursor:pointer; }
+  button.on { background:var(--acc); color:#000; }
+  main { flex:1; display:grid; grid-template-columns:1fr 1fr; grid-template-rows:1fr 1fr; gap:4px; padding:4px; min-height:0; }
+  .cam { position:relative; background:#000; min-height:0; display:flex; align-items:center; justify-content:center; }
+  .cam canvas { max-width:100%; max-height:100%; cursor:crosshair; }
+  .cam .tag { position:absolute; left:6px; top:4px; color:#ff0; font-weight:600; pointer-events:none; text-shadow:0 0 3px #000; }
+  #side { background:var(--panel); overflow:hidden; display:flex; flex-direction:column; min-height:0; }
+  .tabs { display:flex; border-bottom:1px solid var(--line); }
+  .tabs button { border:0; border-radius:0; flex:1; background:transparent; }
+  .tabs button.on { background:#2a2e37; color:var(--acc); }
+  .pane { padding:8px; overflow:auto; flex:1; display:none; }
+  .pane.on { display:block; }
+  .row { display:flex; gap:6px; align-items:center; margin:4px 0; flex-wrap:wrap; }
+  .ids button { padding:2px 6px; }
+  .list div { padding:3px 4px; border-bottom:1px solid var(--line); cursor:pointer; }
+  .list div:hover { background:#2a2e37; }
+  .bad { color:var(--bad); } .ok { color:var(--ok); } .dim { color:var(--dim); }
+  #msg { margin-left:auto; }
+  a { color: var(--acc); }
+  kbd { background:#2a2e37; border:1px solid var(--line); border-radius:3px; padding:0 4px; font-size:11px; }
+  input.n { width:64px; }
+</style>
+</head>
+<body>
+<header>
+  <select id="sess"></select>
+  <button id="prev" title="← (Shift: 10)">◀</button>
+  <button id="play" title="Space">▶</button>
+  <button id="next" title="→ (Shift: 10)">▶|</button>
+  <input id="slider" type="range" min="0" value="0">
+  <span>khung <input id="fnum" class="n" type="number" min="0"> / <span id="fmax">0</span> <span id="ftime" class="dim"></span></span>
+  <button id="drawNew" title="N: kéo chuột để vẽ người mới">+ Người (N)</button> mã <input id="newid" size="5" placeholder="P0?">
+  <button id="drawFix" title="B: vẽ lại hộp của track đang chọn ở khung này (nối từ lần thấy trước)">Vẽ lại (B)</button>
+  <button id="undo" title="Ctrl+Z">Hoàn tác</button>
+  <button id="reviewed">Đánh dấu đã duyệt</button>
+  <span id="msg" class="dim"></span>
+</header>
+<main>
+  <div class="cam" data-cam="cam01"><canvas></canvas><span class="tag">cam01</span></div>
+  <div class="cam" data-cam="cam02"><canvas></canvas><span class="tag">cam02</span></div>
+  <div class="cam" data-cam="cam03"><canvas></canvas><span class="tag">cam03</span></div>
+  <div id="side">
+    <div class="tabs">
+      <button data-tab="track" class="on">Track</button>
+      <button data-tab="notes">Ghi chú</button>
+      <button data-tab="probs">Lỗi <span id="nprob"></span></button>
+      <button data-tab="all">Tất cả track</button>
+      <button data-tab="help">Phím</button>
+    </div>
+    <div class="pane on" id="p-track"><span class="dim">Bấm vào một hộp để chọn track.</span></div>
+    <div class="pane list" id="p-notes"></div>
+    <div class="pane list" id="p-probs"></div>
+    <div class="pane list" id="p-all"></div>
+    <div class="pane" id="p-help">
+      <div><kbd>←</kbd>/<kbd>→</kbd> lùi/tiến 1 khung (<kbd>Shift</kbd> = 10), <kbd>Space</kbd> phát/dừng (5 hình/giây = thời gian thật)</div>
+      <div>Bấm hộp: chọn track. Kéo góc/cạnh: sửa hộp ở khung này (thành khung khoá, các khung giữa tự nội suy). Kéo trong hộp: dời hộp.</div>
+      <div><kbd>N</kbd> vẽ người mới · <kbd>B</kbd> vẽ lại hộp track đang chọn (nối liền từ lần thấy trước) · <kbd>Esc</kbd> bỏ chọn</div>
+      <div><kbd>E</kbd> mã cho track · <kbd>S</kbd> tách tại khung này · <kbd>H</kbd> ẩn từ khung này tới hết đoạn · <kbd>O</kbd> bật/tắt "che" ở khung này</div>
+      <div><kbd>Del</kbd> (bấm 2 lần) xoá track · <kbd>Ctrl+Z</kbd> hoàn tác · <kbd>[</kbd>/<kbd>]</kbd> nhảy đầu/cuối track</div>
+      <div class="dim">Mỗi thao tác được lưu ngay vào data/cvat/&lt;buổi&gt;/camXX.xml (+ edits.jsonl). Hộp đỏ = chưa có mã. Vạch cam trên cam01 = y 270.</div>
+    </div>
+  </div>
+</main>
+<script>
+const CAMS = ["cam01", "cam02", "cam03"];
+const S = { session: null, data: null, k: 0, size: 0, sel: null, mode: null, playing: null, drag: null, delArm: false, imgs: {} };
+const $ = (q) => document.querySelector(q);
+const canv = Object.fromEntries(CAMS.map(c => [c, document.querySelector(`.cam[data-cam=${c}] canvas`)]));
+
+function msg(t, bad) { const m = $("#msg"); m.textContent = t; m.className = bad ? "bad" : "dim"; }
+async function api(path, body) {
+  const r = await fetch(path, body === undefined ? {} : { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+  const j = await r.json().catch(() => ({}));
+  if (!r.ok) { msg(j.detail || r.statusText, true); throw new Error(j.detail); }
+  return j;
+}
+const PALETTE = { P01: "#4da3ff", P02: "#ffd23f", P03: "#3ddc97", P04: "#ff8c42", P05: "#c77dff", P06: "#00e5ff", P07: "#ff5ec4" };
+function color(p) {
+  if (!p) return "#ff3b3b";
+  if (PALETTE[p]) return PALETTE[p];
+  let h = 0; for (const ch of p) h = (h * 31 + ch.charCodeAt(0)) >>> 0;
+  return `hsl(${(h * 137) % 360} 55% 72%)`;
+}
+function track(cam, tid) { return S.data.cams[cam].tracks.find(t => t.tid === tid); }
+function boxAt(t, k) { const b = t.boxes.find(b => b[0] === k); return b || null; }
+function scale(cam) { return canv[cam].width / S.data.cams[cam].width; }
+
+// ---------------------------------------------------------------- loading + drawing
+async function loadSessions() {
+  const list = await api("/api/sessions");
+  $("#sess").innerHTML = list.map(s => `<option value="${s.name}">${s.reviewed ? "✔ " : s.edited ? "✎ " : ""}${s.name}</option>`).join("");
+  const last = localStorage.getItem("gtr.session");
+  if (last && list.some(s => s.name === last)) $("#sess").value = last;
+  await openSession($("#sess").value);
+}
+async function openSession(name) {
+  try { localStorage.setItem("gtr.session", name); } catch (e) {}
+  S.session = name; S.sel = null; S.k = 0;
+  setData(await api(`/api/session/${name}`));
+  const notes = await api(`/api/session/${name}/notes`);
+  $("#p-notes").innerHTML = notes.length ? notes.map(n => `<div data-cam="${n.cam}" data-k="${n.frame}"><b>${n.cam}</b> ${esc(n.text)}</div>`).join("") : "<span class='dim'>Không có ghi chú cho buổi này.</span>";
+  $("#p-notes").querySelectorAll("div[data-k]").forEach(d => d.onclick = () => { goto(+d.dataset.k); });
+  goto(0);
+}
+function setData(d) {
+  S.data = d;
+  S.size = Math.max(...CAMS.map(c => d.cams[c].size));
+  $("#slider").max = S.size - 1; $("#fmax").textContent = S.size - 1;
+  $("#nprob").textContent = d.problems.length ? `(${d.problems.length})` : "";
+  $("#p-probs").innerHTML = d.problems.length ? d.problems.map(p => `<div class="bad">${esc(p)}</div>`).join("") : "<span class='ok'>Không còn lỗi.</span>";
+  $("#p-probs").querySelectorAll("div").forEach(d => d.onclick = () => { const m = d.textContent.match(/\((\d+)/) || d.textContent.match(/khung (\d+)/); if (m) goto(+m[1]); });
+  renderAll(); renderTrackPanel(); draw();
+}
+function esc(s) { return s.replace(/[&<>]/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;" })[c]); }
+function renderAll() {
+  const rows = [];
+  for (const c of CAMS) for (const t of S.data.cams[c].tracks) {
+    const a = t.boxes[0][0], b = t.boxes[t.boxes.length - 1][0];
+    rows.push(`<div data-cam="${c}" data-tid="${t.tid}" data-k="${a}"><span style="color:${color(t.person)}">■</span> ${c} #${t.tid} <b class="${t.person ? "" : "bad"}">${t.person || "chưa có mã"}</b> <span class="dim">khung ${a}–${b}, ${t.boxes.length} khung</span></div>`);
+  }
+  $("#p-all").innerHTML = rows.join("");
+  $("#p-all").querySelectorAll("div").forEach(d => d.onclick = () => { S.sel = { cam: d.dataset.cam, tid: +d.dataset.tid }; goto(+d.dataset.k); renderTrackPanel(); });
+}
+function img(cam, k) {
+  const key = `${S.session}/${cam}/${k}`;
+  if (!S.imgs[key]) { const im = new Image(); im.src = `/frames/${key}`; im.onload = () => { if (k === S.k) draw(); }; S.imgs[key] = im; }
+  return S.imgs[key];
+}
+function prefetch() { for (let d = 1; d <= 10; d++) for (const c of CAMS) if (S.k + d < S.size) img(c, S.k + d); }
+function goto(k) {
+  S.k = Math.max(0, Math.min(S.size - 1, k));
+  $("#slider").value = S.k; $("#fnum").value = S.k;
+  const t = S.k * (S.data.cams.cam01.step || 5) / 25; $("#ftime").textContent = `${Math.floor(t / 60)}:${(t % 60).toFixed(1).padStart(4, "0")}`;
+  draw(); prefetch(); renderTrackPanel(true);
+}
+function draw() {
+  for (const cam of CAMS) {
+    const cv = canv[cam], im = img(cam, S.k), ctx = cv.getContext("2d");
+    const box = cv.parentElement.getBoundingClientRect();
+    const w = Math.max(320, Math.min(box.width, box.height * 16 / 9));
+    if (cv.width !== Math.round(w)) { cv.width = Math.round(w); cv.height = Math.round(w * 9 / 16); }
+    ctx.fillStyle = "#000"; ctx.fillRect(0, 0, cv.width, cv.height);
+    if (im.complete && im.naturalWidth) ctx.drawImage(im, 0, 0, cv.width, cv.height);
+    const s = scale(cam);
+    if (cam === "cam01") { ctx.strokeStyle = "rgba(255,170,0,.6)"; ctx.setLineDash([6, 6]); ctx.beginPath(); ctx.moveTo(0, 270 * s); ctx.lineTo(cv.width, 270 * s); ctx.stroke(); ctx.setLineDash([]); }
+    for (const t of S.data.cams[cam].tracks) {
+      let b = boxAt(t, S.k);
+      const sel = S.sel && S.sel.cam === cam && S.sel.tid === t.tid;
+      if (S.drag && S.drag.cam === cam && S.drag.tid === t.tid && S.drag.box) b = [S.k, ...S.drag.box, 1, b ? b[6] : 0];
+      if (!b) continue;
+      const [x1, y1, x2, y2] = [b[1] * s, b[2] * s, b[3] * s, b[4] * s];
+      ctx.lineWidth = sel ? 3 : 2; ctx.strokeStyle = color(t.person);
+      if (b[6]) ctx.setLineDash([5, 4]);
+      ctx.strokeRect(x1, y1, x2 - x1, y2 - y1); ctx.setLineDash([]);
+      if (sel) for (const [hx, hy] of handles(x1, y1, x2, y2)) { ctx.fillStyle = "#fff"; ctx.fillRect(hx - 4, hy - 4, 8, 8); }
+      const lab = `${t.person || "?"} #${t.tid}${b[5] ? "" : "·"}${b[6] ? " che" : ""}`;
+      ctx.font = "bold 13px system-ui"; const tw = ctx.measureText(lab).width;
+      ctx.fillStyle = color(t.person); ctx.fillRect(x1, Math.max(0, y1 - 17), tw + 6, 17);
+      ctx.fillStyle = "#000"; ctx.fillText(lab, x1 + 3, Math.max(13, y1 - 4));
+    }
+    if (S.drag && S.drag.cam === cam && S.drag.rubber) {
+      const [x1, y1, x2, y2] = S.drag.rubber; ctx.strokeStyle = "#fff"; ctx.setLineDash([4, 3]); ctx.strokeRect(x1, y1, x2 - x1, y2 - y1); ctx.setLineDash([]);
+    }
+  }
+}
+// which part of box r the point grabs: edge flags {l,r,t,b}, {} = move, null = nothing
+function grab([x1, y1, x2, y2], x, y) {
+  const T = 9, inX = x > x1 - T && x < x2 + T, inY = y > y1 - T && y < y2 + T;
+  if (!inX || !inY) return null;
+  const g = { l: Math.abs(x - x1) < T, r: Math.abs(x - x2) < T, t: Math.abs(y - y1) < T, b: Math.abs(y - y2) < T };
+  if (g.l || g.r || g.t || g.b) return g;
+  return x > x1 && x < x2 && y > y1 && y < y2 ? {} : null;
+}
+function handles(x1, y1, x2, y2) { const mx = (x1 + x2) / 2, my = (y1 + y2) / 2; return [[x1, y1], [x2, y1], [x1, y2], [x2, y2], [mx, y1], [mx, y2], [x1, my], [x2, my]]; }
+
+// ---------------------------------------------------------------- track panel
+function idsInSession() {
+  const set = new Set(); for (const c of CAMS) for (const t of S.data.cams[c].tracks) if (t.person) set.add(t.person);
+  return [...set].sort();
+}
+function quickIds() {
+  const used = idsInSession(), xs = used.filter(i => /^X\d+$/.test(i)).map(i => +i.slice(1));
+  const next = "X" + String((xs.length ? Math.max(...xs) : 0) + 1).padStart(2, "0");
+  return [...Object.keys(PALETTE), ...used.filter(i => i.startsWith("X")), next];
+}
+function renderTrackPanel(light) {
+  const p = $("#p-track");
+  if (!S.sel || !track(S.sel.cam, S.sel.tid)) { if (!light) { p.innerHTML = "<span class='dim'>Bấm vào một hộp để chọn track.</span>"; p.dataset.key = ""; } return; }
+  const t = track(S.sel.cam, S.sel.tid), runs = [];
+  for (const b of t.boxes) { const k = b[0]; if (runs.length && runs[runs.length - 1][1] === k - 1) runs[runs.length - 1][1] = k; else runs.push([k, k]); }
+  const here = boxAt(t, S.k);
+  if (light && p.dataset.key === `${S.sel.cam}/${S.sel.tid}` && $("#t-here")) { $("#t-here").textContent = here ? (here[6] ? "có, đang bật 'che'" : "có") : "không hiện"; $("#t-split").textContent = `Tách tại khung ${S.k} (S)`; return; }
+  p.dataset.key = `${S.sel.cam}/${S.sel.tid}`;
+  p.innerHTML = `
+    <div class="row"><b>${S.sel.cam} #${t.tid}</b> <span class="dim">${t.source}</span> · ở khung này: <span id="t-here">${here ? (here[6] ? "có, đang bật 'che'" : "có") : "không hiện"}</span></div>
+    <div class="row">Mã: <input id="t-person" value="${t.person}" size="8"> <button id="t-setp">Đặt (Enter)</button></div>
+    <div class="row ids">${quickIds().map(i => `<button data-id="${i}" style="border-color:${color(i)}">${i}</button>`).join("")}</div>
+    <div class="row dim">Các đoạn hiện: ${runs.map(r => `<a href="#" data-k="${r[0]}">${r[0]}–${r[1]}</a>`).join(", ")}</div>
+    <div class="row"><button id="t-split">Tách tại khung ${S.k} (S)</button> mã nửa sau <input id="t-split-id" size="6" placeholder="giữ"></div>
+    <div class="row"><button id="t-hide">Ẩn từ khung này tới hết đoạn (H)</button></div>
+    <div class="row">Khoảng <input id="t-a" class="n" type="number" value="${S.k}"> – <input id="t-b" class="n" type="number" value="${S.k}">
+      <button id="t-seta" title="đầu khoảng = khung đang xem">a=khung này</button><button id="t-setb">b=khung này</button>
+      <button id="t-occ1">Bật che</button><button id="t-occ0">Tắt che</button><button id="t-hab">Ẩn</button></div>
+    <div class="row">Gộp track #<input id="t-other" class="n" type="number"> vào track này <button id="t-merge">Gộp</button></div>
+    <div class="row"><button id="t-del" class="bad">Xoá track (Del ×2)</button></div>`;
+  p.querySelectorAll("a[data-k]").forEach(a => a.onclick = (e) => { e.preventDefault(); goto(+a.dataset.k); });
+  $("#t-setp").onclick = () => op({ op: "person", person: $("#t-person").value });
+  $("#t-person").onkeydown = (e) => { if (e.key === "Enter") { op({ op: "person", person: e.target.value }); e.target.blur(); } e.stopPropagation(); };
+  p.querySelectorAll(".ids button").forEach(b => b.onclick = () => op({ op: "person", person: b.dataset.id }));
+  $("#t-split").onclick = splitHere;
+  $("#t-hide").onclick = hideHere;
+  $("#t-seta").onclick = () => { $("#t-a").value = S.k; };
+  $("#t-setb").onclick = () => { $("#t-b").value = S.k; };
+  $("#t-occ1").onclick = () => op({ op: "occluded", a: +$("#t-a").value, b: +$("#t-b").value, value: true });
+  $("#t-occ0").onclick = () => op({ op: "occluded", a: +$("#t-a").value, b: +$("#t-b").value, value: false });
+  $("#t-hab").onclick = () => op({ op: "hide", a: +$("#t-a").value, b: +$("#t-b").value });
+  $("#t-merge").onclick = () => op({ op: "merge", other: +$("#t-other").value });
+  $("#t-del").onclick = delTrack;
+  p.querySelectorAll("input").forEach(i => i.addEventListener("keydown", e => e.stopPropagation()));
+}
+function switchTab(name) {
+  document.querySelectorAll(".tabs button").forEach(b => b.classList.toggle("on", b.dataset.tab === name));
+  document.querySelectorAll(".pane").forEach(p => p.classList.toggle("on", p.id === `p-${name}`));
+}
+
+// ---------------------------------------------------------------- operations
+async function op(body, cam) {
+  const c = cam || (S.sel && S.sel.cam);
+  const full = { cam: c, tid: S.sel ? S.sel.tid : undefined, k: S.k, ...body };
+  try {
+    const d = await api(`/api/session/${S.session}/op`, full);
+    if (d.tid !== undefined) S.sel = { cam: c, tid: d.tid };
+    if (body.op === "delete" || (S.sel && !d.cams[c].tracks.some(t => t.tid === S.sel.tid))) S.sel = null;
+    $("#p-track").dataset.key = "";
+    setData(d); msg(`đã lưu: ${body.op}`);
+  } catch (e) { draw(); }
+}
+function splitHere() { if (S.sel) op({ op: "split", person: $("#t-split-id") && $("#t-split-id").value ? $("#t-split-id").value : null }); }
+function hideHere() {
+  if (!S.sel) return; const t = track(S.sel.cam, S.sel.tid);
+  let b = S.k; while (boxAt(t, b + 1)) b++;
+  op({ op: "hide", a: S.k, b });
+}
+function delTrack() {
+  if (!S.sel) return;
+  if (!S.delArm) { S.delArm = true; msg(`bấm Xoá lần nữa để xoá ${S.sel.cam} #${S.sel.tid}`, true); setTimeout(() => S.delArm = false, 3000); return; }
+  S.delArm = false; op({ op: "delete" });
+}
+async function undo() { try { setData(await api(`/api/session/${S.session}/undo`, {})); S.sel = null; renderTrackPanel(); msg("đã hoàn tác"); } catch (e) {} }
+
+// ---------------------------------------------------------------- mouse
+function pos(e, cv) { const r = cv.getBoundingClientRect(); return [(e.clientX - r.left) * cv.width / r.width, (e.clientY - r.top) * cv.height / r.height]; }
+for (const cam of CAMS) {
+  const cv = canv[cam];
+  cv.onmousedown = (e) => {
+    const [x, y] = pos(e, cv), s = scale(cam);
+    if (S.mode) { S.drag = { cam, rubber: [x, y, x, y], mode: S.mode }; return; }
+    if (S.sel && S.sel.cam === cam) {
+      const b = boxAt(track(cam, S.sel.tid), S.k);
+      if (b) {
+        const r = [b[1] * s, b[2] * s, b[3] * s, b[4] * s];
+        const hi = grab(r, x, y);
+        if (hi !== null) { S.drag = { cam, tid: S.sel.tid, h: hi, start: [x, y], orig: r, box: null }; return; }
+      }
+    }
+    // select the smallest box under the cursor
+    let best = null;
+    for (const t of S.data.cams[cam].tracks) {
+      const b = boxAt(t, S.k); if (!b) continue;
+      const r = [b[1] * s, b[2] * s, b[3] * s, b[4] * s];
+      if (x > r[0] && x < r[2] && y > r[1] && y < r[3]) { const a = (r[2] - r[0]) * (r[3] - r[1]); if (!best || a < best.a) best = { tid: t.tid, a }; }
+    }
+    S.sel = best ? { cam, tid: best.tid } : null; renderTrackPanel(); switchTab("track"); draw();
+  };
+  cv.onmousemove = (e) => {
+    if (!S.drag || S.drag.cam !== cam) return;
+    const [x, y] = pos(e, cv), s = scale(cam);
+    if (S.drag.rubber) { S.drag.rubber[2] = x; S.drag.rubber[3] = y; draw(); return; }
+    const [dx, dy] = [x - S.drag.start[0], y - S.drag.start[1]]; let [x1, y1, x2, y2] = S.drag.orig; const h = S.drag.h;
+    if (!h.l && !h.r && !h.t && !h.b) { x1 += dx; x2 += dx; y1 += dy; y2 += dy; }
+    else { if (h.l) x1 += dx; if (h.r) x2 += dx; if (h.t) y1 += dy; if (h.b) y2 += dy; }
+    S.drag.box = [Math.min(x1, x2) / s, Math.min(y1, y2) / s, Math.max(x1, x2) / s, Math.max(y1, y2) / s]; draw();
+  };
+  cv.onmouseup = () => {
+    const d = S.drag; S.drag = null; if (!d || d.cam !== cam) return;
+    const s = scale(cam);
+    if (d.rubber) {
+      const [a, b, c, e] = d.rubber, box = [Math.min(a, c) / s, Math.min(b, e) / s, Math.max(a, c) / s, Math.max(b, e) / s];
+      setMode(null);
+      if (box[2] - box[0] < 5 || box[3] - box[1] < 5) { draw(); return; }
+      if (d.mode === "new") op({ op: "new", box, person: $("#newid").value.trim(), tid: undefined }, cam);
+      else if (S.sel && S.sel.cam === cam) op({ op: "box", box, link: true });
+      else { msg("chọn một track ở camera này trước khi vẽ lại", true); draw(); }
+      return;
+    }
+    if (d.box) op({ op: "box", box: d.box }); else draw();
+  };
+}
+function setMode(m) { S.mode = m; $("#drawNew").classList.toggle("on", m === "new"); $("#drawFix").classList.toggle("on", m === "fix"); }
+
+// ---------------------------------------------------------------- controls
+$("#sess").onchange = (e) => openSession(e.target.value);
+$("#slider").oninput = (e) => goto(+e.target.value);
+$("#fnum").onchange = (e) => goto(+e.target.value);
+$("#fnum").onkeydown = (e) => e.stopPropagation();
+$("#newid").onkeydown = (e) => e.stopPropagation();
+$("#prev").onclick = () => goto(S.k - 1);
+$("#next").onclick = () => goto(S.k + 1);
+$("#play").onclick = togglePlay;
+$("#drawNew").onclick = () => setMode(S.mode === "new" ? null : "new");
+$("#drawFix").onclick = () => setMode(S.mode === "fix" ? null : "fix");
+$("#undo").onclick = undo;
+$("#reviewed").onclick = async () => { try { await api(`/api/session/${S.session}/reviewed`, { value: true }); msg("đã đánh dấu đã duyệt"); loadSessionsKeep(); } catch (e) {} };
+document.querySelectorAll(".tabs button").forEach(b => b.onclick = () => switchTab(b.dataset.tab));
+async function loadSessionsKeep() { const cur = S.session; const list = await api("/api/sessions"); $("#sess").innerHTML = list.map(s => `<option value="${s.name}">${s.reviewed ? "✔ " : s.edited ? "✎ " : ""}${s.name}</option>`).join(""); $("#sess").value = cur; }
+function togglePlay() {
+  if (S.playing) { clearInterval(S.playing); S.playing = null; $("#play").textContent = "▶"; return; }
+  $("#play").textContent = "❚❚"; S.playing = setInterval(() => { if (S.k >= S.size - 1) togglePlay(); else goto(S.k + 1); }, 200);
+}
+document.addEventListener("keydown", (e) => {
+  if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+  const n = e.shiftKey ? 10 : 1;
+  if (e.key === "ArrowRight") { goto(S.k + n); e.preventDefault(); }
+  else if (e.key === "ArrowLeft") { goto(S.k - n); e.preventDefault(); }
+  else if (e.key === " ") { togglePlay(); e.preventDefault(); }
+  else if (e.key === "Escape") { setMode(null); S.sel = null; renderTrackPanel(); draw(); }
+  else if (e.key === "n" || e.key === "N") setMode("new");
+  else if ((e.key === "b" || e.key === "B") && S.sel) setMode("fix");
+  else if ((e.key === "e" || e.key === "E") && S.sel) { switchTab("track"); setTimeout(() => $("#t-person") && $("#t-person").select(), 0); e.preventDefault(); }
+  else if ((e.key === "s" || e.key === "S") && S.sel) splitHere();
+  else if ((e.key === "h" || e.key === "H") && S.sel) hideHere();
+  else if ((e.key === "o" || e.key === "O") && S.sel) { const b = boxAt(track(S.sel.cam, S.sel.tid), S.k); if (b) op({ op: "occluded", a: S.k, b: S.k, value: !b[6] }); }
+  else if (e.key === "Delete" && S.sel) delTrack();
+  else if (e.key === "z" && (e.ctrlKey || e.metaKey)) { undo(); e.preventDefault(); }
+  else if ((e.key === "[" || e.key === "]") && S.sel) { const t = track(S.sel.cam, S.sel.tid); goto(e.key === "[" ? t.boxes[0][0] : t.boxes[t.boxes.length - 1][0]); }
+});
+window.addEventListener("resize", draw);
+document.addEventListener("click", (e) => { if (e.target.tagName === "BUTTON") e.target.blur(); });
+loadSessions();
+</script>
+</body>
+</html>
