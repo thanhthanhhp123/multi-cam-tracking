@@ -133,6 +133,24 @@ class Associator:
         pending: list[Tracklet] = []
         for tracklet in tracklets:
             owner = self.gallery.find_by_tracklet(tracklet)
+            if owner is None and tracklet.closed:
+                # Tracklet đã có danh tính nhưng bị một tracklet mới hơn cùng camera thế chỗ
+                # trong GlobalTrack đó (`Gallery.pop_former_owner`). Nó đóng mà không có khung
+                # mới nào, nên không có gì để xét lại: giữ nguyên danh tính, KHÔNG nạp lại vào
+                # gallery (nạp lại sẽ đẩy tracklet mới hơn ra khỏi vị trí "đang sở hữu").
+                former = self.gallery.pop_former_owner(tracklet)
+                if former is not None:
+                    self.stats.updated += 1
+                    results.append(
+                        Assignment(
+                            tracklet=tracklet,
+                            global_id=former.global_id,
+                            cost=0.0,
+                            is_new=False,
+                            is_update=True,
+                        )
+                    )
+                    continue
             if owner is None:
                 pending.append(tracklet)
                 continue

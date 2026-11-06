@@ -401,3 +401,30 @@ def test_hai_tracklet_cung_camera_van_bi_tach():
     results = associator.assign(tracklets)
 
     assert len({r.global_id for r in results}) == 2
+
+
+def test_tracklet_bi_the_cho_giu_danh_tinh_khi_dong(rng):
+    """Tracklet cũ bị tracklet mới hơn cùng camera thế chỗ trong GlobalTrack, rồi mới đóng.
+
+    Trước phiên 41 nó bị coi là chưa gán và ghép lại từ đầu lúc đóng (bản ghi `first` thứ hai,
+    có khi đổi Global ID). Bây giờ nó giữ nguyên danh tính và không đẩy tracklet mới ra.
+    """
+    vec = l2_normalize(rng.standard_normal(64))
+    assoc = Associator(config=AffinityConfig(max_cost=0.9))
+
+    old = _tracklet("cam01", 1, start_ms=0, embedding=vec, tracklet_id=1)
+    old.closed = False  # còn trong idle_timeout: chưa đóng
+    (first,) = assoc.assign([old])
+    assert first.is_new
+
+    new = _tracklet("cam01", 2, start_ms=1_000, embedding=vec, tracklet_id=2)
+    new.closed = False
+    (second,) = assoc.assign([new])
+    assert second.global_id == first.global_id and not second.is_new
+
+    old.closed = True
+    (closing,) = assoc.assign([old])
+    assert closing.is_update and not closing.is_new
+    assert closing.global_id == first.global_id
+    track = assoc.gallery.get(first.global_id)
+    assert track is not None and assoc.gallery.find_by_tracklet(new) is track

@@ -274,6 +274,12 @@ class Gallery:
         self._tracks: dict[int, GlobalTrack] = {}
         self._owner_of: dict[int, int] = {}
         """tracklet_id → global_id đang giữ nó. Chỉ mục cho `find_by_tracklet`."""
+        self._former_owner: dict[int, int] = {}
+        """tracklet_id → global_id đã giữ nó trước khi một tracklet MỚI HƠN cùng camera thế chỗ.
+
+        Xem `former_owner`. Mục bị xoá khi tracklet đó được hỏi lúc đóng, hoặc khi nó lại được
+        gán; nên kích thước theo số tracklet đang chờ đóng, không theo tổng số từng thấy.
+        """
 
         self._next_id = 1
         self.n_created = 0
@@ -319,6 +325,10 @@ class Gallery:
         # thay vì theo số track đang mở.
         if previous is not None and previous != tracklet.tracklet_id:
             self._owner_of.pop(previous, None)
+            # Tracklet cũ có thể CHƯA đóng (đang trong `idle_timeout_ms`): nhớ chủ của nó để
+            # lúc nó đóng thì giữ nguyên danh tính thay vì bị ghép lại từ đầu (`former_owner`).
+            self._former_owner[previous] = track.global_id
+        self._former_owner.pop(tracklet.tracklet_id, None)
         self._owner_of[tracklet.tracklet_id] = track.global_id
         track.cam_ground_path[tracklet.cam_id] = tracklet.ground_path
         spans = [
@@ -432,6 +442,23 @@ class Gallery:
         # Chỉ mục có thể trỏ tới track đã bị `prune` đóng, hoặc tới một tracklet mà camera
         # đó đã gán cho tracklet khác — `owns_tracklet` vẫn là nguồn sự thật.
         return track if track is not None and track.owns_tracklet(tracklet) else None
+
+    def pop_former_owner(self, tracklet: Tracklet) -> GlobalTrack | None:
+        """GlobalTrack đã giữ tracklet này trước khi bị một tracklet mới hơn cùng camera thế chỗ.
+
+        **Vì sao cần.** `owns_tracklet` chỉ nhớ tracklet MỚI NHẤT của mỗi camera. Khi một
+        người bị mất dấu, tracklet cũ còn mở thêm `idle_timeout_ms`; trong lúc đó tracker cấp id
+        mới cho chính người ấy và id mới được nối vào cùng GlobalTrack. Tới khi tracklet cũ
+        đóng, nó không còn chủ, nên trước đây bị coi là CHƯA gán: ghép lại từ đầu, sinh thêm một
+        bản ghi `first` (đo ra "thời gian tới Global ID" 10–30 s cho một tracklet đã có danh
+        tính sau 0.5 s), và đôi khi ghi đè Global ID của cả tracklet trong SQLite. Đo trên dữ
+        liệu lab (phiên 41, 12 buổi, r1): 69/337 tracklet bị ghép lại lúc đóng, 4 lần đổi ID.
+
+        Trả None nếu tracklet chưa từng bị thế chỗ hoặc GlobalTrack đó đã đóng. Gọi là tiêu
+        thụ mục nhớ, nên chỉ gọi cho tracklet ĐÃ ĐÓNG.
+        """
+        global_id = self._former_owner.pop(tracklet.tracklet_id, None)
+        return None if global_id is None else self._tracks.get(global_id)
 
     def open_tracks(self) -> list[GlobalTrack]:
         return sorted(self._tracks.values(), key=lambda t: t.global_id)
