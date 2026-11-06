@@ -181,8 +181,12 @@ def test_ground_truth_thieu_loai_cap_thi_warn(tmp_path: Path):
 # --------------------------------------------------------------------------------------
 
 
-def test_cau_hinh_lab_cua_repo_chi_fail_o_cho_chua_do(repo_root: Path, capsys, tmp_path: Path):
-    """Homography đo thật 2026-10-17; topology còn `status: template` tới khi đo transit."""
+def test_cau_hinh_lab_cua_repo_khong_con_fail(repo_root: Path, capsys, tmp_path: Path):
+    """Homography đo thật 2026-10-17; topology `status: measured` từ phiên 40 (2026-11-06).
+
+    Trước phiên 40 test này đòi đúng một FAIL (topology còn `template`); sau khi đo transit
+    thì cấu hình lab của repo phải qua sạch.
+    """
     code = main(
         [
             "--lab-dir",
@@ -194,10 +198,8 @@ def test_cau_hinh_lab_cua_repo_chi_fail_o_cho_chua_do(repo_root: Path, capsys, t
         ]
     )
     out = capsys.readouterr().out
-    assert code == 1
     fails = [line for line in out.splitlines() if line.startswith("[FAIL]")]
-    assert len(fails) == 1, out
-    assert "topology" in fails[0] and "template" in fails[0]
+    assert code == 0 and not fails, out
     assert "[OK  ] homography" in out
 
 
