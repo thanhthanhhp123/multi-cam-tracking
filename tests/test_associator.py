@@ -428,3 +428,117 @@ def test_tracklet_bi_the_cho_giu_danh_tinh_khi_dong(rng):
     assert closing.global_id == first.global_id
     track = assoc.gallery.get(first.global_id)
     assert track is not None and assoc.gallery.find_by_tracklet(new) is track
+
+
+# --------------------------------------------------------------------------- #
+# Xét lại quyết định đầu (association.revise_after_frames)
+# --------------------------------------------------------------------------- #
+
+
+def _two_people(rng: np.random.Generator, assoc: Associator) -> tuple[np.ndarray, np.ndarray]:
+    """Hai người đã có Global ID 1 (cam01) và 2 (cam02), ngoại hình gần như trực giao."""
+    a = l2_normalize(rng.standard_normal(DIM))
+    b = l2_normalize(rng.standard_normal(DIM))
+    assoc.assign([_tracklet("cam01", 1, start_ms=0, embedding=a, n_frames=30, tracklet_id=1)])
+    assoc.assign([_tracklet("cam02", 1, start_ms=0, embedding=b, n_frames=30, tracklet_id=2)])
+    return a, b
+
+
+def test_xet_lai_chuyen_tracklet_sang_dung_nguoi(rng):
+    """Vài khung đầu giống người 1 hơn, đủ khung thì rõ là người 2: đổi sang ID 2."""
+    assoc = Associator(config=AffinityConfig(max_cost=0.4, revise_after_frames=20))
+    a, b = _two_people(rng, assoc)
+
+    early = _tracklet(
+        "cam03", 7, start_ms=5_000, embedding=_similar(rng, a, 0.75), n_frames=5, tracklet_id=3
+    )
+    early.closed = False
+    (first,) = assoc.assign([early])
+    assert first.global_id == 1
+
+    later = _tracklet(
+        "cam03", 7, start_ms=5_000, embedding=_similar(rng, b, 0.95), n_frames=25, tracklet_id=3
+    )
+    later.closed = False
+    (revised,) = assoc.assign([later])
+    assert revised.global_id == 2 and revised.is_update and not revised.is_new
+    assert assoc.stats.revised == 1 and assoc.stats.revised_changed == 1
+    track1 = assoc.gallery.get(1)
+    assert track1 is not None
+    assert all(e.tracklet_id != 3 for e in track1.entries)
+    assert "cam03" not in track1.cam_last_seen
+    assert assoc.gallery.find_by_tracklet(later) is assoc.gallery.get(2)
+
+    # Chỉ xét lại một lần: các cửa sổ sau là cập nhật bình thường.
+    (again,) = assoc.assign([later])
+    assert again.global_id == 2 and assoc.stats.revised == 1
+
+
+def test_xet_lai_bo_id_tam_khi_hoa_ra_la_nguoi_cu(rng):
+    """Lần đầu tạo ID mới; đủ khung thì khớp người 1: chuyển sang ID 1, ID tạm bị bỏ."""
+    assoc = Associator(config=AffinityConfig(max_cost=0.4, revise_after_frames=20))
+    a, _ = _two_people(rng, assoc)
+
+    early = _tracklet(
+        "cam03", 7, start_ms=5_000, embedding=_similar(rng, a, 0.4), n_frames=5, tracklet_id=3
+    )
+    early.closed = False
+    (first,) = assoc.assign([early])
+    assert first.is_new and first.global_id == 3
+
+    later = _tracklet(
+        "cam03", 7, start_ms=5_000, embedding=_similar(rng, a, 0.95), n_frames=25, tracklet_id=3
+    )
+    (revised,) = assoc.assign([later])
+    assert revised.global_id == 1
+    assert assoc.gallery.get(3) is None
+
+
+def test_xet_lai_giu_id_cu_khi_van_la_nguoi_moi(rng):
+    """Vẫn không khớp ai: giữ nguyên Global ID đã cấp, không cấp thêm số mới."""
+    assoc = Associator(config=AffinityConfig(max_cost=0.4, revise_after_frames=20))
+    _two_people(rng, assoc)
+    c = l2_normalize(rng.standard_normal(DIM))
+
+    early = _tracklet("cam03", 7, start_ms=5_000, embedding=c, n_frames=5, tracklet_id=3)
+    early.closed = False
+    (first,) = assoc.assign([early])
+    later = _tracklet("cam03", 7, start_ms=5_000, embedding=c, n_frames=25, tracklet_id=3)
+    (revised,) = assoc.assign([later])
+    assert revised.global_id == first.global_id == 3
+    assert assoc.stats.revised == 1 and assoc.stats.revised_changed == 0
+    assert assoc.gallery.n_created == 3
+
+
+def test_xet_lai_tra_tracklet_truoc_ve_lam_chu_camera(rng):
+    """Tracklet tạm thế chỗ tracklet cũ cùng camera; gỡ nó ra thì tracklet cũ là chủ lại."""
+    assoc = Associator(config=AffinityConfig(max_cost=0.4, revise_after_frames=20))
+    a, b = _two_people(rng, assoc)
+    old = assoc.gallery.get(1)
+    assert old is not None and old.cam_last_tracklet["cam01"] == 1
+
+    early = _tracklet(
+        "cam01", 9, start_ms=3_000, embedding=_similar(rng, a, 0.9), n_frames=5, tracklet_id=4
+    )
+    early.closed = False
+    assoc.assign([early])
+    assert old.cam_last_tracklet["cam01"] == 4
+
+    later = _tracklet(
+        "cam01", 9, start_ms=3_000, embedding=_similar(rng, b, 0.95), n_frames=25, tracklet_id=4
+    )
+    (revised,) = assoc.assign([later])
+    assert revised.global_id == 2
+    assert old.cam_last_tracklet["cam01"] == 1
+    assert [span[2] for span in old.cam_spans["cam01"]] == [1]
+
+
+def test_xet_lai_tat_mac_dinh(rng):
+    assoc = Associator(config=AffinityConfig(max_cost=0.4))
+    a, _ = _two_people(rng, assoc)
+    early = _tracklet("cam03", 7, start_ms=5_000, embedding=a, n_frames=5, tracklet_id=3)
+    early.closed = False
+    assoc.assign([early])
+    later = _tracklet("cam03", 7, start_ms=5_000, embedding=a, n_frames=25, tracklet_id=3)
+    assoc.assign([later])
+    assert assoc.stats.revised == 0

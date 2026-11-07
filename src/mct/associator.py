@@ -84,6 +84,12 @@ class AssociatorStats:
     no_candidate: int = 0
     """Không còn ứng viên khả thi nào sau khi áp ràng buộc."""
 
+    revised: int = 0
+    """Số lần xét lại quyết định đầu (`revise_after_frames`)."""
+
+    revised_changed: int = 0
+    """Trong đó, số lần Global ID của tracklet đổi sau khi xét lại."""
+
 
 class Associator:
     """Gán Global ID. Giữ gallery, không giữ tracklet — tracklet do `TrackletBuilder` quản."""
@@ -106,6 +112,8 @@ class Associator:
         # mỗi ma trận nên chiếu lại từ đầu mỗi lần. Xem `affinity.GroundCache` về vì sao
         # khoá theo `id()` vẫn an toàn khi cache sống lâu.
         self._ground_cache: GroundCache = {}
+        self._provisional: set[int] = set()
+        """tracklet_id được gán khi còn ít khung hơn `revise_after_frames`, chờ xét lại."""
 
     @classmethod
     def from_mapping(
@@ -131,8 +139,12 @@ class Associator:
         results: list[Assignment] = []
 
         pending: list[Tracklet] = []
+        revise: list[tuple[Tracklet, GlobalTrack]] = []
         for tracklet in tracklets:
             owner = self.gallery.find_by_tracklet(tracklet)
+            if owner is not None and self._due_revision(tracklet):
+                revise.append((tracklet, owner))
+                continue
             if owner is None and tracklet.closed:
                 # Tracklet đã có danh tính nhưng bị một tracklet mới hơn cùng camera thế chỗ
                 # trong GlobalTrack đó (`Gallery.pop_former_owner`). Nó đóng mà không có khung
@@ -165,6 +177,9 @@ class Associator:
                     is_update=True,
                 )
             )
+
+        for tracklet, owner in revise:
+            results.append(self._revise(tracklet, owner))
 
         if pending:
             results.extend(self._match(pending))
@@ -226,6 +241,7 @@ class Associator:
                 track = tracks[col]
                 self.gallery.assign(track, tracklet)
                 self.stats.matched += 1
+                self._mark_provisional(tracklet)
                 results.append(
                     Assignment(
                         tracklet=tracklet, global_id=track.global_id, cost=cost, is_new=False
@@ -240,6 +256,7 @@ class Associator:
                 self.stats.rejected_by_threshold += 1
             track = self.gallery.create(tracklet)
             self.stats.created += 1
+            self._mark_provisional(tracklet)
             results.append(
                 Assignment(
                     tracklet=tracklet,
@@ -250,6 +267,75 @@ class Associator:
                 )
             )
         return results
+
+    # ------------------------------------------------------------------ xét lại
+
+    def _mark_provisional(self, tracklet: Tracklet) -> None:
+        limit = self.config.revise_after_frames
+        if limit is not None and not tracklet.closed and tracklet.n_frames < limit:
+            self._provisional.add(tracklet.tracklet_id)
+
+    def _due_revision(self, tracklet: Tracklet) -> bool:
+        limit = self.config.revise_after_frames
+        if limit is None or tracklet.tracklet_id not in self._provisional:
+            return False
+        return tracklet.closed or tracklet.n_frames >= limit
+
+    def _revise(self, tracklet: Tracklet, owner: GlobalTrack) -> Assignment:
+        """Gỡ tracklet khỏi GlobalTrack đang giữ nó rồi gán lại với query đầy đủ hơn.
+
+        Chỉ một lần cho mỗi tracklet. Một hàng duy nhất nên Hungarian suy biến thành chọn ô
+        rẻ nhất (theo chi phí / ngưỡng của ô, như `_match_one_camera`). Ba kết cục:
+        giữ nguyên track cũ; chuyển sang track khác (track cũ rỗng thì bỏ ID đó đi); hoặc
+        tách ra Global ID mới (nếu track cũ rỗng thì giữ luôn ID cũ thay vì cấp số mới).
+        """
+        self._provisional.discard(tracklet.tracklet_id)
+        self.stats.revised += 1
+        self.gallery.detach(owner, tracklet)
+        orphan = not owner.members
+        tracks = [t for t in self.gallery.open_tracks() if not (orphan and t is owner)]
+
+        target: GlobalTrack | None = None
+        cost = float("inf")
+        if tracks:
+            matrix = self.cost_matrix([tracklet], tracks)
+            limits = matrix.limits(self.config)
+            if limits is None:
+                work, threshold = matrix.costs, self.config.max_cost
+            else:
+                work, threshold = matrix.costs / limits, 1.0
+            col = int(np.argmin(work[0]))
+            if float(work[0, col]) < threshold:
+                target, cost = tracks[col], float(matrix.costs[0, col])
+
+        if target is None:
+            target = owner if orphan else self.gallery.create(tracklet)
+            if target is owner:
+                self.gallery.assign(owner, tracklet)
+            is_new = target is not owner
+        else:
+            self.gallery.assign(target, tracklet)
+            if orphan and target is not owner:
+                self.gallery.drop(owner)
+            is_new = False
+        if target is not owner:
+            self.stats.revised_changed += 1
+            log.debug(
+                "xét lại tracklet #%d: Global ID %d -> %d",
+                tracklet.tracklet_id,
+                owner.global_id,
+                target.global_id,
+            )
+        return Assignment(
+            tracklet=tracklet,
+            global_id=target.global_id,
+            cost=cost if not is_new else float("inf"),
+            is_new=is_new,
+            # Không phải lần phát đầu (Global ID đã cấp từ trước), nên `latency_report` không
+            # đếm nó là "first": thời gian tới Global ID vẫn tính ở lần gán tạm.
+            is_update=True,
+            reason="revised" if target is not owner else "",
+        )
 
     def cost_matrix(
         self, tracklets: Sequence[Tracklet], tracks: Sequence[GlobalTrack] | None = None

@@ -139,6 +139,17 @@ class AffinityConfig:
     `None` = tắt (hành vi cũ từng bit).
     """
 
+    revise_after_frames: int | None = None
+    """Xét lại MỘT lần quyết định gán đầu tiên khi tracklet đã đủ số khung này.
+
+    Engine gán Global ID khi tracklet mới có `min_frames` khung (vài phần mười giây), để thời
+    gian tới Global ID dưới 1 s. Đo trên embedding thật của dữ liệu lab (phiên 43): với 5 khung
+    đầu, người đúng đứng đầu bảng xếp hạng ngoại hình 60% số lần; với 25 khung là 82%, cả
+    tracklet 88%. Nên quyết định đầu là TẠM: tới ngưỡng này tracklet được gỡ khỏi GlobalTrack
+    và gán lại từ đầu với query đầy đủ hơn. Global ID vẫn được cấp ngay như cũ; nếu lần xét lại
+    đổi ý thì từ đó về sau người đó mang ID mới. `None` = tắt (hành vi cũ từng bit).
+    """
+
     homography_weight: float = 0.4
     """λ — trọng số của khoảng cách mặt đất, chỉ áp dụng cho cặp camera chồng lấn."""
 
@@ -229,6 +240,11 @@ class AffinityConfig:
                 if association.get("stitch_contested_max_gap_ms") is None
                 else int(association["stitch_contested_max_gap_ms"])
             ),
+            revise_after_frames=(
+                None
+                if association.get("revise_after_frames") is None
+                else int(association["revise_after_frames"])
+            ),
             homography_weight=float(
                 association.get("homography_weight", defaults.homography_weight)
             ),
@@ -268,6 +284,8 @@ class AffinityConfig:
             )
         if self.evidence_max_gap_ms is not None and self.evidence_max_gap_ms < 0:
             raise ValueError(f"evidence_max_gap_ms phải >= 0, nhận {self.evidence_max_gap_ms}")
+        if self.revise_after_frames is not None and self.revise_after_frames < 1:
+            raise ValueError(f"revise_after_frames phải >= 1, nhận {self.revise_after_frames}")
         if self.stitch_contested_max_gap_ms is not None and self.stitch_contested_max_gap_ms < 0:
             raise ValueError(
                 f"stitch_contested_max_gap_ms phải >= 0, nhận {self.stitch_contested_max_gap_ms}"

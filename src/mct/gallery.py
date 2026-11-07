@@ -281,6 +281,9 @@ class Gallery:
         gán; nên kích thước theo số tracklet đang chờ đóng, không theo tổng số từng thấy.
         """
 
+        self._paths: dict[int, list[tuple[int, tuple[float, float]]]] = {}
+        """tracklet_id → quỹ đạo điểm chân, để `detach` trả lại quỹ đạo của tracklet trước đó."""
+
         self._next_id = 1
         self.n_created = 0
         self.n_closed = 0
@@ -331,6 +334,7 @@ class Gallery:
         self._former_owner.pop(tracklet.tracklet_id, None)
         self._owner_of[tracklet.tracklet_id] = track.global_id
         track.cam_ground_path[tracklet.cam_id] = tracklet.ground_path
+        self._paths[tracklet.tracklet_id] = tracklet.ground_path
         spans = [
             span
             for span in track.cam_spans.get(tracklet.cam_id, [])
@@ -404,8 +408,76 @@ class Gallery:
             self._tracks.pop(track.global_id, None)
             for tracklet_id in track.cam_last_tracklet.values():
                 self._owner_of.pop(tracklet_id, None)
+            for ref in track.members:
+                self._paths.pop(ref.tracklet_id, None)
             self.n_closed += 1
         return sorted(expired, key=lambda t: t.global_id)
+
+    def detach(self, track: GlobalTrack, tracklet: Tracklet) -> None:
+        """Gỡ `tracklet` khỏi `track`, như thể nó chưa từng được gán vào đó.
+
+        Dùng cho lần xét lại quyết định đầu tiên (`AffinityConfig.revise_after_frames`). Phục
+        hồi trạng thái theo camera từ các tracklet còn lại của track: khoảng thời gian, tracklet
+        mới nhất ở camera đó (kèm quỹ đạo của nó), mốc thấy lần cuối. Centroid EMA không đảo
+        ngược được nên tính lại bằng trung bình các embedding còn giữ. Track còn rỗng thì VẪN
+        mở: người gọi quyết định giữ lại Global ID đó hay bỏ (`drop`).
+        """
+        tid = tracklet.tracklet_id
+        cam = tracklet.cam_id
+        before = len(track.members)
+        track.members = deque(
+            (ref for ref in track.members if ref.tracklet_id != tid), maxlen=_MAX_MEMBERS
+        )
+        track.n_tracklets = max(0, track.n_tracklets - (before - len(track.members)))
+        track.entries = [e for e in track.entries if e.tracklet_id != tid]
+        track.centroid = (
+            l2_normalize(np.mean([e.embedding for e in track.entries], axis=0))
+            if track.entries
+            else None
+        )
+
+        spans = [span for span in track.cam_spans.get(cam, []) if span[2] != tid]
+        if spans:
+            track.cam_spans[cam] = spans
+        else:
+            track.cam_spans.pop(cam, None)
+
+        self._owner_of.pop(tid, None)
+        self._former_owner.pop(tid, None)
+        if track.cam_last_tracklet.get(cam) == tid:
+            if spans:
+                _, end, prev = max(spans, key=lambda span: (span[1], span[0]))
+                track.cam_last_tracklet[cam] = prev
+                track.cam_last_seen[cam] = end
+                path = self._paths.get(prev)
+                if path is not None:
+                    track.cam_ground_path[cam] = path
+                else:
+                    track.cam_ground_path.pop(cam, None)
+                # Tracklet trước đó lại là tracklet "đang sở hữu" của camera này.
+                if self._former_owner.get(prev) == track.global_id:
+                    self._former_owner.pop(prev, None)
+                    self._owner_of[prev] = track.global_id
+            else:
+                track.cam_last_tracklet.pop(cam, None)
+                track.cam_last_seen.pop(cam, None)
+                track.cam_ground_path.pop(cam, None)
+
+        if track.cam_last_seen:
+            last_cam = max(track.cam_last_seen, key=lambda c: track.cam_last_seen[c])
+            track.last_cam_id = last_cam
+            track.last_seen_ms = track.cam_last_seen[last_cam]
+            path = track.cam_ground_path.get(last_cam)
+            if path:
+                track.last_ground_point = path[-1][1]
+        if track.members:
+            track.created_ms = min(ref.start_ms for ref in track.members)
+
+    def drop(self, track: GlobalTrack) -> None:
+        """Bỏ một GlobalTrack đã rỗng sau `detach`: Global ID đó không còn ai mang."""
+        if track.members:
+            raise ValueError(f"GlobalTrack {track.global_id} còn tracklet, không bỏ được")
+        self._tracks.pop(track.global_id, None)
 
     # ------------------------------------------------------------------ truy vấn
 
