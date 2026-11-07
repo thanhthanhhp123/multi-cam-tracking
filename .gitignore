@@ -43,3 +43,9 @@ dist/
 .DS_Store
 .idea/
 .vscode/
+
+# Ground-truth của dữ liệu tự thu (M6): quỹ đạo người thật. Phiếu đồng thuận cấm đưa lên
+# cloud (docs/m6/phieu-dong-thuan.md), GitHub cũng vậy. Sinh lại bằng `make lab-gt`.
+/eval/gt/lab_*/
+# Log engine sinh ra khi chạy lab-eval
+/logs/
