@@ -105,6 +105,41 @@ Cấu hình chung cho các bảng dưới:
 - s1, s2 tăng rõ.
 - Bảng đầy đủ ở `data/s42/per_scenario.md`.
 
+## Bộ slide tổng hợp M6 (cuối phiên)
+
+- Deck 17 slide, không có phần hiệu chỉnh vì đã báo cáo trước: https://claude.ai/artifact/Bv5wdoAZBkntpjDjNV5QFb (riêng tư, muốn gửi GVHD phải bật Share).
+  - Nội dung: dòng thời gian phiên 38–43, hiện trường, bộ dữ liệu, kịch bản, ảnh cảnh đông, quy trình GT, cách chấm, tách lỗi theo tầng, hai lỗi engine.
+  - Slide "combo và c0 nói đơn giản" (ít thuật ngữ):
+    - combo = "tin mắt hơn, tin thước ít hơn";
+    - c0 = "đừng dễ dãi khi có lựa chọn khác".
+  - Tiếp theo là kết quả, nhóm kiểm riêng và tái lập, theo kịch bản, độ trễ, hiệu năng và WildTrack, hạn chế.
+- Số dữ liệu trên slide lấy từ `data/prelabel/dataset_stats.json` (12 buổi chấm, không tính calib):
+
+  | Đại lượng | Giá trị |
+  |---|---|
+  | Thời lượng | 1106.6 s ≈ 18.4 phút |
+  | Khung chú thích | 16 596, cộng cả 3 camera |
+  | Hộp | 18 645 |
+  | Bàn giao chồng lấn / không chồng lấn / quay lại | 92 / 45 / 30 |
+  | Số người tối đa trong một khung, một camera | 7 (s3_2) |
+
+- **Ảnh ví dụ có người: làm mờ đầu trước khi đưa lên slide.** Script `render_gt.py` vẽ hộp và mã GT lên khung chú thích. Nó làm mờ vùng đầu của mọi hộp GT và mọi detection của pipeline (fixture r1) trong khung.
+  - Hộp chạm mép ảnh thì làm mờ 70% phía trên hộp.
+  - Có thêm vùng làm mờ tay qua biến môi trường `EXTRA=cam:x:y:w:h`.
+  - Đã kiểm bằng mắt từng ảnh. Lần chạy đầu sót mặt P02 sát mép phải cam03 và một người nhỏ cuối hành lang cam01, đã sửa.
+  - Khung trung vị `cam01_median.png` còn 2 người ngồi nên không dùng.
+  - Script và 6 ảnh (s2_1 khung 650, s3_1 khung 395) nằm ở `data/lab/report_media/2026-11-07/` (gitignored).
+  - Cài thêm `opencv-python-headless` vào `~/venvs/mct-stats`.
+
+## Đánh giá trước khi bảo vệ
+
+Đủ để bảo vệ: hệ thống chạy thật từ đầu đến cuối, đạt cả ba yêu cầu hiệu năng của đề cương, có dữ liệu tự thu với GT, quy trình chọn/kiểm/tái lập chặt. Chỗ dễ bị hỏi khó:
+1. Độ chính xác tuyệt đối còn khiêm tốn: bàn giao 55–58%, nhóm kiểm riêng 39–40%, cảnh đông 36%. Trả lời bằng bối cảnh: mốc ban đầu 28%, tracker hoàn hảo cũng chỉ đạt 58% với combo, lỗi còn lại đã chẩn đoán được.
+2. Chưa so với hệ nào bên ngoài.
+3. Thiếu bảng đóng góp của từng thành phần.
+4. Nhóm kiểm riêng đã dùng lại qua 3 phiên, dữ liệu nhỏ.
+5. Số WildTrack hộp ảnh (15.7) dễ bị hiểu nhầm nếu không ghi kèm giao thức chấm.
+
 ## Vướng mắc / chưa xong
 
 - **Cảnh đông (s3) vẫn yếu và c0 không giúp được.** Chồng lấn ở nhóm giữ riêng chỉ 32%, vì homography lệch ở xa: cam02 mất chân, khoảng 0.7 m.
@@ -116,6 +151,10 @@ Cấu hình chung cho các bảng dưới:
 
 ## Bước tiếp theo
 
-1. Báo cáo GVHD với số trên. Chốt hai câu hỏi ở mục trên.
-2. Nếu dùng cross-validation: chạy chọn tham số theo kiểu bỏ một buổi trên 12 buổi bằng fixture có sẵn, không cần GPU.
+1. Báo cáo GVHD với số trên (deck ở trên). Chốt hai câu hỏi ở mục trên.
+2. Trước khi bảo vệ, không cần GPU, dùng fixture có sẵn:
+   - (a) **bảng ablation:** chỉ ngoại hình → + thời gian di chuyển → + vị trí trên sàn → + c0;
+   - (b) **kiểm chéo bỏ một buổi** trên 12 buổi;
+   - (c) **một baseline đơn giản:** chỉ Re-ID, hoặc chế độ offline. Số MV3DT chỉ trích, kèm phạm vi;
+   - (d) **video demo dashboard** đã làm mờ mặt.
 3. M7: viết chương 6 từ worklog phiên 40–43.
