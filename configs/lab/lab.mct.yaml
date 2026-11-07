@@ -34,14 +34,20 @@ association:
   window_ms: 500
   exclusion_slack_ms: 0
   # Ngưỡng cho ô CHỈ có ngoại hình (cặp không chồng lấn): phải siết (configs/mct.yaml).
-  max_cost: 0.30
+  # 0.40 (biến thể `combo` của phiên 40, cùng homography_weight 0.2 + max_ground_dist_m 3.0):
+  # chọn trên s2, kiểm trên nhóm giữ riêng; 0.30 cũ = biến thể `base`.
+  max_cost: 0.40
   # Ngưỡng cho ô CÓ bằng chứng vị trí (cặp cam01–cam02 đã hiệu chỉnh, nối mảnh cùng
   # camera). 0.90 là giá trị đã chọn trên WildTrack có `same_camera_stitch` (phiên 18).
   # Đặt khoá này làm Hungarian chạy trên chi phí / ngưỡng của từng ô (mct.affinity).
   max_cost_geometric: 0.90
-  homography_weight: 0.4
-  # 2.0 m với hộp detector (phiên 13/16); 1.0 chỉ đúng với hộp ground-truth.
-  max_ground_dist_m: 2.0
+  # Nối mảnh cùng camera Δt > 0 chỉ mất max_cost_geometric khi tracklet còn ứng viên khác
+  # chấp nhận được (mct.affinity). Phiên 42: chọn 0 trên s2, nhóm giữ riêng HOTA 53.5 -> 54.9,
+  # bàn giao 33 -> 40%; cả 12 buổi bàn giao 44 -> 58%. null = biến thể `combo`.
+  stitch_contested_max_gap_ms: 0
+  # 0.2 + 3.0 m: biến thể `combo` (phiên 40). Cũ: 0.4 + 2.0 m (phiên 13/16, hộp detector).
+  homography_weight: 0.2
+  max_ground_dist_m: 3.0
   # 25 fps: một khung 40 ms. 200 ms = ±5 khung — đủ cho sai số đồng bộ bằng vỗ tay
   # (≤ 1 khung) cộng lệch audio/hình của điện thoại (vài chục ms).
   ground_time_tol_ms: 200

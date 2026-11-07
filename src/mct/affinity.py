@@ -127,6 +127,18 @@ class AffinityConfig:
     Cặp chồng lấn TRÙNG thời gian không bị ảnh hưởng: ở đó `Δt` = 0.
     """
 
+    stitch_contested_max_gap_ms: int | None = None
+    """Nối cùng camera có khoảng hở > ngưỡng này mất `max_cost_geometric` KHI BỊ CẠNH TRANH.
+
+    Biến thể của `evidence_max_gap_ms` (âm tính, phiên 41): bỏ ngân sách rộng ở mọi ô nối
+    cùng camera Δt dài thì sửa được ca "người mới vào cửa bị gộp vào người vừa rời" nhưng
+    làm tách ca đúng "người bị che rồi hiện lại". Hai ca khác nhau ở chỗ: người mới vào
+    thường có một ứng viên ĐÚNG khác (track của chính họ, tới từ camera khác) cũng chấp nhận
+    được. Vậy chỉ hạ ô nối cùng camera về `max_cost` khi cùng hàng có ô KHÁC (không phải nối
+    cùng camera) đang dưới ngưỡng của chính nó; tracklet hiện lại một mình giữ nguyên.
+    `None` = tắt (hành vi cũ từng bit).
+    """
+
     homography_weight: float = 0.4
     """λ — trọng số của khoảng cách mặt đất, chỉ áp dụng cho cặp camera chồng lấn."""
 
@@ -212,6 +224,11 @@ class AffinityConfig:
                 if association.get("evidence_max_gap_ms") is None
                 else int(association["evidence_max_gap_ms"])
             ),
+            stitch_contested_max_gap_ms=(
+                None
+                if association.get("stitch_contested_max_gap_ms") is None
+                else int(association["stitch_contested_max_gap_ms"])
+            ),
             homography_weight=float(
                 association.get("homography_weight", defaults.homography_weight)
             ),
@@ -251,6 +268,10 @@ class AffinityConfig:
             )
         if self.evidence_max_gap_ms is not None and self.evidence_max_gap_ms < 0:
             raise ValueError(f"evidence_max_gap_ms phải >= 0, nhận {self.evidence_max_gap_ms}")
+        if self.stitch_contested_max_gap_ms is not None and self.stitch_contested_max_gap_ms < 0:
+            raise ValueError(
+                f"stitch_contested_max_gap_ms phải >= 0, nhận {self.stitch_contested_max_gap_ms}"
+            )
         if self.homography_weight < 0.0:
             raise ValueError(f"homography_weight phải >= 0, nhận {self.homography_weight}")
         if self.max_ground_dist_m <= 0.0:
@@ -354,20 +375,51 @@ def build_cost_matrix(
     elif len(cache) > _GROUND_CACHE_MAX:
         cache.clear()
 
+    contest = config.stitch_contested_max_gap_ms is not None and config.max_cost_geometric
     for i, tracklet in enumerate(tracklets):
         query = tracklet.query_embedding(config.topk_query)
+        stitch_gaps: dict[int, float] = {}
         for j, track in enumerate(tracks):
-            cost, reason, measured = _pair_cost(
+            cost, reason, measured, stitch_gap = _pair_cost(
                 tracklet, query, track, topology, config, ground_mapper, cache
             )
             costs[i, j] = cost
             geometric[i, j] = measured
+            if stitch_gap is not None:
+                stitch_gaps[j] = stitch_gap
             if reason:
                 reasons[(i, j)] = reason
+        if contest and stitch_gaps:
+            _demote_contested_stitches(i, costs, geometric, stitch_gaps, config)
 
     return CostMatrix(
         tracklets=tracklets, tracks=tracks, costs=costs, reasons=reasons, geometric=geometric
     )
+
+
+def _demote_contested_stitches(
+    row: int,
+    costs: np.ndarray,
+    geometric: np.ndarray,
+    stitch_gaps: dict[int, float],
+    config: AffinityConfig,
+) -> None:
+    """Hạ ô nối cùng camera Δt dài về `max_cost` khi hàng có ứng viên khác chấp nhận được.
+
+    Xem `AffinityConfig.stitch_contested_max_gap_ms`. "Chấp nhận được" = chi phí dưới ngưỡng
+    của chính ô đó (trước khi hạ), để một ô khả thi nhưng không bao giờ được nhận không tính
+    là cạnh tranh.
+    """
+    assert config.stitch_contested_max_gap_ms is not None
+    assert config.max_cost_geometric is not None
+    limits = np.where(geometric[row], config.max_cost_geometric, config.max_cost)
+    acceptable = np.isfinite(costs[row]) & (costs[row] < limits)
+    rivals = [j for j in np.flatnonzero(acceptable) if int(j) not in stitch_gaps]
+    if not rivals:
+        return
+    for j, gap_ms in stitch_gaps.items():
+        if gap_ms > config.stitch_contested_max_gap_ms:
+            geometric[row, j] = False
 
 
 def _pair_cost(
@@ -378,15 +430,19 @@ def _pair_cost(
     config: AffinityConfig,
     ground_mapper: GroundMapper | None,
     cache: GroundCache | None = None,
-) -> tuple[float, str, bool]:
-    """(chi phí, lý do loại, ô có bằng chứng vị trí hay không)."""
+) -> tuple[float, str, bool, float | None]:
+    """(chi phí, lý do loại, ô có bằng chứng vị trí, Δt nối cùng camera).
+
+    Δt chỉ khác `None` khi bằng chứng vị trí của ô đến DUY NHẤT từ nối cùng camera
+    (`stitch_contested_max_gap_ms` chỉ hạ loại ô đó).
+    """
     if track.closed:
-        return INFEASIBLE, f"GlobalTrack #{track.global_id} đã đóng", False
+        return INFEASIBLE, f"GlobalTrack #{track.global_id} đã đóng", False, None
 
     # Tracklet đang chạy và đã thuộc về track này: giữ nguyên, đừng để tracklet khác
     # giành mất chỉ vì tình cờ giống hơn ở cửa sổ hiện tại.
     if track.owns_tracklet(tracklet):
-        return 0.0, "", False
+        return 0.0, "", False, None
 
     if track.overlaps_in(
         tracklet.cam_id,
@@ -400,43 +456,49 @@ def _pair_cost(
             f"GlobalTrack #{track.global_id} có mặt ở chính {tracklet.cam_id} dưới một "
             "local track khác TRÙNG khoảng thời gian này (ràng buộc loại trừ)",
             False,
+            None,
         )
 
     if query is None:
-        return INFEASIBLE, "tracklet chưa có embedding (ReID đang tắt?)", False
+        return INFEASIBLE, "tracklet chưa có embedding (ReID đang tắt?)", False, None
 
     if topology is not None:
         elapsed = tracklet.start_ms - track.last_seen_ms
         verdict = topology.check(track.last_cam_id, tracklet.cam_id, elapsed)
         if not verdict.feasible:
-            return INFEASIBLE, verdict.reason, False
+            return INFEASIBLE, verdict.reason, False, None
 
     similarity = track.similarity(query, config.similarity_mode)
     if similarity < -1.0 + 1e-9:  # -1.0 = GlobalTrack chưa có ngoại hình nào
-        return INFEASIBLE, f"GlobalTrack #{track.global_id} chưa có embedding để so", False
+        return INFEASIBLE, f"GlobalTrack #{track.global_id} chưa có embedding để so", False, None
 
     cost = 1.0 - float(similarity)
     measured = False
+    stitch_gap: float | None = None
 
     if ground_mapper is not None and config.same_camera_stitch:
-        stitch_cost, reason, stitched = _same_camera_term(
+        stitch_cost, reason, stitched, gap_ms = _same_camera_term(
             tracklet, track, config, ground_mapper, cache
         )
         if reason:
-            return INFEASIBLE, reason, False
+            return INFEASIBLE, reason, False, None
         cost += stitch_cost
         measured = measured or stitched
+        if stitched:
+            stitch_gap = gap_ms
 
     if ground_mapper is not None and topology is not None:
         ground_cost, reason, grounded = _ground_term(
             tracklet, track, topology, config, ground_mapper, cache
         )
         if reason:
-            return INFEASIBLE, reason, False
+            return INFEASIBLE, reason, False, None
         cost += ground_cost
         measured = measured or grounded
+        if grounded:
+            stitch_gap = None
 
-    return cost, "", measured
+    return cost, "", measured, stitch_gap
 
 
 def _same_camera_term(
@@ -445,7 +507,7 @@ def _same_camera_term(
     config: AffinityConfig,
     ground_mapper: GroundMapper,
     cache: GroundCache | None = None,
-) -> tuple[float, str, bool]:
+) -> tuple[float, str, bool, float]:
     """Nối hai mảnh tracklet của CÙNG một camera: liên tục về vị trí, hợp lý về tốc độ.
 
     Đây là chỗ bằng chứng mạnh nhất mà hệ thống có, và nó gần như miễn phí: hai mảnh nằm
@@ -468,12 +530,12 @@ def _same_camera_term(
     """
     path = track.cam_ground_path.get(tracklet.cam_id)
     if not path:
-        return 0.0, "", False
+        return 0.0, "", False, 0.0
 
     own = _world_path(tracklet.cam_id, tracklet.ground_path, ground_mapper, cache, config)
     other = _world_path(tracklet.cam_id, path, ground_mapper, cache, config)
     if len(own) == 0 or len(other) == 0:  # camera chưa hiệu chỉnh
-        return 0.0, "", False
+        return 0.0, "", False, 0.0
 
     if other[-1, 0] <= own[0, 0]:  # mảnh của track ở TRƯỚC
         gap_ms = float(own[0, 0] - other[-1, 0])
@@ -482,7 +544,7 @@ def _same_camera_term(
         gap_ms = float(other[0, 0] - own[-1, 0])
         distance = float(np.hypot(*(other[0, 1:] - own[-1, 1:])))
     else:
-        return 0.0, "", False
+        return 0.0, "", False, 0.0
 
     budget = config.max_ground_dist_m + config.max_speed_m_s * gap_ms / 1000.0
     if distance > budget:
@@ -491,11 +553,13 @@ def _same_camera_term(
             f"cùng {tracklet.cam_id}: hai mảnh cách nhau {distance:.2f} m sau {gap_ms / 1000:.1f}s "
             f"> ngân sách {budget:.2f} m (đi nhanh nhất {config.max_speed_m_s} m/s)",
             False,
+            gap_ms,
         )
     return (
         config.homography_weight * min(distance, config.max_ground_dist_m),
         "",
         _counts_as_evidence(gap_ms, config),
+        gap_ms,
     )
 
 

@@ -706,6 +706,41 @@ def test_noi_manh_sau_khoang_ho_dai_khong_con_la_bang_chung_vi_tri(rng):
     assert limits is not None and limits[0, 0] == pytest.approx(0.3)
 
 
+def test_noi_manh_bi_canh_tranh_moi_mat_ngan_sach_hinh_hoc(rng):
+    """`stitch_contested_max_gap_ms`: chỉ hạ ô nối cùng camera khi hàng có ứng viên khác."""
+    vec = l2_normalize(rng.standard_normal(DIM))
+    gallery = Gallery()
+    cu = gallery.create(_walking_tracklet("cam01", 1, vec, tracklet_id=1))
+    doi_thu = gallery.create(_walking_tracklet("cam02", 7, vec, tracklet_id=3))
+    tiep = _shifted(_walking_tracklet("cam01", 2, vec, tracklet_id=2), dt_ms=5_000, dx_px=210.0)
+    config = AffinityConfig(max_cost=0.3, max_cost_geometric=0.9, stitch_contested_max_gap_ms=0)
+
+    def build(tracks, cfg):
+        return build_cost_matrix([tiep], tracks, config=cfg, ground_mapper=_MetricGround())
+
+    mot_minh = build([cu], config)
+    canh_tranh = build([cu, doi_thu], config)
+    tat = build([cu, doi_thu], AffinityConfig(max_cost=0.3, max_cost_geometric=0.9))
+    nguong_rong = build(
+        [cu, doi_thu],
+        AffinityConfig(max_cost=0.3, max_cost_geometric=0.9, stitch_contested_max_gap_ms=10**9),
+    )
+
+    assert mot_minh.geometric is not None and mot_minh.geometric[0, 0]
+    assert canh_tranh.geometric is not None and not canh_tranh.geometric[0, 0]
+    assert tat.geometric is not None and tat.geometric[0, 0]
+    assert nguong_rong.geometric is not None and nguong_rong.geometric[0, 0]
+    assert canh_tranh.costs[0, 0] == pytest.approx(tat.costs[0, 0])
+    with pytest.raises(ValueError):
+        AffinityConfig(stitch_contested_max_gap_ms=-1)
+    assert (
+        AffinityConfig.from_mapping(
+            {"association": {"stitch_contested_max_gap_ms": 1500}}
+        ).stitch_contested_max_gap_ms
+        == 1500
+    )
+
+
 def test_noi_manh_sau_khoang_ho_dai_van_bi_loai_khi_qua_xa(rng):
     vec = l2_normalize(rng.standard_normal(DIM))
     gallery = Gallery()

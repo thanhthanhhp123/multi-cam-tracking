@@ -91,6 +91,11 @@ association:
   # có ngoại hình. null = mọi cổng qua được đều là bằng chứng (hành vi cũ, giữ nguyên từng bit).
   # Lý do và số đo: mct.affinity.AffinityConfig.evidence_max_gap_ms, worklog phiên 41.
   evidence_max_gap_ms: null
+  # Biến thể có điều kiện của khoá trên: ô nối cùng camera có khoảng hở > ngưỡng (ms) chỉ mất
+  # max_cost_geometric khi tracklet còn một ứng viên KHÁC chấp nhận được (người mới vào cửa có
+  # track của chính họ từ camera khác; người bị che hiện lại thì thường không). null = tắt.
+  # Lý do và số đo: mct.affinity.AffinityConfig.stitch_contested_max_gap_ms, worklog phiên 42.
+  stitch_contested_max_gap_ms: null
   # Trọng số lambda của thành phần khoảng cách mặt đất (chỉ áp dụng cho cặp camera overlap).
   homography_weight: 0.4
   # Vượt khoảng cách này trên mặt phẳng tham chiếu thì loại thẳng, không cần xét ngoại hình.
