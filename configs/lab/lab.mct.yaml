@@ -48,6 +48,11 @@ association:
   # 0.2 + 3.0 m: biến thể `combo` (phiên 40). Cũ: 0.4 + 2.0 m (phiên 13/16, hộp detector).
   homography_weight: 0.2
   max_ground_dist_m: 3.0
+  # Hộp bị mép dưới ảnh cắt: suy điểm chân từ đỉnh đầu (mặt phẳng đầu, mct.learned.FootModel).
+  # Phiên 45: fit trên 8 buổi s2 (eval.fit_learned), LOSO chồng lấn 79 -> 91%, HOTA 69.9 -> 71.5;
+  # nhóm giữ riêng bàn giao 39 -> 48% (Wilson chồng nhau), HOTA 53.4 -> 53.0. Đường dẫn tính
+  # từ thư mục làm việc (gốc repo). null = điểm chân luôn là đáy-giữa hộp.
+  foot_from_height: configs/lab/learned/foot_height.yaml
   # 25 fps: một khung 40 ms. 200 ms = ±5 khung — đủ cho sai số đồng bộ bằng vỗ tay
   # (≤ 1 khung) cộng lệch audio/hình của điện thoại (vài chục ms).
   ground_time_tol_ms: 200

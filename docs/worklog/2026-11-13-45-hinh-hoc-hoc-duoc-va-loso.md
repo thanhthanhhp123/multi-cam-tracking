@@ -34,6 +34,7 @@
    - Cổng hướng ra: kết quả TRÙNG +1 từng số. Chưa đếm cổng đã loại bao nhiêu ô; chỉ biết nó không đổi quyết định nào được chấm.
    - Vùng vào: âm tính. Quay lại cùng camera 53% → 40% (24 → 18 / 45), không chồng lấn 65% → 62%.
 6. **Cấu hình cuối đề xuất = c0 + `foot_from_height: configs/lab/learned/foot_height.yaml`**, chờ người dùng duyệt trước khi chạy nhóm giữ riêng.
+8. **`configs/lab/lab.mct.yaml` có `foot_from_height: configs/lab/learned/foot_height.yaml`** (người dùng duyệt sau khi xem số nhóm giữ riêng, 2026-11-14). Lý do giữ: cặp chồng lấn tăng ở cả LOSO (79 → 91%) lẫn nhóm giữ riêng (32 → 42%), thời gian tới Global ID không đổi. Cái giá: HOTA nhóm giữ riêng không tăng, nhầm ở s3_2 tăng 18 → 25. Đường dẫn tương đối tính từ gốc repo; đã kiểm engine trên `lab_s2_1_r1` cho bảng `appearances` trùng md5 với cấu hình đã chấm (đường dẫn tuyệt đối).
 7. **Kiểm hồi quy WildTrack bằng so từng bit thay vì chấm lại**: bốn khoá `null` thì engine phải cho đúng SQLite cũ, và đó là phép kiểm mạnh hơn so điểm trong nhiễu.
 
 ## Số liệu đo được
@@ -98,7 +99,6 @@ Số phụ (chỉ trên `s2_*`, không qua LOSO, dùng để thiết kế):
 
 ## Vướng mắc / chưa xong
 
-- `foot_from_height` chưa vào `configs/lab/lab.mct.yaml`; chờ người dùng quyết.
 - Trên nhóm giữ riêng, mô hình chân giảm tách nhưng không giảm nhầm, và HOTA không tăng.
 - Chưa biết vì sao cổng hướng ra không đổi gì: có thể các ứng viên ngược hướng vốn đã bị transit time hoặc ngoại hình loại.
 - Cặp không chồng lấn vẫn ~65%; hình học không giúp được, phần mất nằm ở ngoại hình/thời gian.
@@ -107,5 +107,5 @@ Số phụ (chỉ trên `s2_*`, không qua LOSO, dùng để thiết kế):
 
 ## Bước tiếp theo
 
-1. Người dùng quyết có thêm `foot_from_height` vào `configs/lab/lab.mct.yaml`.
+1. Chạy lại `lab-eval` đồng hồ thật trên GPU với cấu hình lab mới (có mô hình chân) khi có dịp thuê máy.
 2. Đếm số ô cổng hướng ra loại (`diagnose_decisions`) để biết nó vô hại hay vô dụng.
