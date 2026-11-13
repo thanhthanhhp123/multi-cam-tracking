@@ -31,6 +31,7 @@ from typing import Any, Protocol, runtime_checkable
 import numpy as np
 
 from mct.gallery import GlobalTrack, SimilarityMode
+from mct.learned import EntryZoneModel, ExitDirectionModel, GroundErrorModel
 from mct.topology import Topology
 from mct.tracklet import SMOOTH_METHODS, GroundPath, Tracklet, smooth_ground_path
 
@@ -150,6 +151,36 @@ class AffinityConfig:
     đổi ý thì từ đó về sau người đó mang ID mới. `None` = tắt (hành vi cũ từng bit).
     """
 
+    ground_error_model: GroundErrorModel | None = None
+    """Sai số điểm chân dự kiến theo vị trí cho cặp chồng lấn (`association.ground_sigma_model`).
+
+    Khi đặt, khoảng cách TẠI CÙNG THỜI ĐIỂM giữa hai camera không còn là `|Δ|` thô mà là
+    `|Δ − μ(ô)| · σ_ref / σ(ô)`: trừ độ lệch hệ thống của ô sàn đó rồi chia cho độ tản của nó
+    (`mct.learned.GroundErrorModel`). Đơn vị vẫn là mét-tương-đương, nên `homography_weight` và
+    `max_ground_dist_m` giữ nguyên nghĩa. Chỉ nhánh trùng thời gian của `_ground_term` dùng nó;
+    nối cùng camera và nhánh nới theo `Δt` so hai thời điểm khác nhau nên giữ khoảng cách thô.
+    `None` = hành vi cũ từng bit.
+    """
+
+    exit_direction_model: ExitDirectionModel | None = None
+    """Cổng hướng rời khung cho cặp KHÔNG chồng lấn (`association.exit_direction_gate`).
+
+    GlobalTrack thấy lần cuối ở camera `src` bị loại khỏi ứng viên của tracklet ở `dst` khi lúc
+    rời khung nó đang đi rõ ràng NGƯỢC hướng `src → dst` đã học. Đứng yên hoặc quỹ đạo quá ngắn
+    thì không loại (không có bằng chứng). `None` = tắt (hành vi cũ từng bit).
+    """
+
+    entry_zone_model: EntryZoneModel | None = None
+    """Tracklet bắt đầu ở vùng vào thì ô nối cùng camera mất ngân sách rộng
+    (`association.entry_zone_prior`).
+
+    Tín hiệu (b) của phiên 41: người mới tới xuất hiện ở mép/cửa, người bị che hiện lại ở giữa
+    khung. Tracklet bắt đầu trong ô ảnh mà dữ liệu fit cho thấy gần như luôn là người mới tới
+    thì ô `same_camera_stitch` của nó không còn được tính là có bằng chứng vị trí (dùng
+    `max_cost` thay cho `max_cost_geometric`): muốn nối cùng camera thì ngoại hình phải đủ
+    giống. Chỉ có tác dụng khi `max_cost_geometric` được đặt. `None` = tắt (hành vi cũ từng bit).
+    """
+
     homography_weight: float = 0.4
     """λ — trọng số của khoảng cách mặt đất, chỉ áp dụng cho cặp camera chồng lấn."""
 
@@ -223,7 +254,15 @@ class AffinityConfig:
         association = dict(data.get("association", data) or {})
         gallery = dict(data.get("gallery", {}) or {})
         defaults = cls()
+
+        def learned(key: str, loader: Any) -> Any:
+            path = association.get(key)
+            return None if path is None else loader(path)
+
         return cls(
+            ground_error_model=learned("ground_sigma_model", GroundErrorModel.load),
+            exit_direction_model=learned("exit_direction_gate", ExitDirectionModel.load),
+            entry_zone_model=learned("entry_zone_prior", EntryZoneModel.load),
             max_cost=float(association.get("max_cost", defaults.max_cost)),
             max_cost_geometric=(
                 None
@@ -407,6 +446,15 @@ def build_cost_matrix(
                 stitch_gaps[j] = stitch_gap
             if reason:
                 reasons[(i, j)] = reason
+        entry = config.entry_zone_model
+        if (
+            entry is not None
+            and stitch_gaps
+            and entry.is_entry(tracklet.cam_id, tracklet.first_bbox)
+        ):
+            # A new arrival: walking distance to someone who left this camera is not evidence.
+            for j in stitch_gaps:
+                geometric[i, j] = False
         if contest and stitch_gaps:
             _demote_contested_stitches(i, costs, geometric, stitch_gaps, config)
 
@@ -485,6 +533,23 @@ def _pair_cost(
         verdict = topology.check(track.last_cam_id, tracklet.cam_id, elapsed)
         if not verdict.feasible:
             return INFEASIBLE, verdict.reason, False, None
+
+    gate = config.exit_direction_model
+    if gate is not None and ground_mapper is not None and track.last_cam_id != tracklet.cam_id:
+        src = track.last_cam_id
+        path = track.cam_ground_path.get(src)
+        if path and (src, tracklet.cam_id) in gate.directions:
+            cos = gate.contradicts(
+                src, tracklet.cam_id, _world_path(src, path, ground_mapper, cache, config)
+            )
+            if cos is not None:
+                return (
+                    INFEASIBLE,
+                    f"GlobalTrack #{track.global_id} rời {src} ngược hướng tới {tracklet.cam_id} "
+                    f"(cos={cos:.2f} < {gate.min_cos})",
+                    False,
+                    None,
+                )
 
     similarity = track.similarity(query, config.similarity_mode)
     if similarity < -1.0 + 1e-9:  # -1.0 = GlobalTrack chưa có ngoại hình nào
@@ -622,7 +687,13 @@ def _ground_term(
     matched: list[float] = []
     for cam_id in cams:
         other = _world_path(cam_id, track.cam_ground_path[cam_id], ground_mapper, cache, config)
-        distance = _synchronized_distance(own, other, config.ground_time_tol_ms)
+        distance = _synchronized_distance(
+            own,
+            other,
+            config.ground_time_tol_ms,
+            error_model=config.ground_error_model,
+            cams=(tracklet.cam_id, cam_id),
+        )
         if distance is not None:
             matched.append(distance)
 
@@ -810,8 +881,18 @@ def _project_path(cam_id: str, path: GroundPath, ground_mapper: GroundMapper) ->
     return np.array(sorted(plain), dtype=np.float64)
 
 
-def _synchronized_distance(a: np.ndarray, b: np.ndarray, tol_ms: int) -> float | None:
+def _synchronized_distance(
+    a: np.ndarray,
+    b: np.ndarray,
+    tol_ms: int,
+    *,
+    error_model: GroundErrorModel | None = None,
+    cams: tuple[str, str] | None = None,
+) -> float | None:
     """Trung vị khoảng cách giữa hai quỹ đạo tại các mốc thời gian khớp nhau.
+
+    Có `error_model` (và nó biết cặp `cams` = camera của `a`, camera của `b`) thì từng mốc dùng
+    khoảng cách đã trừ độ lệch và chia độ tản của ô sàn đó (`GroundErrorModel.distances`).
 
     Trung vị chứ không phải trung bình: một khung có bbox bị che cho điểm chân lệch hàng
     mét, và với quỹ đạo vài chục điểm thì trung bình bị kéo lệch còn trung vị thì không.
@@ -841,6 +922,10 @@ def _synchronized_distance(a: np.ndarray, b: np.ndarray, tol_ms: int) -> float |
     hit = gap <= tol_ms
     if not hit.any():
         return None
+    if error_model is not None and cams is not None:
+        corrected = error_model.distances(cams[0], a[hit, 1:], cams[1], b[nearest[hit], 1:])
+        if corrected is not None:
+            return float(np.median(corrected))
     delta = a[hit, 1:] - b[nearest[hit], 1:]
     return float(np.median(np.hypot(delta[:, 0], delta[:, 1])))
 

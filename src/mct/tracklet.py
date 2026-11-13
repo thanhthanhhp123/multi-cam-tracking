@@ -42,6 +42,7 @@ from typing import Any
 import numpy as np
 
 from common.schema import Detection, FrameMessage, l2_normalize
+from mct.learned import FootModel
 
 # Số observation gần nhất giữ lại cho mỗi tracklet (để ước lượng hướng di chuyển ở
 # affinity.py sau này). Không phải ngưỡng thuật toán — chỉ là trần bộ nhớ.
@@ -67,15 +68,22 @@ class Observation:
     """
 
     @classmethod
-    def from_detection(cls, msg: FrameMessage, det: Detection) -> Observation:
+    def from_detection(
+        cls, msg: FrameMessage, det: Detection, foot_model: FootModel | None = None
+    ) -> Observation:
         # ground_point lấy từ Detection để quy ước "đáy-giữa bbox" chỉ định nghĩa một
-        # chỗ duy nhất (common/schema.py), không chép lại ở đây.
+        # chỗ duy nhất (common/schema.py), không chép lại ở đây. Ngoại lệ duy nhất: hộp bị
+        # mép dưới ảnh cắt, khi `association.foot_from_height` được bật (mct.learned.FootModel).
         return cls(
             ts_ms=int(msg.ts_ms),
             frame_id=int(msg.frame_id),
             bbox=det.bbox,
             confidence=float(det.confidence),
-            ground_point=det.ground_point,
+            ground_point=(
+                det.ground_point
+                if foot_model is None
+                else foot_model.foot(msg.cam_id, det.bbox, float(msg.frame_height))
+            ),
             embedding=det.embedding,
             stamps=msg.stamps,
         )
@@ -105,13 +113,23 @@ class TrackletConfig:
     điểm chẵn) — vẫn phủ trọn quãng thời gian, chỉ thưa hơn.
     """
 
+    foot_model: FootModel | None = None
+    """Suy điểm chân của hộp bị mép dưới ảnh cắt (`association.foot_from_height`).
+
+    `None` = điểm chân luôn là đáy-giữa bbox (hành vi cũ từng bit). Người đứng sát chân camera
+    mất bàn chân trong ảnh, đáy hộp dính vào mép khung và điểm chân chiếu ra sàn lệch cả mét
+    (đo phiên 45). Mô hình đã fit sẵn, đọc từ file; engine không fit gì lúc chạy.
+    """
+
     @classmethod
     def from_mapping(cls, data: dict[str, Any]) -> TrackletConfig:
         """Đọc từ dict đã load của configs/mct.yaml (chấp nhận cả dict con `tracklet`)."""
         tracklet = dict(data.get("tracklet", data) or {})
         gallery = dict(data.get("gallery", {}) or {})
+        foot_path = dict(data.get("association", {}) or {}).get("foot_from_height")
         defaults = cls()
         return cls(
+            foot_model=None if foot_path is None else FootModel.load(foot_path),
             min_frames=int(tracklet.get("min_frames", defaults.min_frames)),
             idle_timeout_ms=int(tracklet.get("idle_timeout_ms", defaults.idle_timeout_ms)),
             max_embeddings=int(tracklet.get("max_embeddings", defaults.max_embeddings)),
@@ -333,7 +351,7 @@ class TrackletBuilder:
 
         for det in msg.detections:
             key = (msg.cam_id, int(det.local_track_id))
-            obs = Observation.from_detection(msg, det)
+            obs = Observation.from_detection(msg, det, self.config.foot_model)
             tracklet = self._active.get(key)
 
             if tracklet is not None and obs.ts_ms - tracklet.end_ms > self.config.idle_timeout_ms:

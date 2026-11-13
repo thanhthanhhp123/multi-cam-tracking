@@ -100,6 +100,18 @@ association:
   # (gỡ khỏi GlobalTrack, gán lại với query đầy đủ hơn). null = tắt, hành vi cũ từng bit.
   # Lý do: mct.affinity.AffinityConfig.revise_after_frames, worklog phiên 43.
   revise_after_frames: null
+  # Bốn thành phần HỌC ĐƯỢC (phiên 45), mỗi khoá là đường dẫn tới một file đã fit bằng
+  # `python -m eval.fit_learned` (có `fit_sessions` + `fit_date`); engine chỉ đọc, không fit lúc
+  # chạy. null = tắt, hành vi cũ từng bit. Chỉ học hình học/vị trí/thời gian, không học ngoại hình.
+  # Giải thích từng cái: mct.learned và mct.affinity.AffinityConfig.
+  #   foot_from_height     hộp bị mép dưới ảnh cắt -> suy điểm chân từ đỉnh đầu
+  #   ground_sigma_model   khoảng cách mặt đất cặp chồng lấn: trừ độ lệch, chia độ tản theo ô sàn
+  #   exit_direction_gate  cặp không chồng lấn: loại track rời khung ngược hướng tới camera đích
+  #   entry_zone_prior     tracklet bắt đầu ở vùng vào: ô nối cùng camera mất ngân sách rộng
+  foot_from_height: null
+  ground_sigma_model: null
+  exit_direction_gate: null
+  entry_zone_prior: null
   # Trọng số lambda của thành phần khoảng cách mặt đất (chỉ áp dụng cho cặp camera overlap).
   homography_weight: 0.4
   # Vượt khoảng cách này trên mặt phẳng tham chiếu thì loại thẳng, không cần xét ngoại hình.
