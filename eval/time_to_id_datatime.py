@@ -17,6 +17,7 @@ enabled, to show the effect of the session-41 fix.
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from pathlib import Path
 from typing import Any
@@ -100,6 +101,7 @@ def main(argv: list[str] | None = None) -> int:
         default="on",
         help="Gallery.pop_former_owner (bản sửa phiên 41): bật, tắt, hay chạy cả hai để so",
     )
+    p.add_argument("--json", type=Path, default=None, help="ghi mọi mẫu (ms) ra file JSON")
     args = p.parse_args(argv)
     config = load_config(args.config)
     modes = {"on": [True], "off": [False], "both": [False, True]}[args.former_owner]
@@ -114,6 +116,8 @@ def main(argv: list[str] | None = None) -> int:
             former_owner_fix=fix,
         )
         print(format_row("on" if fix else "off", summarize(values)))
+        if args.json is not None:  # the last mode wins: `--former-owner both` ends with "on"
+            args.json.write_text(json.dumps({"values": values}), encoding="utf-8")
     return 0
 
 

@@ -175,6 +175,11 @@ def main(argv: list[str] | None = None) -> int:
     p.add_argument("--fps", type=float, default=25.0)
     p.add_argument("--min-iou", type=float, default=0.5)
     p.add_argument("--force", action="store_true", help="chạy lại engine dù đã có DB")
+    p.add_argument(
+        "--no-sct",
+        action="store_true",
+        help="bỏ phần chấm đơn camera (không phụ thuộc engine; eval.loso_eval không cần)",
+    )
     args = p.parse_args(argv)
     if hasattr(sys.stdout, "reconfigure"):
         sys.stdout.reconfigure(encoding="utf-8")
@@ -272,7 +277,7 @@ def main(argv: list[str] | None = None) -> int:
         ]
         if args.trackeval_path:
             cmd += ["--trackeval-path", str(args.trackeval_path)]
-        if index == 0:
+        if index == 0 and not args.no_sct:
             cmd.append("--sct")
         if args.force:
             cmd.append("--force")
