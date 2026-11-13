@@ -66,6 +66,18 @@ Số phụ (chỉ trên `s2_*`, không qua LOSO, dùng để thiết kế):
 
 **WildTrack, kiểm hồi quy** (fixture `ds_wildtrack_7cam_r640n_r{1,2,3}`, `configs/demo/wildtrack_ds.mct.yaml`, bốn khoá mới `null`): `sqlite3 .dump` của engine ở `85d3bae` và ở đầu nhánh phiên này **trùng md5 cả ba lần chạy** (r1: 385 Global ID, đúng số IDs của phiên 42). Không hồi quy. Không chạy mô hình chân trên WildTrack: mô hình fit cho camera lab.
 
+**Nhóm giữ riêng (s1_1, s3_1, s3_2, s4_1) — chạy MỘT lần, 2026-11-14, sau khi người dùng duyệt cấu hình cuối; không chỉnh gì sau khi thấy số.** Cùng fixture `gpu_s42`, 3 lần chạy mỗi buổi; mô hình chân fit trên 8 buổi `s2_*`.
+
+| cấu hình | HOTA | AssA | IDF1 | chồng lấn | không chồng lấn | quay lại | tổng [Wilson 95%] | đúng/tách/nhầm | tới Global ID p50 / p95 (ms) |
+|---|---|---|---|---|---|---|---|---|---|
+| c0 | 53.4 | 36.6 | 55.7 | 32% (53/168) | 44% (16/36) | 67% (24/36) | 39% [33–45] | 93/96/51 | 434 / 679 |
+| c0 + `foot_from_height` | 53.0 | 36.0 | 56.0 | 42% (71/168) | 53% (19/36) | 72% (26/36) | 48% [42–55] | 116/70/54 | 434 / 679 |
+
+- Dòng c0 trùng số phiên 43–44 (bàn giao 39%, chồng lấn 32%).
+- Bàn giao 39% → 48%: cùng chiều với LOSO, nhưng hai khoảng Wilson còn chồng nhau (42–45) → theo quy tắc của phiên, **chưa đủ để gọi là cải thiện chắc chắn**. Tách giảm 96 → 70; nhầm KHÔNG giảm (51 → 54).
+- HOTA/IDF1 không đổi (−0.4 / +0.3). Theo buổi: HOTA s1_1 68.3 → 67.2, s3_1 50.2 → 52.4, s3_2 45.6 → 44.7, s4_1 49.6 → 47.7.
+- Phần lớn mức tăng bàn giao đến từ một buổi: s3_1 đúng 30 → 48 (trên 93 lượt). s3_2 nhầm tăng 18 → 25.
+
 ## Kiểm tra rò dữ liệu
 
 - **Buổi dùng để fit từng thành phần** (mỗi fold LOSO: 7 buổi `s2_*` trừ buổi test; file cuối: cả 8):
@@ -74,7 +86,7 @@ Số phụ (chỉ trên `s2_*`, không qua LOSO, dùng để thiết kế):
   - hướng ra (`exit_direction`): `s2_*` + `calib`, `calib_2` (GT);
   - vùng vào (`entry_zones`): `s2_*`.
 - Không học gì từ embedding; `lab_geometry` bỏ embedding ngay khi đọc. Không fine-tune.
-- **Nhóm giữ riêng trong phiên này: đã chạy 0 lần, chưa đọc file nào** (GT, fixture, log, kết quả chấm). Lần chạy sắp tới, nếu được duyệt, là **lần nhìn thứ 5** vào nhóm này tính từ phiên 40 (sau các phiên 41, 42, 43, 44).
+- **Nhóm giữ riêng trong phiên này: chạy đúng 1 lần**, ở cuối phiên, sau khi người dùng duyệt, trên đúng một cấu hình cuối (kèm dòng so sánh c0). Trước đó không đọc file nào của nhóm này (GT, fixture, log, kết quả chấm). Đây là **lần nhìn thứ 5** tính từ phiên 40 (sau các phiên 41, 42, 43, 44). Lần chạy này gọi thẳng `eval.run_lab_eval`, vì `loso_eval`/`fit_learned` từ chối nhóm giữ riêng.
 - **Assert bảo vệ:**
   - `eval.lab_geometry.check_sessions`: mọi đường đọc (`gt_boxes`, `run_boxes`, `pipeline`, `ground_truth`) và `fit_all` ném `LeakageError` trước khi mở file;
   - `fit_all(exclude=[buổi test])`: fold không fit được trên buổi test của chính nó;
@@ -86,7 +98,8 @@ Số phụ (chỉ trên `s2_*`, không qua LOSO, dùng để thiết kế):
 
 ## Vướng mắc / chưa xong
 
-- **Chờ duyệt cấu hình cuối** rồi mới chạy nhóm giữ riêng một lần.
+- `foot_from_height` chưa vào `configs/lab/lab.mct.yaml`; chờ người dùng quyết.
+- Trên nhóm giữ riêng, mô hình chân giảm tách nhưng không giảm nhầm, và HOTA không tăng.
 - Chưa biết vì sao cổng hướng ra không đổi gì: có thể các ứng viên ngược hướng vốn đã bị transit time hoặc ngoại hình loại.
 - Cặp không chồng lấn vẫn ~65%; hình học không giúp được, phần mất nằm ở ngoại hình/thời gian.
 - Nhánh `phien-45-cai-tien-lien-ket` chưa gộp vào `main`, chưa push. Cây chính còn thay đổi chưa commit ở `src/mct/*` và `docs/worklog/README.md`; khi gộp sẽ phải xử lý xung đột.
@@ -94,6 +107,5 @@ Số phụ (chỉ trên `s2_*`, không qua LOSO, dùng để thiết kế):
 
 ## Bước tiếp theo
 
-1. Người dùng duyệt cấu hình cuối → chạy nhóm giữ riêng một lần, ghi số vào file này, không chỉnh gì sau đó.
-2. Nếu giữ: hỏi người dùng thêm `foot_from_height` vào `configs/lab/lab.mct.yaml`.
-3. Đếm số ô cổng hướng ra loại (`diagnose_decisions`) để biết nó vô hại hay vô dụng.
+1. Người dùng quyết có thêm `foot_from_height` vào `configs/lab/lab.mct.yaml`.
+2. Đếm số ô cổng hướng ra loại (`diagnose_decisions`) để biết nó vô hại hay vô dụng.
