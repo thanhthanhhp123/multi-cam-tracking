@@ -34,8 +34,8 @@
    - Cổng hướng ra: kết quả TRÙNG +1 từng số. Chưa đếm cổng đã loại bao nhiêu ô; chỉ biết nó không đổi quyết định nào được chấm.
    - Vùng vào: âm tính. Quay lại cùng camera 53% → 40% (24 → 18 / 45), không chồng lấn 65% → 62%.
 6. **Cấu hình cuối đề xuất = c0 + `foot_from_height: configs/lab/learned/foot_height.yaml`**, chờ người dùng duyệt trước khi chạy nhóm giữ riêng.
-8. **`configs/lab/lab.mct.yaml` có `foot_from_height: configs/lab/learned/foot_height.yaml`** (người dùng duyệt sau khi xem số nhóm giữ riêng, 2026-11-14). Lý do giữ: cặp chồng lấn tăng ở cả LOSO (79 → 91%) lẫn nhóm giữ riêng (32 → 42%), thời gian tới Global ID không đổi. Cái giá: HOTA nhóm giữ riêng không tăng, nhầm ở s3_2 tăng 18 → 25. Đường dẫn tương đối tính từ gốc repo; đã kiểm engine trên `lab_s2_1_r1` cho bảng `appearances` trùng md5 với cấu hình đã chấm (đường dẫn tuyệt đối).
-7. **Kiểm hồi quy WildTrack bằng so từng bit thay vì chấm lại**: bốn khoá `null` thì engine phải cho đúng SQLite cũ, và đó là phép kiểm mạnh hơn so điểm trong nhiễu.
+7. **`configs/lab/lab.mct.yaml` có `foot_from_height: configs/lab/learned/foot_height.yaml`** (người dùng duyệt sau khi xem số nhóm giữ riêng, 2026-11-14). Lý do giữ: cặp chồng lấn tăng ở cả LOSO (79 → 91%) lẫn nhóm giữ riêng (32 → 42%), thời gian tới Global ID không đổi. Cái giá: HOTA nhóm giữ riêng không tăng, nhầm ở s3_2 tăng 18 → 25. Đường dẫn tương đối tính từ gốc repo; đã kiểm engine trên `lab_s2_1_r1` cho bảng `appearances` trùng md5 với cấu hình đã chấm (đường dẫn tuyệt đối).
+8. **Kiểm hồi quy WildTrack bằng so từng bit thay vì chấm lại**: bốn khoá `null` thì engine phải cho đúng SQLite cũ, và đó là phép kiểm mạnh hơn so điểm trong nhiễu.
 
 ## Số liệu đo được
 
