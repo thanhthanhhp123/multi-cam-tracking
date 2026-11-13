@@ -79,6 +79,13 @@ Số phụ (chỉ trên `s2_*`, không qua LOSO, dùng để thiết kế):
 - HOTA/IDF1 không đổi (−0.4 / +0.3). Theo buổi: HOTA s1_1 68.3 → 67.2, s3_1 50.2 → 52.4, s3_2 45.6 → 44.7, s4_1 49.6 → 47.7.
 - Phần lớn mức tăng bàn giao đến từ một buổi: s3_1 đúng 30 → 48 (trên 93 lượt). s3_2 nhầm tăng 18 → 25.
 
+**Chi phí CPU của mô hình chân** (2026-11-14; người dùng chọn đo trên máy dev thay vì thuê GPU, vì đo đồng hồ thật phải đẩy video người thật lên Vast). Máy dev macOS 8 nhân, Python 3.10.21, engine phát lại tám fixture `s2_*` r1 (52 243 message, 68 058 detection), hai cấu hình chạy xen kẽ, tuần tự, mỗi cái hai lượt:
+
+- `FootModel.foot`: 2.49 µs/lần với hộp bị cắt, 0.23 µs/lần với hộp nguyên.
+- Cả lượt: c0 6.9 / 6.5 s, c0 + mô hình chân 6.8 / 6.7 s, tức 0.124 so với 0.128 ms/message. Chênh +0.2 s nằm trong dao động giữa hai lượt của chính c0 (0.4 s).
+- Trần lý thuyết nếu mọi hộp đều bị cắt: 0.17 s cho cả 8 buổi, khoảng 0.003 ms/message. So với ngân sách 1 s thì không đáng kể.
+- Vì vậy không đo lại đồng hồ thật trên GPU. Pipeline GPU không đổi, phần engine thêm vào không đo được trên nền nhiễu, và thời gian tới Global ID theo thời gian dữ liệu đã giữ nguyên trong LOSO (p95 679 ms).
+
 ## Kiểm tra rò dữ liệu
 
 - **Buổi dùng để fit từng thành phần** (mỗi fold LOSO: 7 buổi `s2_*` trừ buổi test; file cuối: cả 8):
@@ -107,5 +114,5 @@ Số phụ (chỉ trên `s2_*`, không qua LOSO, dùng để thiết kế):
 
 ## Bước tiếp theo
 
-1. Chạy lại `lab-eval` đồng hồ thật trên GPU với cấu hình lab mới (có mô hình chân) khi có dịp thuê máy.
+1. (Tuỳ chọn) đo đồng hồ thật trên GPU với cấu hình lab mới, chỉ khi phiếu đồng thuận cho phép đưa video lên máy thuê; phần thêm vào của engine đã đo trên CPU là không đáng kể.
 2. Đếm số ô cổng hướng ra loại (`diagnose_decisions`) để biết nó vô hại hay vô dụng.
