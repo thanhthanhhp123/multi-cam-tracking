@@ -858,3 +858,29 @@ def test_associator_nguong_hinh_hoc_long_hon_nguong_ngoai_hinh(rng):
     assert run(split, OVERLAP_TOPO, 200)  # có vị trí: nhận
     assert not run(split, TOPO, 10_000)  # chỉ ngoại hình: chặn
     assert not run(AffinityConfig(max_cost=0.3), OVERLAP_TOPO, 200)  # hành vi cũ
+
+
+def test_cua_so_mem_giu_o_qua_han_khi_ngoai_hinh_du_giong(rng):
+    vec = l2_normalize(rng.standard_normal(DIM))
+    other = l2_normalize(rng.standard_normal(DIM))
+    gallery = Gallery()
+    track = gallery.create(_tracklet("cam01", 1, start_ms=0, embedding=vec, tracklet_id=1))
+    late_same = _tracklet("cam02", 1, start_ms=90_000, embedding=vec, tracklet_id=2)
+    late_other = _tracklet("cam02", 2, start_ms=90_000, embedding=other, tracklet_id=3)
+    too_soon = _tracklet("cam02", 3, start_ms=1_000, embedding=vec, tracklet_id=4)
+    soft = AffinityConfig(transit_overdue_max_cost=0.3)
+    matrix = build_cost_matrix(
+        [late_same, late_other, too_soon], [track], topology=TOPO, config=soft
+    )
+
+    assert matrix.costs[0, 0] == pytest.approx(0.0, abs=1e-6), "same look: kept despite the delay"
+    assert not matrix.geometric[0, 0], "an overdue cell is never position evidence"
+    assert matrix.costs[1, 0] == INFEASIBLE and "ô quá hạn" in matrix.reason(1, 0)
+    assert matrix.costs[2, 0] == INFEASIBLE and "quá nhanh" in matrix.reason(2, 0), (
+        "min_ms stays hard"
+    )
+    off = build_cost_matrix([late_same], [track], topology=TOPO)
+    assert off.costs[0, 0] == INFEASIBLE, "null: the old hard window"
+    assert AffinityConfig.from_mapping({}).transit_overdue_max_cost is None
+    with pytest.raises(ValueError, match="transit_overdue_max_cost"):
+        AffinityConfig(transit_overdue_max_cost=0.0)

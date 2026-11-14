@@ -140,6 +140,16 @@ class AffinityConfig:
     `None` = tắt (hành vi cũ từng bit).
     """
 
+    transit_overdue_max_cost: float | None = None
+    """Cửa sổ thời gian di chuyển MỀM ở đầu trên, cho cặp không chồng lấn.
+
+    `min_ms` của topology là giới hạn vật lý (không kịp đi), còn `max_ms` chỉ là hành vi đo ở
+    đoạn hiệu chỉnh: người thật có thể dừng lại giữa đường. Đo trên s2 (phiên 46): 12/86 lỗi ở
+    quyết định đầu là người đúng bị loại vì "quá lâu" (26–37 s so với `max_ms` 19.4 s). Đặt giá
+    trị thì ô quá hạn không bị loại thẳng mà được giữ nếu chi phí < giá trị này (nên chặt hơn
+    `max_cost`), không bao giờ tính là có bằng chứng vị trí. `None` = loại cứng (hành vi cũ).
+    """
+
     revise_after_frames: int | None = None
     """Xét lại MỘT lần quyết định gán đầu tiên khi tracklet đã đủ số khung này.
 
@@ -279,6 +289,11 @@ class AffinityConfig:
                 if association.get("stitch_contested_max_gap_ms") is None
                 else int(association["stitch_contested_max_gap_ms"])
             ),
+            transit_overdue_max_cost=(
+                None
+                if association.get("transit_overdue_max_cost") is None
+                else float(association["transit_overdue_max_cost"])
+            ),
             revise_after_frames=(
                 None
                 if association.get("revise_after_frames") is None
@@ -323,6 +338,14 @@ class AffinityConfig:
             )
         if self.evidence_max_gap_ms is not None and self.evidence_max_gap_ms < 0:
             raise ValueError(f"evidence_max_gap_ms phải >= 0, nhận {self.evidence_max_gap_ms}")
+        if (
+            self.transit_overdue_max_cost is not None
+            and not 0.0 < self.transit_overdue_max_cost <= 2.0
+        ):
+            raise ValueError(
+                "transit_overdue_max_cost phải nằm trong (0, 2], "
+                f"nhận {self.transit_overdue_max_cost}"
+            )
         if self.revise_after_frames is not None and self.revise_after_frames < 1:
             raise ValueError(f"revise_after_frames phải >= 1, nhận {self.revise_after_frames}")
         if self.stitch_contested_max_gap_ms is not None and self.stitch_contested_max_gap_ms < 0:
@@ -528,11 +551,14 @@ def _pair_cost(
     if query is None:
         return INFEASIBLE, "tracklet chưa có embedding (ReID đang tắt?)", False, None
 
+    overdue = ""
     if topology is not None:
         elapsed = tracklet.start_ms - track.last_seen_ms
         verdict = topology.check(track.last_cam_id, tracklet.cam_id, elapsed)
         if not verdict.feasible:
-            return INFEASIBLE, verdict.reason, False, None
+            if not _overdue(verdict, track.last_cam_id, tracklet.cam_id, topology, config):
+                return INFEASIBLE, verdict.reason, False, None
+            overdue = verdict.reason
 
     gate = config.exit_direction_model
     if gate is not None and ground_mapper is not None and track.last_cam_id != tracklet.cam_id:
@@ -581,7 +607,31 @@ def _pair_cost(
         if grounded:
             stitch_gap = None
 
+    if overdue:
+        limit = config.transit_overdue_max_cost
+        assert limit is not None
+        if cost >= limit:
+            return (
+                INFEASIBLE,
+                f"{overdue}; ngoại hình {cost:.2f} >= {limit} (ô quá hạn)",
+                False,
+                None,
+            )
+        return cost, "", False, None
+
     return cost, "", measured, stitch_gap
+
+
+def _overdue(verdict: Any, src: str, dst: str, topology: Topology, config: AffinityConfig) -> bool:
+    """Ô bị loại CHỈ vì đi lâu hơn `max_ms` của cặp không chồng lấn, và khoá mềm đang bật."""
+    transition = verdict.transition
+    return (
+        config.transit_overdue_max_cost is not None
+        and transition is not None
+        and src != dst
+        and not topology.is_overlapping(src, dst)
+        and verdict.elapsed_ms > transition.max_ms
+    )
 
 
 def _same_camera_term(
