@@ -137,6 +137,51 @@ Theo buổi (HOTA, đúng/tách/nhầm): s1_1 74.4, 25/5/3; s3_1 54.4, 50/20/23;
 - Kết luận: lợi thế nằm ở quyết định sớm, đúng chỗ yếu của engine (cấp ID ở khoảng 5 khung). Xét cả tracklet thì hai model ngang nhau.
 - Chưa đổi gì trong pipeline. Bước tiếp theo cần GPU: export ONNX, đo FPS, sinh lại fixture, chạy LOSO.
 
+**Ablation Re-ID trên pipeline thật: CLIP-ReID thay OSNet trong nvtracker (người dùng duyệt thao tác vast)**
+
+Cấu hình:
+- GPU: RTX A4000 16 GB, driver 595.91.07, DeepStream 7.1, Nhật, khoảng $0.1/h. Instance 60626552 đã huỷ, `show instances` = 0.
+- Detector: YOLO11s 640, FP16, batch 3.
+- Re-ID: CLIP-ReID ViT-B/16 MSMT17, ONNX 1280 chiều (CLS 768 + chiếu 512, trước BN), engine FP16 batch 100. Export khớp PyTorch, cosine 0.99999999.
+- File cấu hình: `config_tracker_NvDCF_reid_clip.yml`, `streams_lab_clip.yaml`.
+- Chạy 12 buổi × 3 lần (`vast_lab.sh`, `STREAMS=…clip`). Fixture ở `data/lab/gpu_s46clip/` (gitignored, không chép video).
+- Chỉ đọc kết quả s2. Fixture nhóm giữ riêng có tải về, nhưng chưa mở.
+- `minMatchingScore4ReidSimilarity` của tracker giữ ở 0.4 (không chỉnh trên dữ liệu lab).
+
+Tốc độ:
+- FPS khi phát nhanh nhất có thể: **139 FPS/luồng** (418 gộp 3 luồng). OSNet đạt 176.
+- Đồng hồ thật, s2, 24 lần chạy, so với OSNet phiên 43:
+
+| | độ trễ theo khung p95 | tới Global ID p95 (toàn bộ, < 1 s) | bỏ 3 s đầu: p95, < 1 s |
+|---|---|---|---|
+| OSNet | 205 ms | 2278 ms, 92.0% | 764 ms, 97.8% |
+| CLIP-ReID | 216 ms | 1500 ms, 78.7% | 762 ms, 98.3% |
+
+Độ chính xác:
+- Giao thức: LOSO 8 buổi s2, chấm nghiêm.
+- Núm duy nhất `k` nhân đồng thời `max_cost`, `max_cost_geometric`, `transit_overdue_max_cost` và `homography_weight`. Cách này tương đương chia khoảng cách ngoại hình cho `k`.
+- Lý do dùng `k`: khoảng cách của CLIP hẹp hơn khoảng 3.5 lần.
+- Lưới: `k` ∈ {0.15, 0.2, 0.25, 0.3, 0.4, 0.6, 1.0}.
+- Script: `data/lab/s46/loso_clip.sh`.
+
+| Re-ID | HOTA | AssA | IDF1 | chồng lấn | không chồng lấn | quay lại | tổng [95%] | đúng/tách/nhầm | chọn |
+|---|---|---|---|---|---|---|---|---|---|
+| OSNet (+soft+rv) | **79.5** | **75.8** | **90.4** | 94% | **80%** | 58% | **82% [77–86]** | 204/30/15 | — |
+| CLIP-ReID | 75.7 | 69.7 | 85.7 | 87% | 67% | 64% | 75% [69–80] | 186/45/18 | k025×7, k040×1 |
+
+Mức trần LC (liên kết hoàn hảo) trên fixture CLIP:
+- Kết quả **trùng với fixture OSNet ở cả 8 buổi**, lệch không quá 0.2 HOTA, ví dụ s2_1: 80.6 so với 80.8.
+- Nghĩa là đổi Re-ID trong tracker gần như không đổi tracklet đơn camera.
+- Toàn bộ phần tụt là ở khâu liên kết.
+- Script: `data/lab/s46/ceiling/ceiling_clip.py`.
+
+## Quyết định kỹ thuật (bổ sung): giữ OSNet, CLIP-ReID ghi thành ablation âm
+
+- Rank-1 tốt hơn ở kiểm CPU không chuyển thành liên kết tốt hơn. Rank-1 chỉ đo thứ hạng. Engine thì cần một **ngưỡng tuyệt đối** để quyết định ghép hay tạo ID mới. Với CLIP, khoảng cách giữa hai người khác nhau (p10 0.07) chồng lên khoảng cách của cùng một người (p90 0.11) chặt hơn.
+- Mặt điểm HOTA trên tập train theo `k` gồ ghề: mỗi lần chia đạt khoảng 79–81 ở k = 0.25 nhưng chỉ 74–76 ở k = 0.30. Một hệ nhạy như vậy với ngưỡng thì không đáng tin.
+- Đã loại phương án tách riêng từng ngưỡng để quét cho CLIP. Cách đó thêm 3–4 bậc tự do trên 8 buổi, dễ quá khớp, trong khi khoảng cách với OSNet là 4 điểm HOTA.
+- Không chạy nhóm giữ riêng với CLIP, vì cấu hình này không được chọn. Nhóm giữ riêng chỉ dùng cho cấu hình đã chốt.
+
 ## Vướng mắc / chưa xong
 
 - **Không chồng lấn giảm ở nhóm giữ riêng (19 → 12/36).** Nghi do cửa sổ mềm hoặc xét lại ở cảnh đông/áo cùng màu: ghép muộn dựa vào ngoại hình, mà s4 áo cùng màu, s3 nhiều người. Muốn chẩn đoán thì chỉ được làm trên s2 hoặc một tập mới; đào vào nhóm giữ riêng là phá quy trình.
