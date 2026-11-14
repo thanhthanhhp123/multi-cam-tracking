@@ -300,7 +300,14 @@ class Runner:
         ttid = [a.engine_python, "-m", "eval.time_to_id_datatime", "--config", str(cfg), *common]
         ttid += ["--json", str(ttid_json), *(str(f) for _, f in fixtures)]
         env = {**os.environ, "PYTHONPATH": os.pathsep.join(["src", "."])}
-        for command, log in ((cmd, "lab_eval.log"), (ttid, "ttid.log")):
+        steps = [(cmd, "lab_eval.log"), (ttid, "ttid.log")]
+        strict = (config.get("association") or {}).get("revise_after_frames") is not None
+        if strict:  # rescore on the patched DBs: run_lab_eval reuses a DB that exists
+            steps.append((cmd, "lab_eval_strict.log"))
+        patched = 0
+        for i, (command, log) in enumerate(steps):
+            if i == 2:
+                patched = _strict_patch(run_dir, [name for name, _ in fixtures])
             with (run_dir / log).open("w", encoding="utf-8") as fh:
                 proc = subprocess.run(
                     command, stdout=fh, stderr=subprocess.STDOUT, check=False, env=env
@@ -308,6 +315,8 @@ class Runner:
             if proc.returncode:
                 raise RuntimeError(f"{' '.join(command[:4])} thất bại, xem {run_dir / log}")
         score = session_score(json.loads((run_dir / "summary.json").read_text(encoding="utf-8")))
+        if strict:
+            score["strict_patched"] = patched
         score["ttid"] = json.loads(ttid_json.read_text(encoding="utf-8"))["values"]
         done.write_text(json.dumps(score), encoding="utf-8")
         if not a.keep_runs:  # SQLite + ROI copies of the fixtures: ~80 MB per run, all regenerable
@@ -326,6 +335,21 @@ class Runner:
 
     def get(self, key: str, session: str) -> dict[str, Any]:
         return self._scores[(key, session)]
+
+
+def _strict_patch(run_dir: Path, runs: list[str]) -> int:
+    """Strict scoring of `revise_after_frames` (session 44): frames shown before an ID-changing
+    revision keep the provisional ID. Patches each run's SQLite in place."""
+    from eval.strict_revise_score import patch, revisions
+
+    work = run_dir / "base"
+    return sum(
+        patch(
+            work / f"base_{r}" / "mct.db",
+            revisions(work / "mct.yaml", run_dir / "roi" / f"{r}.jsonl"),
+        )
+        for r in runs
+    )
 
 
 def evaluate(runner: Runner, steps: list[Step], sessions: list[str], *, final: bool) -> dict:
