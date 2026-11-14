@@ -45,6 +45,11 @@ association:
   # chấp nhận được (mct.affinity). Phiên 42: chọn 0 trên s2, nhóm giữ riêng HOTA 53.5 -> 54.9,
   # bàn giao 33 -> 40%; cả 12 buổi bàn giao 44 -> 58%. null = biến thể `combo`.
   stitch_contested_max_gap_ms: 0
+  # Phiên 46 (LOSO 8 buổi s2, chấm nghiêm): cửa sổ transit mềm — đến QUÁ MUỘN vẫn ghép nếu
+  # ngoại hình < 0.35; xét lại quyết định đầu một lần sau 50 khung (~2 s). Bàn giao 74 -> 82%,
+  # HOTA 71.5 -> 79.5, nhầm 18 -> 15, thời gian tới Global ID không đổi. null = hành vi cũ.
+  transit_overdue_max_cost: 0.35
+  revise_after_frames: 50
   # 0.2 + 3.0 m: biến thể `combo` (phiên 40). Cũ: 0.4 + 2.0 m (phiên 13/16, hộp detector).
   homography_weight: 0.2
   max_ground_dist_m: 3.0
