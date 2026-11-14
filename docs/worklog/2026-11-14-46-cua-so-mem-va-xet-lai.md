@@ -108,6 +108,6 @@ Theo buổi (HOTA, đúng/tách/nhầm): s1_1 74.4, 25/5/3; s3_1 54.4, 50/20/23;
 
 ## Bước tiếp theo
 
-1. Chẩn đoán vì sao không chồng lấn giảm, trên s2 bằng `eval.diagnose_*`: tách riêng tác dụng của t35 và rv50 trên các lần chuyển không chồng lấn. Không mở lại nhóm giữ riêng.
+1. **Không chồng lấn giảm ở nhóm giữ riêng: người dùng chốt ghi thành HẠN CHẾ, không chẩn đoán thêm.** Đã kiểm trên s2: không buổi nào tái hiện (t35 gần như không đổi gì, rv50 giúp ở 5/8 buổi), nên nguyên nhân nằm ở điều kiện chỉ có trong nhóm giữ riêng (đông người, áo cùng màu). Đã loại hai hướng: chẩn đoán thẳng trên nhóm giữ riêng (biến nó thành dữ liệu phát triển) và thuê GPU chạy pipeline trên calib.
 2. Cập nhật deck/chương 6 theo bảng trên (LOSO + nhóm giữ riêng, ghi rõ chấm nghiêm, lần nhìn thứ 6).
 3. Đưa `docs/figures/` vào báo cáo.
