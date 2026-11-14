@@ -1,0 +1,13 @@
+digraph G {
+  graph [rankdir=LR, fontname="Arial", fontsize=13, nodesep=0.3, ranksep=0.35, pad=0.3,
+         label="Figure 2. DeepStream pipeline on the GPU machine (one batch of 3 streams)", labelloc=b];
+  node [fontname="Arial", fontsize=11, shape=box, style="rounded,filled", fillcolor="#e8f1fb", color="#4a7fb5"];
+  edge [color="#555555"];
+  src [label="nvurisrcbin ×3\n(NVDEC decode)"];
+  mux [label="nvstreammux\nbatch 3"];
+  pgie [label="nvinfer (PGIE)\nYOLO11s COCO, TensorRT FP16\nperson class only, threshold 0.25"];
+  trk [label="nvtracker NvDCF\n+ OSNet x1.0 Re-ID\n(domain-generalization checkpoint)\n256×128 → 512-d"];
+  probe [label="pad probe\nscale bbox back to native resolution\nL2-normalize embedding\nattach ts_ms (laptop clock)", fillcolor="#fffbe6", color="#b59a2a"];
+  out [label="Redis mct:frames", shape=cylinder, fillcolor="#fdecea", color="#c0504d"];
+  src -> mux -> pgie -> trk -> probe -> out;
+}

@@ -1,0 +1,17 @@
+graph G {
+  graph [layout=neato, fontname="Arial", fontsize=13, pad=0.3, splines=true,
+         label="Figure 4. Lab camera layout and the three identity handover types", labelloc=b];
+  node [fontname="Arial", fontsize=11, style="rounded,filled", color="#555555", shape=box, fillcolor="#ffffff"];
+  edge [fontname="Arial", fontsize=10, penwidth=2];
+  A  [label="Area A — shared floor region\n(keep only feet at x < 6 m)", pos="1.6,2.6!", fillcolor="#e8f1fb", color="#4a7fb5", width=3.6, height=1.9, fontcolor="#4a7fb5", labelloc=t];
+  B  [label="Corridor", pos="7.3,2.6!", fillcolor="#eaf6ea", color="#4f9a4f", width=1.8, height=1.9, fontcolor="#4f9a4f", labelloc=t];
+  c1 [label="cam01\nleft corner",  pos="0.6,2.5!"];
+  c2 [label="cam02\nright corner", pos="2.6,2.5!"];
+  c3 [label="cam03\nwalkway",      pos="7.3,2.5!"];
+  c1 -- c2 [color="#4a7fb5"];
+  ov [label="① OVERLAPPING\nhomography + appearance", shape=plaintext, style="", pos="1.6,2.0!", fontcolor="#4a7fb5", fontsize=10];
+  c2 -- c3 [color="#c0504d"];
+  no [label="② NON-OVERLAPPING — appearance + transit time\ncam01↔cam03: 12.4 m, window 3.2–19.4 s (measured on calibration clip)\ncam02↔cam03: not measured, placeholder", shape=plaintext, style="", pos="4.9,0.95!", fontcolor="#c0504d", fontsize=10];
+  c3 -- c3 [color="#8064a2"];
+  rt [label="③ RETURN\nto same camera", shape=plaintext, style="", pos="7.3,1.95!", fontcolor="#8064a2", fontsize=10];
+}

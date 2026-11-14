@@ -1,0 +1,15 @@
+digraph G {
+  graph [rankdir=LR, fontname="Arial", fontsize=13, nodesep=0.3, ranksep=0.45, pad=0.3,
+         label="Figure 5. Self-collected data workflow (M6): from recording to scoreboard", labelloc=b];
+  node [fontname="Arial", fontsize=11, shape=box, style="rounded,filled", fillcolor="#ffffff", color="#555555"];
+  edge [fontname="Arial", fontsize=10, color="#555555"];
+  rec [label="Record 3 IP cameras\non one laptop\n(tools.record_rtsp)"];
+  vid [label="25 fps video\n(not in git)", shape=folder, fillcolor="#eeeeee"];
+  gpu [label="DeepStream pipeline\non rented GPU\nn runs", fillcolor="#e8f1fb", color="#4a7fb5"];
+  fx  [label="Metadata fixture", shape=note, fillcolor="#fffbe6"];
+  mct [label="Replay into src/mct\n(dev machine, CPU)", fillcolor="#eaf6ea", color="#4f9a4f"];
+  cvat [label="CVAT annotation\n5 fps; faces blurred\nbefore publication", fillcolor="#f3eefa", color="#8064a2"];
+  gt  [label="MOT-format GT\n+ Global ID table", shape=note, fillcolor="#fffbe6"];
+  ev  [label="Scoring\nTrackEval: HOTA / IDF1\neval_handover: accuracy\nper camera-pair type", fillcolor="#fdecea", color="#c0504d"];
+  rec -> vid; vid -> gpu -> fx -> mct -> ev; vid -> cvat -> gt -> ev;
+}

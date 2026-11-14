@@ -1,0 +1,21 @@
+digraph G {
+  graph [rankdir=TB, fontname="Arial", fontsize=13, nodesep=0.3, ranksep=0.32, pad=0.3,
+         label="Figure 3. Multi-camera association, run every 500 ms window (online mode)", labelloc=b];
+  node [fontname="Arial", fontsize=11, shape=box, style="rounded,filled", fillcolor="#eaf6ea", color="#4f9a4f"];
+  edge [fontname="Arial", fontsize=10, color="#555555"];
+  in  [label="New frames from mct:frames", shape=cylinder, fillcolor="#fdecea", color="#c0504d"];
+  tb  [label="Tracklet builder: group by (cam_id, local_track_id)\nconsidered after ≥ 5 frames; foot point → homography → ground coordinates (m)"];
+  q   [label="Query embedding = confidence-weighted mean of the top-8\nhighest-confidence embeddings → L2-normalize"];
+  f   [label="Candidate filtering (infeasible cell = ∞)\n• same camera with overlapping time span → reject\n• transit time outside topology window [t_min, t_max] → reject\n• overlapping pair: ground distance > 3 m or speed > 2.5 m/s → reject"];
+  c   [label="Cost = (1 − cosine) + λ · d_ground     (λ = 0.2)\nd_ground = median distance over shared timestamps"];
+  h   [label="Hungarian per camera\n(scipy linear_sum_assignment)"];
+  d   [label="Cost < threshold?\n0.40 for appearance-only cells\n0.90 with position evidence", shape=diamond, fillcolor="#fffbe6", color="#b59a2a"];
+  ok  [label="Join existing Global ID\nupdate gallery (≤ 32, EMA)"];
+  new [label="Create new Global ID"];
+  st  [label="Same-camera stitch\nwhen the tracker switches id"];
+  outp [label="SQLite + mct:global → dashboard", shape=cylinder, fillcolor="#f3eefa", color="#8064a2"];
+  in -> tb -> q -> f -> c -> h -> d;
+  d -> ok [label="yes"]; d -> new [label="no"];
+  ok -> outp; new -> outp; st -> f [style=dashed, label="same-camera\ncandidates"];
+  {rank=same; f; st}
+}

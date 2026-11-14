@@ -1,0 +1,15 @@
+digraph G {
+  graph [rankdir=TB, fontname="Arial", fontsize=13, nodesep=0.25, ranksep=0.45, pad=0.3,
+         label="Figure 6. Leakage-free evaluation protocol", labelloc=b];
+  node [fontname="Arial", fontsize=11, shape=box, style="rounded,filled", fillcolor="#ffffff", color="#555555"];
+  edge [fontname="Arial", fontsize=10, color="#555555"];
+  subgraph cluster_sel { labelloc=t; label="Selection group — 8 s2 sessions"; style="rounded,filled"; fillcolor="#eaf6ea"; color="#4f9a4f";
+    loso [label="Leave-one-session-out: 8 folds\neach fold: fit geometry + select parameters on 7 sessions\n→ score on the held-out session"];
+    pick [label="Final configuration\n(selected on all 8 sessions)"];
+    loso -> pick; }
+  ok [label="Final configuration\napproved", shape=diamond, fillcolor="#fffbe6", color="#b59a2a"];
+  subgraph cluster_ho { labelloc=t; label="Held-out group — s1_1, s3_1, s3_2, s4_1"; style="rounded,filled"; fillcolor="#fdecea"; color="#c0504d";
+    ho [label="Run EXACTLY ONCE\nno tuning after seeing the numbers"]; }
+  rules [label="Global constraints\n• nothing learned from embeddings (same ~7 people in every session)\n• only geometry fitting and config-key selection\n• no GT edits, no fine-tuning", shape=note, fillcolor="#f3eefa", color="#8064a2"];
+  pick -> ok -> ho;
+}

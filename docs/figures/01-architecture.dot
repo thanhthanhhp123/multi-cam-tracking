@@ -1,0 +1,28 @@
+digraph G {
+  graph [rankdir=LR, fontname="Arial", fontsize=13, nodesep=0.35, ranksep=0.5, pad=0.3, bgcolor="white",
+         label="Figure 1. System architecture: three tiers decoupled by Redis Streams", labelloc=b];
+  node  [fontname="Arial", fontsize=12, shape=box, style="rounded,filled", fillcolor="#ffffff", color="#555555"];
+  edge  [fontname="Arial", fontsize=10, color="#555555"];
+
+  cams [label="3 IP cameras\n(RTSP) or\nrecorded video", shape=box3d, fillcolor="#eeeeee"];
+
+  subgraph cluster_gpu { label="GPU machine — DeepStream 7.1 (Docker)\nsrc/ds_pipeline/"; style="rounded,filled"; fillcolor="#e8f1fb"; color="#4a7fb5";
+    ds [label="YOLO11s detection\n+ NvDCF tracking + OSNet Re-ID\n→ probe: bbox, local_track_id,\n512-d embedding, ts_ms"]; }
+
+  redis [label="Redis Streams\nmct:frames\n(msgpack)", shape=cylinder, fillcolor="#fdecea", color="#c0504d"];
+  fx [label="JSONL fixture\n(recorded once)", shape=note, fillcolor="#fffbe6"];
+
+  subgraph cluster_mct { label="No GPU needed — src/mct/ (MAIN CONTRIBUTION)"; style="rounded,filled"; fillcolor="#eaf6ea"; color="#4f9a4f";
+    mct [label="Tracklet builder → Gallery\n→ Affinity (appearance + time\n+ ground-plane position) → Hungarian\n→ Global ID assignment"]; }
+
+  db  [label="SQLite\n(trajectories)", shape=cylinder, fillcolor="#f3eefa", color="#8064a2"];
+  g   [label="Redis\nmct:global", shape=cylinder, fillcolor="#fdecea", color="#c0504d"];
+  dash [label="Dashboard\nFastAPI + WebSocket", fillcolor="#f3eefa", color="#8064a2"];
+
+  cams -> ds [label="RTSP"];
+  ds -> redis [label="XADD"];
+  redis -> fx [style=dashed, label="record"];
+  fx -> redis [style=dashed, label="replay\n(dev machine)"];
+  redis -> mct [label="XREADGROUP"];
+  mct -> db; mct -> g [label="XADD"]; g -> dash; db -> dash [label="query"];
+}
