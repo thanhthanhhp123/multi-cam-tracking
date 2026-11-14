@@ -1,6 +1,6 @@
 # 2026-11-13 — Ba cải tiến hình học học được, chấm bỏ-một-buổi (LOSO)
 
-- **Mốc:** M6 (cải tiến liên kết) | **Máy:** máy dev macOS (CPU, 8 nhân), không thuê GPU | **Thời lượng:** ~7h (kéo sang 2026-11-14)
+- **Mốc:** M6 (cải tiến liên kết) | **Máy:** máy dev macOS (CPU, 8 nhân) + `vast-gpu` RTX A4000 (instance 60565169, đã huỷ, ~$0.10) | **Thời lượng:** ~7h (kéo sang 2026-11-14)
 
 ## Mục tiêu phiên
 
@@ -86,6 +86,25 @@ Số phụ (chỉ trên `s2_*`, không qua LOSO, dùng để thiết kế):
 - Trần lý thuyết nếu mọi hộp đều bị cắt: 0.17 s cho cả 8 buổi, khoảng 0.003 ms/message. So với ngân sách 1 s thì không đáng kể.
 - Vì vậy không đo lại đồng hồ thật trên GPU. Pipeline GPU không đổi, phần engine thêm vào không đo được trên nền nhiễu, và thời gian tới Global ID theo thời gian dữ liệu đã giữ nguyên trong LOSO (p95 679 ms).
 
+**Đồng hồ thật trên GPU, cấu hình lab cuối (c0 + `foot_from_height`)** (2026-11-14, sau khi người dùng chọn chạy và tự quyết việc đưa video lên máy thuê). Chỉ 8 buổi `s2_*` × 3 lần; nhóm giữ riêng KHÔNG chạy.
+
+- Máy: vast.ai RTX A4000 16 GB (Nhật, offer `45433708`, instance `60565169`), driver 595.91.07, image `nvcr.io/nvidia/deepstream:7.1-triton-multiarch`. YOLO11s 640 engine b3 FP16, OSNet x1.0 MSDC-DG b100, 3 luồng 1920×1080, 25 fps, `sync: true`.
+- Kiểm trước: NVDEC chạy hết `PREROLLED → PLAYING → EOS`. Trong lúc chạy GPU 49–52 °C, xung SM thấp nhất 1560 MHz, không có cờ hạ xung.
+- Thông lượng (lượt build engine, không sync, s2_1): 535 FPS gộp trên 3 luồng, khoảng 178 FPS/luồng (phiên 43: 526–533).
+- Số detection mỗi buổi giống hệt nhau giữa r1, r2, r3. Kết quả ở `data/lab/gpu_s45/` (gitignored), tách khỏi `gpu_s42`.
+- Lần build engine đầu chết vì quên đẩy `models/detector/labels.txt` (`NVDSINFER_CONFIG_FAILED`); đẩy bổ sung rồi chạy lại là sạch.
+- Chi phí khoảng $0.10 (credit $2.27 → $2.17). Đã xoá `data/` và `logs/` trên máy thuê trước khi huỷ; `vastai show instances` = 0.
+
+| | n | p50 / p95 / p99 (ms) | < 1 s |
+|---|---|---|---|
+| (A) độ trễ theo khung | 598 992 | 142 / **204** / 234 (max 775) | 100% |
+| (B) thời gian tới Global ID, toàn bộ | 525 | 523 / **1003** / 2165 | 94.9% |
+| (B) bỏ 3 s đầu mỗi lần chạy | 412 | 523 / **762** / 1223 | 98.5% |
+| *Phiên 43, s2, c0:* (A) / (B) toàn bộ / (B) bỏ 3 s | 595 508 / 527 / 414 | 205 / 2278 / 764 (p95) | 100% / 92.0% / 97.8% |
+
+- (A) và (B) bỏ 3 s trùng phiên 43 trong nhiễu: mô hình chân không làm chậm đường online.
+- (B) toàn bộ p95 1003 ms nằm đúng ở mép 1 s. Lý do vẫn là đuôi khởi động của phiên 43 (quyết định 3 của phiên đó): người có mặt từ khung đầu phải chờ suy luận lần đầu khoảng 2.2 s. Tỷ lệ mẫu rơi vào đuôi đó dao động giữa các lượt (8.0% ở phiên 43, 5.1% ở đây), nên p95 toàn bộ của riêng s2 nhảy giữa khoảng 1.0 và 2.3 s. Không phải hành vi liên kết. p95 theo buổi: s2_1b, s2_1c, s2_2 dưới 1 s; năm buổi còn lại 1.4–2.9 s, đều do đuôi khởi động.
+
 ## Kiểm tra rò dữ liệu
 
 - **Buổi dùng để fit từng thành phần** (mỗi fold LOSO: 7 buổi `s2_*` trừ buổi test; file cuối: cả 8):
@@ -110,9 +129,10 @@ Số phụ (chỉ trên `s2_*`, không qua LOSO, dùng để thiết kế):
 - Chưa biết vì sao cổng hướng ra không đổi gì: có thể các ứng viên ngược hướng vốn đã bị transit time hoặc ngoại hình loại.
 - Cặp không chồng lấn vẫn ~65%; hình học không giúp được, phần mất nằm ở ngoại hình/thời gian.
 - Nhánh `phien-45-cai-tien-lien-ket` chưa gộp vào `main`, chưa push. Cây chính còn thay đổi chưa commit ở `src/mct/*` và `docs/worklog/README.md`; khi gộp sẽ phải xử lý xung đột.
+- Đồng hồ thật trên GPU đã đo cho cấu hình cuối, chỉ trên s2; nhóm giữ riêng chưa có số đồng hồ thật với mô hình chân (cố ý, để không nhìn thêm lần nữa).
 - Máy này là macOS (CLAUDE.md ghi Windows): đã dựng `~/.venvs/mct-eval` và clone `~/TrackEval`; không có ổ E, đĩa còn 44 GB.
 
 ## Bước tiếp theo
 
-1. (Tuỳ chọn) đo đồng hồ thật trên GPU với cấu hình lab mới, chỉ khi phiếu đồng thuận cho phép đưa video lên máy thuê; phần thêm vào của engine đã đo trên CPU là không đáng kể.
+1. Gộp nhánh `phien-45-cai-tien-lien-ket` vào `main` (xung đột ở `docs/worklog/README.md`; cây chính còn WIP chưa commit ở `src/mct/*`).
 2. Đếm số ô cổng hướng ra loại (`diagnose_decisions`) để biết nó vô hại hay vô dụng.
