@@ -481,3 +481,95 @@ def test_loc_chap_nhan_quy_dao_lech_thu_tu_thoi_gian():
 def test_phuong_phap_la_thi_bao_loi():
     with pytest.raises(ValueError, match="method"):
         smooth_ground_path(_walk(), method="savgol")
+
+
+# --------------------------------------------------------------------------- embedding quality
+
+
+def _frame(i: int, boxes: dict[int, tuple[float, float, float, float]], embs) -> FrameMessage:
+    dets = [
+        Detection(
+            local_track_id=t,
+            bbox=b,
+            confidence=0.5 + 0.01 * i,
+            embedding=embs[t][i],
+            class_id=CLASS_PERSON,
+        )
+        for t, b in sorted(boxes.items())
+    ]
+    return FrameMessage(
+        cam_id="cam01",
+        frame_id=i,
+        ts_ms=BASE_TS_MS + 40 * i,
+        frame_pts_ns=i * 40_000_000,
+        frame_width=1920,
+        frame_height=1080,
+        detections=dets,
+        embed_dim=4,
+    )
+
+
+def _crossing(n: int = 10):
+    """Track 1 alone for frames 0-4, half-covered by track 2 for frames 5-9."""
+    rng = np.random.default_rng(0)
+    embs = {
+        t: [l2_normalize(rng.normal(size=4).astype(np.float32)) for _ in range(n)] for t in (1, 2)
+    }
+    frames = []
+    for i in range(n):
+        boxes = {1: (500.0, 300.0, 100.0, 200.0)}
+        boxes[2] = (550.0, 300.0, 100.0, 200.0) if i >= 5 else (1500.0, 300.0, 100.0, 200.0)
+        frames.append(_frame(i, boxes, embs))
+    return frames, embs
+
+
+def _query(config: TrackletConfig, frames) -> np.ndarray:
+    builder = TrackletBuilder(config)
+    builder.update_many(frames)
+    (t1, _) = sorted(builder.flush(), key=lambda t: t.local_track_id)
+    return t1.query_embedding(8)
+
+
+def test_loc_embedding_tat_mac_dinh_giu_nguyen_tung_bit():
+    frames, _ = _crossing()
+    off = _query(TrackletConfig(), frames)
+    loose = _query(TrackletConfig(embed_max_overlap=0.99, embed_edge_margin_px=0), frames)
+    assert off.tobytes() == loose.tobytes(), "nothing is filtered: same bytes as no filter"
+    assert TrackletConfig.from_mapping({}).embed_max_overlap is None
+    assert TrackletConfig.from_mapping({}).embed_edge_margin_px is None
+
+
+def test_bo_khung_bi_che_khi_da_co_khung_sach():
+    frames, embs = _crossing()
+    q = _query(TrackletConfig(embed_max_overlap=0.3), frames)
+    w = np.array([0.5 + 0.01 * i for i in range(5)], dtype=np.float32)
+    expected = l2_normalize(w @ np.stack(embs[1][:5]))
+    assert q == pytest.approx(expected, abs=1e-6), "only the five unoccluded frames"
+
+
+def test_khong_co_khung_sach_thi_van_co_query():
+    frames, _ = _crossing()
+    occluded_only = frames[5:]
+    off = _query(TrackletConfig(), occluded_only)
+    on = _query(TrackletConfig(embed_max_overlap=0.3, embed_edge_margin_px=1000), occluded_only)
+    assert on.tobytes() == off.tobytes()
+
+
+def test_hop_cham_mep_anh_khong_sach():
+    from mct.tracklet import embedding_clean
+
+    rng = np.random.default_rng(1)
+    emb = {t: [l2_normalize(rng.normal(size=4).astype(np.float32))] for t in (1, 2, 3)}
+    msg = _frame(
+        0,
+        {
+            1: (5.0, 300.0, 100.0, 200.0),
+            2: (900.0, 880.0, 100.0, 200.0),
+            3: (900.0, 300.0, 100.0, 200.0),
+        },
+        emb,
+    )
+    assert embedding_clean(msg, max_overlap=None, edge_margin_px=10) == [False, False, True]
+    assert embedding_clean(msg, max_overlap=None, edge_margin_px=None) == [True] * 3
+    with pytest.raises(ValueError, match="embed_max_overlap"):
+        TrackletConfig(embed_max_overlap=1.0)

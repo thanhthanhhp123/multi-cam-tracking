@@ -26,6 +26,11 @@ tracklet:
   # Không phải ngưỡng chất lượng — chỉ chặn bộ nhớ khi một người đứng yên rất lâu
   # trong khung hình. Cần >= gallery.topk_query mới có ý nghĩa.
   max_embeddings: 32
+  # Lọc embedding theo chất lượng crop (phiên 46, lọc che khuất kiểu AI City): khung có hộp bị
+  # hộp người khác cùng camera phủ quá tỉ lệ diện tích này, hoặc cách mép ảnh dưới số pixel
+  # kia, chỉ được dùng cho query khi tracklet chưa có khung sạch nào. null = tắt (hành vi cũ).
+  embed_max_overlap: null
+  embed_edge_margin_px: null
 
 gallery:
   # Số embedding tối đa giữ cho mỗi GlobalTrack.

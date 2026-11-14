@@ -60,6 +60,11 @@ class Observation:
     ground_point: tuple[float, float]
     embedding: np.ndarray | None = None
     stamps: dict[str, float] = field(default_factory=dict)
+    clean: bool = True
+    """Hộp không bị người khác che quá ngưỡng và không chạm mép ảnh (`TrackletConfig.embed_*`).
+
+    Embedding của khung không sạch chỉ được dùng khi tracklet chưa có khung sạch nào.
+    """
     """Mốc đo độ trễ của FRAME chứa detection này (`common/latency.py`).
 
     Đi kèm theo observation chứ không sao chép giá trị ra: mọi detection trong một frame
@@ -69,7 +74,11 @@ class Observation:
 
     @classmethod
     def from_detection(
-        cls, msg: FrameMessage, det: Detection, foot_model: FootModel | None = None
+        cls,
+        msg: FrameMessage,
+        det: Detection,
+        foot_model: FootModel | None = None,
+        clean: bool = True,
     ) -> Observation:
         # ground_point lấy từ Detection để quy ước "đáy-giữa bbox" chỉ định nghĩa một
         # chỗ duy nhất (common/schema.py), không chép lại ở đây. Ngoại lệ duy nhất: hộp bị
@@ -86,6 +95,7 @@ class Observation:
             ),
             embedding=det.embedding,
             stamps=msg.stamps,
+            clean=clean,
         )
 
 
@@ -121,6 +131,18 @@ class TrackletConfig:
     (đo phiên 45). Mô hình đã fit sẵn, đọc từ file; engine không fit gì lúc chạy.
     """
 
+    embed_max_overlap: float | None = None
+    """Hộp bị hộp người khác (cùng camera, cùng khung) phủ quá tỉ lệ diện tích này thì embedding
+    của khung đó bị coi là không sạch: crop dính người kia, kéo query về phía họ.
+
+    Lọc theo trạng thái che khuất như Li et al. 2019 / Specker et al. 2021 (AI City), nhưng
+    không cần pose: chỉ dùng hộp đã có. `None` = tắt (hành vi cũ từng bit).
+    """
+
+    embed_edge_margin_px: int | None = None
+    """Hộp cách mép ảnh (trái/phải/trên/dưới) dưới số pixel này thì embedding không sạch: crop
+    thiếu một phần người. `None` = tắt (hành vi cũ từng bit)."""
+
     @classmethod
     def from_mapping(cls, data: dict[str, Any]) -> TrackletConfig:
         """Đọc từ dict đã load của configs/mct.yaml (chấp nhận cả dict con `tracklet`)."""
@@ -128,8 +150,12 @@ class TrackletConfig:
         gallery = dict(data.get("gallery", {}) or {})
         foot_path = dict(data.get("association", {}) or {}).get("foot_from_height")
         defaults = cls()
+        overlap = tracklet.get("embed_max_overlap")
+        margin = tracklet.get("embed_edge_margin_px")
         return cls(
             foot_model=None if foot_path is None else FootModel.load(foot_path),
+            embed_max_overlap=None if overlap is None else float(overlap),
+            embed_edge_margin_px=None if margin is None else int(margin),
             min_frames=int(tracklet.get("min_frames", defaults.min_frames)),
             idle_timeout_ms=int(tracklet.get("idle_timeout_ms", defaults.idle_timeout_ms)),
             max_embeddings=int(tracklet.get("max_embeddings", defaults.max_embeddings)),
@@ -152,6 +178,12 @@ class TrackletConfig:
             raise ValueError(
                 f"ground_path_max_points phải >= 2, nhận {self.ground_path_max_points}"
             )
+        if self.embed_max_overlap is not None and not 0.0 <= self.embed_max_overlap < 1.0:
+            raise ValueError(
+                f"embed_max_overlap phải nằm trong [0, 1), nhận {self.embed_max_overlap}"
+            )
+        if self.embed_edge_margin_px is not None and self.embed_edge_margin_px < 0:
+            raise ValueError(f"embed_edge_margin_px phải >= 0, nhận {self.embed_edge_margin_px}")
 
 
 @dataclass(slots=True)
@@ -200,9 +232,10 @@ class Tracklet:
     recent: deque[Observation] = field(default_factory=lambda: deque(maxlen=_RECENT_HISTORY))
     """Vài observation gần nhất — dùng cho ràng buộc chuyển động, không phải toàn bộ lịch sử."""
 
-    # Min-heap (confidence, seq, embedding): đỉnh heap là ứng viên bị loại tiếp theo.
-    # `seq` chỉ để so sánh tất định khi confidence bằng nhau (ndarray không so sánh được).
-    _embeddings: list[tuple[float, int, np.ndarray]] = field(default_factory=list)
+    # Min-heap (sạch, confidence, seq, embedding): đỉnh heap là ứng viên bị loại tiếp theo, nên
+    # khung không sạch bị loại trước mọi khung sạch. `seq` chỉ để so sánh tất định khi
+    # confidence bằng nhau (ndarray không so sánh được). Khi lọc tắt mọi khung đều sạch.
+    _embeddings: list[tuple[int, float, int, np.ndarray]] = field(default_factory=list)
     _emb_seq: int = 0
     _query_cache: tuple[int, int, np.ndarray] | None = None
     """(top_k, _emb_seq lúc tính, vector) — huỷ hiệu lực khi có embedding mới."""
@@ -254,7 +287,7 @@ class Tracklet:
         self._push_ground_point(obs, max_points)
 
         if obs.embedding is not None:
-            self._push_embedding(obs.embedding, obs.confidence, max_embeddings)
+            self._push_embedding(obs.embedding, obs.confidence, max_embeddings, clean=obs.clean)
 
     def _push_ground_point(self, obs: Observation, max_points: int) -> None:
         self.ground_path.append((obs.ts_ms, obs.ground_point))
@@ -262,12 +295,12 @@ class Tracklet:
             self.ground_path = self.ground_path[::2]
 
     def _push_embedding(
-        self, embedding: np.ndarray, confidence: float, max_embeddings: int
+        self, embedding: np.ndarray, confidence: float, max_embeddings: int, *, clean: bool = True
     ) -> None:
         self.n_embeddings_seen += 1
         self._emb_seq += 1
         self._query_cache = None
-        item = (float(confidence), self._emb_seq, embedding)
+        item = (int(clean), float(confidence), self._emb_seq, embedding)
         # Min-heap theo confidence: khi đầy thì đẩy vào rồi lấy ra cái yếu nhất, nên
         # cái vừa vào cũng có thể chính là cái bị loại — đúng ý "giữ top-N tốt nhất".
         if len(self._embeddings) < max(1, int(max_embeddings)):
@@ -289,21 +322,23 @@ class Tracklet:
         if cache is not None and cache[0] == k and cache[1] == self._emb_seq:
             return cache[2]
 
-        best = heapq.nlargest(k, self._embeddings, key=lambda item: (item[0], item[1]))
-        weights = np.array([item[0] for item in best], dtype=np.float32)
+        best = heapq.nlargest(k, self._embeddings, key=lambda item: item[:3])
+        # Có khung sạch thì chỉ dùng khung sạch; chưa có thì đành dùng những gì đang có.
+        best = [item for item in best if item[0] == best[0][0]]
+        weights = np.array([item[1] for item in best], dtype=np.float32)
         if float(weights.sum()) <= 0.0:
             # Mọi confidence bằng 0 (không nên xảy ra, nhưng đừng chia cho 0): lấy trung bình đều.
             weights = np.ones_like(weights)
-        stacked = np.stack([item[2] for item in best]).astype(np.float32)
+        stacked = np.stack([item[3] for item in best]).astype(np.float32)
         vector = l2_normalize(weights @ stacked)
 
         self._query_cache = (k, self._emb_seq, vector)
         return vector
 
     def embeddings(self) -> list[np.ndarray]:
-        """Các embedding đang giữ, sắp theo confidence giảm dần."""
-        ordered = sorted(self._embeddings, key=lambda item: (item[0], item[1]), reverse=True)
-        return [item[2] for item in ordered]
+        """Các embedding đang giữ, khung sạch trước, rồi theo confidence giảm dần."""
+        ordered = sorted(self._embeddings, key=lambda item: item[:3], reverse=True)
+        return [item[3] for item in ordered]
 
     def __repr__(self) -> str:  # pragma: no cover - chỉ phục vụ debug
         state = "closed" if self.closed else "active"
@@ -348,10 +383,15 @@ class TrackletBuilder:
         """
         self._latest_ts_ms = max(self._latest_ts_ms, int(msg.ts_ms))
         closed: list[Tracklet] = []
+        clean = embedding_clean(
+            msg,
+            max_overlap=self.config.embed_max_overlap,
+            edge_margin_px=self.config.embed_edge_margin_px,
+        )
 
-        for det in msg.detections:
+        for det, is_clean in zip(msg.detections, clean, strict=True):
             key = (msg.cam_id, int(det.local_track_id))
-            obs = Observation.from_detection(msg, det, self.config.foot_model)
+            obs = Observation.from_detection(msg, det, self.config.foot_model, is_clean)
             tracklet = self._active.get(key)
 
             if tracklet is not None and obs.ts_ms - tracklet.end_ms > self.config.idle_timeout_ms:
@@ -461,6 +501,35 @@ class TrackletBuilder:
 
         self.n_closed += 1
         return tracklet
+
+
+def embedding_clean(
+    msg: FrameMessage, *, max_overlap: float | None, edge_margin_px: int | None
+) -> list[bool]:
+    """Mỗi detection của khung: crop có đủ sạch để tin embedding không (`TrackletConfig.embed_*`).
+
+    Che khuất = phần diện tích hộp này nằm trong hộp người khác (lấy max, không cộng dồn).
+    Cả hai tiêu chí tắt (`None`) thì mọi hộp đều sạch.
+    """
+    dets = msg.detections
+    if max_overlap is None and edge_margin_px is None:
+        return [True] * len(dets)
+    boxes = np.array([d.bbox for d in dets], dtype=np.float64).reshape(-1, 4)
+    x0, y0 = boxes[:, 0], boxes[:, 1]
+    x1, y1 = x0 + boxes[:, 2], y0 + boxes[:, 3]
+    ok = np.ones(len(dets), dtype=bool)
+    if edge_margin_px is not None:
+        m = float(edge_margin_px)
+        ok &= (x0 >= m) & (y0 >= m)
+        ok &= (x1 <= msg.frame_width - m) & (y1 <= msg.frame_height - m)
+    if max_overlap is not None and len(dets) > 1:
+        iw = np.clip(np.minimum(x1[:, None], x1) - np.maximum(x0[:, None], x0), 0.0, None)
+        ih = np.clip(np.minimum(y1[:, None], y1) - np.maximum(y0[:, None], y0), 0.0, None)
+        inter = iw * ih
+        np.fill_diagonal(inter, 0.0)
+        area = np.maximum(boxes[:, 2] * boxes[:, 3], 1e-9)
+        ok &= inter.max(axis=1) / area <= max_overlap
+    return ok.tolist()
 
 
 GroundPath = Sequence[tuple[int, tuple[float, float]]]
