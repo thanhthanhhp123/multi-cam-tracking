@@ -117,6 +117,26 @@ Theo buổi (HOTA, đúng/tách/nhầm): s1_1 74.4, 25/5/3; s3_1 54.4, 50/20/23;
 - Phần còn lại tới 100 là detector: DetA khoảng 84 ngay cả khi danh tính hoàn hảo. HOTA lấy trung bình trên các ngưỡng IoU 0.05–0.95, nên độ lệch khung hộp so với GT cũng bị phạt.
 - Chưa đo trần cho nhóm giữ riêng: việc đó cần đọc GT của nhóm, nên phải được duyệt.
 
+**Kiểm Re-ID trên CPU: CLIP-ReID so với OSNet, 8 buổi s2, chỉ lần chạy r1**
+- Dữ liệu: các detection của pipeline nằm trong tracklet khớp GT. Ảnh cắt lấy thẳng từ video 1920×1080.
+- Model đem so:
+  - OSNet ONNX, cùng tiền xử lý với nvtracker;
+  - CLIP-ReID ViT-B/16 MSMT17, checkpoint chính thức (Syliz517/CLIP-ReID, commit `eb1898b`), embedding 1280 chiều, chạy trên MPS.
+- Không học gì trên dữ liệu lab.
+- Script ở scratchpad (`embed.py`, `score.py`); embedding lưu ở `data/lab/s46/reid/` (gitignored).
+- Đối chứng: OSNet tự cắt ảnh so với embedding trong fixture cho cosine trung bình 0.98, và cho cùng số đo như dùng embedding của fixture.
+
+| 105 truy vấn, gallery = camera khác | rank-1 @5 khung | @25 khung | cả tracklet | AUC chồng lấn / không chồng lấn / cùng camera |
+|---|---|---|---|---|
+| OSNet (fixture) | 62.9% | 78.1% | 95.2% | 0.979 / 0.879 / 0.931 |
+| CLIP-ReID | **74.3%** | **87.6%** | 95.2% | 0.979 / 0.890 / 0.911 |
+
+- McNemar ghép cặp:
+  - @5 khung: CLIP-ReID đúng mà OSNet sai 14 lần, ngược lại 2 lần, p = 0.004;
+  - @25 khung: 12 so với 2, p = 0.013.
+- Kết luận: lợi thế nằm ở quyết định sớm, đúng chỗ yếu của engine (cấp ID ở khoảng 5 khung). Xét cả tracklet thì hai model ngang nhau.
+- Chưa đổi gì trong pipeline. Bước tiếp theo cần GPU: export ONNX, đo FPS, sinh lại fixture, chạy LOSO.
+
 ## Vướng mắc / chưa xong
 
 - **Không chồng lấn giảm ở nhóm giữ riêng (19 → 12/36).** Nghi do cửa sổ mềm hoặc xét lại ở cảnh đông/áo cùng màu: ghép muộn dựa vào ngoại hình, mà s4 áo cùng màu, s3 nhiều người. Muốn chẩn đoán thì chỉ được làm trên s2 hoặc một tập mới; đào vào nhóm giữ riêng là phá quy trình.
