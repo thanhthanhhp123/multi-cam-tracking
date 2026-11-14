@@ -33,7 +33,7 @@ cd "$REPO"   # nvtracker phan giai duong dan theo cwd (CLAUDE.md §11)
 mkdir -p data/fixtures logs
 
 step="${1:?buoc: ffmpeg | sync <buoi> | engine <buoi> | run <buoi> <so-lan> | fps <buoi> | pack <buoi>}"
-STREAMS=configs/lab/streams_lab.yaml
+STREAMS=${STREAMS:-configs/lab/streams_lab.yaml}   # phiên 46: streams_lab_clip.yaml cho CLIP-ReID
 ENGINE_CFG=configs/lab/lab.mct.yaml
 TOPO=configs/lab/topology.yaml
 HDIR=configs/lab/homography
@@ -130,7 +130,7 @@ run)
   nrun="${3:?so lan chay (3, phien 22: nhieu giua hai lan chay ~0.3-0.9 HOTA)}"
   command -v redis-server >/dev/null || { echo "FATAL: chua co redis-server"; exit 1; }
   redis-cli ping >/dev/null 2>&1 || { redis-server --daemonize yes --save '' --appendonly no; sleep 1; }
-  python3 -m tools.check_lab_setup --session "$session" || {
+  python3 -m tools.check_lab_setup --session "$session" --streams "$STREAMS" || {
     echo "FATAL: check_lab_setup bao FAIL — sua cau hinh tren may dev truoc khi dot tien GPU"; exit 1; }
   for n in $(seq 1 "$nrun"); do
     tag="lab_${session}_r${n}"

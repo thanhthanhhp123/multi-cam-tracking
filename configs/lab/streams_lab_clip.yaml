@@ -1,0 +1,53 @@
+# = streams_lab.yaml, tracker dùng CLIP-ReID (phiên 46). STREAMS=configs/lab/streams_lab_clip.yaml bash docker/vast_lab.sh ...
+# 3 luồng dữ liệu TỰ THU (M6) qua pipeline DeepStream, CÓ ReID — trên vast-gpu.
+#
+# 3 camera IP Tiandy (từ 2026-10-12): cam01 + cam02 chồng lấn ở khu A, cam03 ở lối đi, không
+# chồng lấn ai — cấu hình HỖN HỢP trong cùng một buổi quay (topology.yaml).
+#
+# Nguồn là FILE: tools.record_rtsp ghi RTSP ra data/lab/raw/<buổi>/ (máy GPU không vào được
+# mạng LAN của camera), rồi tools.sync_recordings đồng bộ theo độ lệch đo được (cùng fps cố
+# định, cắt cùng một cửa sổ thời gian, khung thứ i ở mọi camera = cùng một thời điểm). Chính
+# những file này cũng là file đem lên CVAT, nên `frame_id` của pipeline tra thẳng về khung chú
+# thích — ĐỪNG cắt hay mã hoá lại chúng bằng công cụ khác.
+#
+# Chọn buổi quay bằng biến môi trường (common.config.load_yaml tự thế ${...}):
+#   LAB_SESSION=s1 python -m ds_pipeline --config configs/lab/streams_lab.yaml --stats
+# Toàn bộ quy trình trên máy GPU: docker/vast_lab.sh.
+#
+# Chạy pipeline thẳng trên RTSP (demo trực tiếp, cần đường hầm từ LAN tới máy GPU): đổi `uri`
+# sang rtsp://..., `live_source: true`, và `sync` không còn tác dụng (nguồn sống tự chạy đúng
+# tốc độ thật).
+sources:
+  - cam_id: cam01
+    uri: file:///workspace/mct-repo/data/lab/${LAB_SESSION}/cam01.mp4
+  - cam_id: cam02
+    uri: file:///workspace/mct-repo/data/lab/${LAB_SESSION}/cam02.mp4
+  - cam_id: cam03
+    uri: file:///workspace/mct-repo/data/lab/${LAB_SESSION}/cam03.mp4
+
+streammux:
+  # Phải bằng độ phân giải của file đầu ra sync_recordings (in trong sync.json). Camera đặt
+  # luồng chính 1920x1080; để 3MP gốc thì đổi ở đây, trong topology.yaml và ground_points.yaml
+  # (`record_rtsp check` báo WARN khi camera không phát đúng 1920x1080).
+  width: 1920
+  height: 1080
+  batched_push_timeout_us: 40000
+  live_source: false
+  attach_sys_ts: true
+
+tracker:
+  ll_lib_file: /opt/nvidia/deepstream/deepstream/lib/libnvds_nvmultiobjecttracker.so
+  ll_config_file: configs/pipeline/config_tracker_NvDCF_reid_clip.yml
+  width: 960
+  height: 544
+  display_tracking_id: false
+
+sink:
+  # BẮT BUỘC true: phát đúng tốc độ thật, nếu không cả đoạn video bị nén vào vài giây ts_ms
+  # và ràng buộc thời gian di chuyển mất nghĩa (đo 2026-09-04). Cũng là điều kiện đo độ trễ
+  # theo định nghĩa của phiên 32.
+  sync: true
+
+pgie:
+  # Batch 3 = số nguồn (builder.py); engine b4 thì mỗi lần chạy build lại ~4 phút.
+  config_file: configs/pipeline/config_infer_yolo11_b3.txt
