@@ -235,6 +235,24 @@ published.
 Each session was processed three times by the real DeepStream pipeline on a rented GPU,
 giving 36 metadata fixtures (16{,}596 annotated frames, 18{,}645 ground-truth boxes).
 
+% Real-person frames (heads blurred) live in media/, which is kept out of git (consent form).
+\IfFileExists{media/s2_1_f650_cam01.jpg}{%
+\begin{figure}[h]
+  \centering
+  \includegraphics[width=0.32\linewidth]{media/s2_1_f650_cam01.jpg}\hfill
+  \includegraphics[width=0.32\linewidth]{media/s2_1_f650_cam02.jpg}\hfill
+  \includegraphics[width=0.32\linewidth]{media/s2_1_f650_cam03.jpg}\\[3pt]
+  \includegraphics[width=0.32\linewidth]{media/s3_1_f395_cam01.jpg}\hfill
+  \includegraphics[width=0.32\linewidth]{media/s3_1_f395_cam02.jpg}\hfill
+  \includegraphics[width=0.32\linewidth]{media/s3_1_f395_cam03.jpg}
+  \caption{Ground-truth annotations, cam01 / cam02 / cam03 from left to right. Top: selection
+  session s2\_1 (frame 650), sparse scene. Bottom: held-out crowd session s3\_1 (frame 395),
+  with heavy occlusion near the cameras. Boxes and identity labels (P01--P07) are ground truth;
+  heads are blurred.}
+  \label{fig:frames}
+\end{figure}
+}{}
+
 \begin{figure}[h]
   \centering
   \includegraphics[width=\linewidth]{\figdir/05-data-workflow.pdf}

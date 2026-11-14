@@ -49,3 +49,7 @@ dist/
 /eval/gt/lab_*/
 # Log engine sinh ra khi chạy lab-eval
 /logs/
+
+# Báo cáo: ảnh người thật (đã làm mờ đầu) và PDF có chứa ảnh đó KHÔNG lên git (phiếu đồng thuận)
+/docs/report/media/
+/docs/report/summary.pdf
