@@ -98,6 +98,25 @@ Theo buổi (HOTA, đúng/tách/nhầm): s1_1 74.4, 25/5/3; s3_1 54.4, 50/20/23;
 - **Giảm:** không chồng lấn 53 → 33% (19 → 12 trên 36, n nhỏ), nhầm 54 → 57.
 - Không chồng lấn đi ngược chiều với LOSO (65 → 80%). Chưa chẩn đoán vì sao. Theo quy trình thì không chỉnh gì nữa.
 
+**Trần HOTA trên 8 buổi s2** (`data/lab/s46/ceiling/ceiling.py`, không chạy engine):
+- Fixture pipeline thật (gpu_s42), 3 lần chạy mỗi buổi.
+- Danh tính lấy từ GT, khớp ở IoU ≥ 0.5 với GT nội suy 25 fps.
+- Chấm bằng `run_lab_eval` như lần chạy thật: lọc vùng sàn, chỉ khung chú thích.
+- HOTA và AssA là trung bình theo buổi; bàn giao gộp cả 8 buổi.
+
+| | HOTA | DetA | AssA | IDF1 | Bàn giao (đúng/tách/nhầm) |
+|---|---|---|---|---|---|
+| Hệ thật, LOSO, chấm nghiêm | 79.5 | — | 75.8 | 90.4 | 82% (204/30/15) |
+| LC: detector + NvDCF thật, liên kết hoàn hảo | 82.5 | 83.8 | 81.4 | 95.4 | 95% (237/9/3) |
+| LB: detector thật, tracker + liên kết hoàn hảo | 84.2 | 83.9 | 84.6 | 97.4 | 100% (249/0/0) |
+
+→ Đọc bảng:
+- Trên s2, khâu liên kết chỉ còn cách trần 3 điểm HOTA (79.5 so với 82.5).
+- Khâu liên kết còn nhiều chỗ cải thiện hơn ở bàn giao (82 so với 95%) và IDF1 (90 so với 95).
+- Tracker đơn camera làm mất thêm 1.7 HOTA và 5 điểm bàn giao (trộn người, tách mảnh).
+- Phần còn lại tới 100 là detector: DetA khoảng 84 ngay cả khi danh tính hoàn hảo. HOTA lấy trung bình trên các ngưỡng IoU 0.05–0.95, nên độ lệch khung hộp so với GT cũng bị phạt.
+- Chưa đo trần cho nhóm giữ riêng: việc đó cần đọc GT của nhóm, nên phải được duyệt.
+
 ## Vướng mắc / chưa xong
 
 - **Không chồng lấn giảm ở nhóm giữ riêng (19 → 12/36).** Nghi do cửa sổ mềm hoặc xét lại ở cảnh đông/áo cùng màu: ghép muộn dựa vào ngoại hình, mà s4 áo cùng màu, s3 nhiều người. Muốn chẩn đoán thì chỉ được làm trên s2 hoặc một tập mới; đào vào nhóm giữ riêng là phá quy trình.
