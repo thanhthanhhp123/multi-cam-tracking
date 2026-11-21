@@ -27,6 +27,8 @@
 4. **LOSO ba bước** (base → +soft → +soft+rv), lượt chọn cuối trên cả 8 buổi, kiểm WildTrack.
 5. **`configs/lab/lab.mct.yaml`: `transit_overdue_max_cost: 0.35`, `revise_after_frames: 50`** (người dùng duyệt, commit `4c931b4`). Sau đó chạy nhóm giữ riêng một lần.
 6. Bộ sơ đồ tiếng Anh cho báo cáo/slide: `docs/figures/` gồm 6 hình (kiến trúc, pipeline, thuật toán, bố trí camera, quy trình dữ liệu, giao thức đánh giá). Mỗi hình có `.dot` + `.svg` + `.png`, vẽ lại bằng `build.sh`.
+7. **Trần HOTA trên s2** (liên kết hoàn hảo LC / tracker + liên kết hoàn hảo LB, `data/lab/s46/ceiling/`): hệ thật 79.5, LC 82.5, LB 84.2. Xem "Số liệu đo được".
+8. **Kiểm CLIP-ReID trên CPU** rồi **ablation trên pipeline thật** (vast-gpu, người dùng duyệt). Gồm export ONNX, `config_tracker_NvDCF_reid_clip.yml`, `streams_lab_clip.yaml`, `vast_lab.sh` nhận `STREAMS` (commit `f27fa4b`), 12 buổi × 3 lần chạy, và LOSO trên s2. Kết quả **âm tính**, giữ OSNet.
 
 **Sự cố, ghi để tránh lặp lại:**
 - Lần chạy LOSO đầu chạy song song với lúc đang sửa `tracklet.py`, nên chết vì `NameError`. Lần chạy lại dùng cache, mà một phần cache sinh từ code đang sửa dở, nên ra HOTA 68.9 sai.
@@ -186,9 +188,8 @@ Mức trần LC (liên kết hoàn hảo) trên fixture CLIP:
 
 - **Không chồng lấn giảm ở nhóm giữ riêng (19 → 12/36).** Nghi do cửa sổ mềm hoặc xét lại ở cảnh đông/áo cùng màu: ghép muộn dựa vào ngoại hình, mà s4 áo cùng màu, s3 nhiều người. Muốn chẩn đoán thì chỉ được làm trên s2 hoặc một tập mới; đào vào nhóm giữ riêng là phá quy trình.
 - Nhóm giữ riêng đã bị nhìn 6 lần. Một cải tiến tiếp theo nên có dữ liệu kiểm mới (quay thêm), không nên dùng lại nhóm này.
-- Chưa đo đồng hồ thật (vast-gpu) với rv50. Thời gian tới Global ID theo thời gian dữ liệu không đổi, vì ID tạm vẫn cấp ngay.
+- Đồng hồ thật với rv50 mới đo bằng fixture CLIP-ReID: bỏ 3 s khởi động thì thời gian tới Global ID p95 là 762 ms, ngang phiên 45. Với OSNet + rv50 thì chưa đo lại bằng đồng hồ thật. Theo thời gian dữ liệu số này không đổi, vì ID tạm vẫn cấp ngay.
 - Deck/báo cáo cần cập nhật số theo cấu hình mới.
-- Nhánh `phien-46-chat-luong-lien-ket` chưa push.
 
 ## Bước tiếp theo
 
