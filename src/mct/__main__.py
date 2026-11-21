@@ -117,8 +117,17 @@ class Engine:
         self.window_observer = window_observer
         self._window_end_ms: int | None = None
         self._pending_latency: list[LatencyRecord] = []
+        self._size_checked: set[str] = set()
+        self.size_warnings: list[str] = []
         self.n_messages = 0
         self.n_updates = 0
+
+        if store is not None:
+            # DB có sẵn từ lần chạy trước: nhảy qua các ID đã dùng, nếu không tracklet/Global ID
+            # mới đè lên dòng cũ (`Store.next_ids`). DB mới tinh thì cả hai là 1 — không đổi gì.
+            first_tracklet_id, first_global_id = store.next_ids()
+            self.builder.reserve_ids_from(first_tracklet_id)
+            self.associator.gallery.reserve_ids_from(first_global_id)
 
     def feed(self, msg: FrameMessage) -> list[GlobalUpdate]:
         """Nạp một message. Trả về các cập nhật Global ID nếu cửa sổ vừa đóng."""
@@ -126,6 +135,8 @@ class Engine:
         if self.roi_filter is not None:
             msg, n_dropped = self.roi_filter.filter(msg)
             self.n_roi_dropped += n_dropped
+
+        self._check_frame_size(msg)
         closed = self.builder.update(msg)
         if self._window_end_ms is None:
             self._window_end_ms = int(msg.ts_ms) + self.window_ms
@@ -199,6 +210,21 @@ class Engine:
                 )
         self.n_position_updates += len(out)
         return out
+
+    def _check_frame_size(self, msg: FrameMessage) -> None:
+        """Một lần cho mỗi camera: khung hình có cùng độ phân giải lúc hiệu chỉnh homography không.
+
+        `bbox` nằm trong không gian `frame_width × frame_height` (probe đã scale về đó, xem
+        CLAUDE.md §5), nên so đúng cặp số này với `image_size` của file hiệu chỉnh là kiểm tra
+        đúng không gian toạ độ. Lệch thì không lỗi, chỉ làm khoảng cách mặt đất sai âm thầm.
+        """
+        if msg.cam_id in self._size_checked:
+            return
+        self._size_checked.add(msg.cam_id)
+        # Tuỳ chọn như `project_many`: không nằm trong giao thức `GroundMapper`.
+        warn = getattr(self.associator.ground_mapper, "warn_frame_sizes", None)
+        if warn is not None:
+            self.size_warnings.extend(warn([(msg.cam_id, msg.frame_width, msg.frame_height)]))
 
     def finish(self) -> list[GlobalUpdate]:
         """Hết luồng: đóng mọi tracklet còn mở rồi chạy vòng gán cuối."""

@@ -234,11 +234,32 @@ class Associator:
                 if float(work[row, col]) < threshold:
                     matched_rows[int(row)] = (int(col), float(matrix.costs[row, col]))
 
+        leftovers: list[tuple[int, Tracklet]] = []
         for row, tracklet in enumerate(tracklets):
             hit = matched_rows.get(row)
-            if hit is not None:
-                col, cost = hit
-                track = tracks[col]
+            if hit is None:
+                leftovers.append((row, tracklet))
+                continue
+            col, cost = hit
+            track = tracks[col]
+            self.gallery.assign(track, tracklet)
+            self.stats.matched += 1
+            self._mark_provisional(tracklet)
+            results.append(
+                Assignment(tracklet=tracklet, global_id=track.global_id, cost=cost, is_new=False)
+            )
+
+        # `tracks` là ảnh chụp lúc đầu vòng, nên hai mảnh nối tiếp của cùng một người cùng lọt
+        # vào vòng này thì mảnh sau không thấy Global ID vừa tạo cho mảnh trước, và cả hai thành
+        # hai người — các vòng sau chỉ đi đường `is_update`, không ai ghép lại. Xử lý hàng còn
+        # lại theo thứ tự thời gian, mỗi hàng thử khớp với track MỚI tạo trong vòng này trước
+        # khi tự tạo track. Chỉ nhìn track mới: khớp với track cũ đã là việc của Hungarian ở trên.
+        # ponytail: tham lam theo start_ms, không tối ưu chung; thêm Hungarian nếu đo thấy sai.
+        created: list[GlobalTrack] = []
+        for row, tracklet in sorted(leftovers, key=lambda x: (x[1].start_ms, x[1].tracklet_id)):
+            stitched = self._match_created(tracklet, created)
+            if stitched is not None:
+                track, cost = stitched
                 self.gallery.assign(track, tracklet)
                 self.stats.matched += 1
                 self._mark_provisional(tracklet)
@@ -255,6 +276,7 @@ class Associator:
             elif kind == "threshold":
                 self.stats.rejected_by_threshold += 1
             track = self.gallery.create(tracklet)
+            created.append(track)
             self.stats.created += 1
             self._mark_provisional(tracklet)
             results.append(
@@ -336,6 +358,17 @@ class Associator:
             is_update=True,
             reason="revised" if target is not owner else "",
         )
+
+    def _match_created(
+        self, tracklet: Tracklet, created: list[GlobalTrack]
+    ) -> tuple[GlobalTrack, float] | None:
+        """Track rẻ nhất trong số vừa tạo ở vòng này mà `tracklet` khớp được; None nếu không có."""
+        if not created:
+            return None
+        costs = self.cost_matrix([tracklet], created).costs[0]
+        col = int(np.argmin(costs))
+        cost = float(costs[col])
+        return (created[col], cost) if cost < self.config.max_cost else None
 
     def cost_matrix(
         self, tracklets: Sequence[Tracklet], tracks: Sequence[GlobalTrack] | None = None

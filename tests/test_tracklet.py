@@ -190,7 +190,7 @@ def test_message_lech_thu_tu_khong_lam_lui_moc_ket_thuc():
     assert t.n_frames == 3
     assert t.end_ms == 1_100, "end_ms phải là mốc muộn nhất, không phải message cuối cùng"
     assert t.end_frame_id == 11
-    assert t.start_ms == 1_000
+    assert t.start_ms == 900, "start_ms đối xứng: mốc SỚM nhất, khung tới muộn vẫn nằm trong span"
 
 
 def test_hai_camera_khong_lan_id_cua_nhau():
@@ -573,3 +573,23 @@ def test_hop_cham_mep_anh_khong_sach():
     assert embedding_clean(msg, max_overlap=None, edge_margin_px=None) == [True] * 3
     with pytest.raises(ValueError, match="embed_max_overlap"):
         TrackletConfig(embed_max_overlap=1.0)
+
+
+def test_message_lech_thu_tu_van_lay_moc_dau_som_nhat():
+    """Redis consumer group/replay nhiều camera có thể giao t=2000 trước t=1000."""
+    builder = TrackletBuilder(TrackletConfig(min_frames=1))
+    builder.update(_msg("cam01", 2, 2_000, {1: 0.9}))
+    builder.update(_msg("cam01", 1, 1_000, {1: 0.9}))
+    (t,) = builder.flush()
+
+    assert (t.start_ms, t.end_ms) == (1_000, 2_000)
+    assert t.start_frame_id == 1 and t.end_frame_id == 2
+
+
+def test_reserve_ids_from_chi_tang_khong_giam():
+    builder = TrackletBuilder(TrackletConfig(min_frames=1))
+    builder.reserve_ids_from(50)
+    builder.reserve_ids_from(10)  # không được kéo lùi
+    builder.update(_msg("cam01", 0, 1_000, {1: 0.9}))
+
+    assert builder.get("cam01", 1).tracklet_id == 50

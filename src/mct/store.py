@@ -234,6 +234,21 @@ class Store:
             self._last_flush_ms = int(now_ms)
         return written
 
+    def next_ids(self) -> tuple[int, int]:
+        """`(tracklet_id, global_id)` nhỏ nhất chưa dùng trong DB này.
+
+        `TrackletBuilder` và `Gallery` đều đếm từ 1 mỗi lần khởi động, còn `tracklet_id` /
+        `global_id` là khoá chính. Ghi tiếp vào DB có sẵn mà không nhảy qua các số đã dùng
+        thì tracklet mới đè lên dòng cũ (đo được: cam02 của lần chạy 2 ghi đè cam01 của lần 1).
+        Chỉ chặn được việc GHI ĐÈ — gallery không hồi phục được vì SQLite không lưu embedding,
+        nên người của lần chạy trước vẫn nhận Global ID mới.
+        """
+        row = self.conn.execute(
+            "SELECT (SELECT COALESCE(MAX(tracklet_id), 0) FROM appearances),"
+            "       (SELECT COALESCE(MAX(global_id), 0) FROM global_tracks)"
+        ).fetchone()
+        return int(row[0]) + 1, int(row[1]) + 1
+
     def close_tracks(self, global_ids: Sequence[int]) -> int:
         """Đánh dấu các Global ID đã đóng (GlobalTrack hết TTL trong gallery)."""
         if not global_ids:

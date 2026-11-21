@@ -7,9 +7,11 @@ là hợp lệ — đây là package DUY NHẤT được phép.
   - bbox: NvDsObjectMeta.rect_params là toạ độ theo nvstreammux (đã resize theo
     streammux width/height), KHÔNG phải theo độ phân giải gốc của camera. Phải scale
     ngược bằng frame_width/frame_height gốc trước khi ghi vào Detection.
-  - ts_ms: epoch milliseconds theo wall clock (NTP), không phải PTS. Lấy từ
-    ntp_timestamp nếu streammux có attach-sys-ts; nếu không, dùng wall clock tại probe
-    (chấp nhận độ trễ hàng chục ms — ghi rõ trong docstring, KHÔNG âm thầm coi là chính xác).
+  - ts_ms: epoch milliseconds theo wall clock, không phải PTS. Lấy từ wall clock TẠI PROBE
+    (≈ `t1`), KHÔNG phải từ ntp_timestamp — ntp_timestamp chỉ dùng cho `t0` trong `stamps`.
+    Nên ts_ms trễ hơn lúc khung rời camera đúng `t1 - t0`: đo 67.4 ms (p99 69.4), đồng đều
+    giữa các camera nên không lệch cặp (worklog 2026-09-18-23). Với RTSP thật có jitter thì
+    độ trễ này hết đồng đều — chưa đo; đổi sang `t0` khi đó, và ghi lại fixture cũ lệch mốc.
   - embedding: lấy từ user meta của nvtracker (đường A, CLAUDE.md §11). Chi tiết phụ
     thuộc phiên bản DeepStream nằm gọn trong `ds_pipeline/reid_meta.py` — sửa ở đó,
     không rải rác trong probe.
@@ -107,9 +109,8 @@ def make_probe(
                 l_frame = l_frame.next
                 continue
 
-            # attach-sys-ts trên streammux gắn NTP wall-clock vào buffer_pts của batch;
-            # nếu không bật (nguồn file, live-source=0) thì fallback wall-clock tại probe —
-            # đủ cho fixture/dev, KHÔNG đủ chính xác cho đối chiếu đa camera thời gian thực.
+            # ts_ms = wall-clock tại probe, trễ hơn lúc khung rời camera `t1 - t0` (xem docstring
+            # module) — đủ cho fixture/dev, KHÔNG phải mốc chụp chính xác cho đối chiếu đa camera.
             probe_ms = now_ms()
             ts_ms = int(probe_ms)
 

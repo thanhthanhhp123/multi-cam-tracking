@@ -135,3 +135,12 @@ def test_doc_config_tu_mct_yaml():
         {"store": {"db_path": "/tmp/x.db", "batch_size": 8, "flush_interval_ms": 250}}
     )
     assert (config.db_path, config.batch_size, config.flush_interval_ms) == ("/tmp/x.db", 8, 250)
+
+
+def test_next_ids_nhay_qua_cac_id_da_dung(tmp_path):
+    path = tmp_path / "mct.db"
+    with Store(db_path=path) as st:
+        assert st.next_ids() == (1, 1)  # DB mới tinh
+        st.record(_assign(_tracklet("cam01", 1, tracklet_id=4, start_ms=1_000), 9))
+        st.flush()
+        assert st.next_ids() == (5, 10)

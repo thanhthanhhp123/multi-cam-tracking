@@ -17,6 +17,7 @@ from common.schema import CLASS_PERSON, Detection, FrameMessage, l2_normalize
 from mct.__main__ import Engine
 from mct.affinity import AffinityConfig
 from mct.associator import Associator
+from mct.homography import CameraHomography, HomographyMapper
 from mct.store import Store, StoreConfig
 from mct.tracklet import TrackletConfig
 
@@ -242,3 +243,45 @@ def test_vi_tri_la_cua_khung_vua_toi_va_global_id_khong_doi(tmp_path):
             if ts is not None and ts < BASE_TS + 2500:
                 assert update.ts_ms == ts, "vị trí phát ngay phải là của chính khung vừa tới"
     assert ids and all(len(gids) == 1 for gids in ids.values())
+
+
+def test_chay_lai_tren_cung_db_khong_de_len_lich_su(tmp_path):
+    """Khởi động lại: builder và gallery đếm từ 1, nhưng tracklet_id/global_id là khoá chính."""
+    db = str(tmp_path / "restart.db")
+    person = l2_normalize(np.ones(DIM, dtype=np.float32))
+    other = l2_normalize(np.array([1.0] + [-1.0] * (DIM - 1), dtype=np.float32))
+
+    def run(cam_id: str, emb: np.ndarray) -> None:
+        engine = _engine(store=Store(StoreConfig(db_path=db, batch_size=1)))
+        for frame in range(6):
+            engine.feed(_msg(cam_id, frame, {1: emb}))
+        engine.finish()
+        engine.store.close()
+
+    run("cam01", person)
+    run("cam02", other)
+
+    with Store.open_readonly(db) as st:
+        rows = st.appearances_between(0, 10**15)
+        assert sorted(a.cam_id for a in rows) == ["cam01", "cam02"]
+        assert len({a.tracklet_id for a in rows}) == 2
+        assert len({a.global_id for a in rows}) == 2
+        assert st.summary()["n_tracks"] == 2
+
+
+def test_engine_canh_bao_mot_lan_khi_khung_hinh_khac_luc_hieu_chinh():
+    person = l2_normalize(np.ones(DIM, dtype=np.float32))
+    mapper = HomographyMapper(
+        {"cam01": CameraHomography("cam01", np.eye(3), image_size=(1280, 720))}
+    )
+    engine = Engine(
+        tracklet_config=TrackletConfig(min_frames=2, idle_timeout_ms=2_000),
+        associator=Associator(config=AffinityConfig(max_cost=0.5), ground_mapper=mapper),
+        window_ms=1_000,
+    )
+
+    for frame in range(5):  # _msg dựng khung 1920x1080, hiệu chỉnh ở 1280x720
+        engine.feed(_msg("cam01", frame, {1: person}))
+
+    assert len(engine.size_warnings) == 1
+    assert "1280x720" in engine.size_warnings[0]

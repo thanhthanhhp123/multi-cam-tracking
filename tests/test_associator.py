@@ -542,3 +542,35 @@ def test_xet_lai_tat_mac_dinh(rng):
     later = _tracklet("cam03", 7, start_ms=5_000, embedding=a, n_frames=25, tracklet_id=3)
     assoc.assign([later])
     assert assoc.stats.revised == 0
+
+
+def test_hai_manh_noi_tiep_cung_camera_cung_vong_van_duoc_noi():
+    """Tracker đổi id giữa chừng: hai mảnh không chồng thời gian, cùng lọt vào MỘT vòng gán.
+
+    Ảnh chụp gallery đầu vòng không có Global ID vừa tạo cho mảnh 1, nên trước đây mảnh 2 thành
+    người thứ hai — và các vòng sau chỉ cập nhật, không ai ghép lại.
+    """
+    embedding = l2_normalize(np.ones(DIM, dtype=np.float32))
+    first = _tracklet("cam01", 1, start_ms=1_000, embedding=embedding, tracklet_id=1)
+    second = _tracklet("cam01", 2, start_ms=2_000, embedding=embedding, tracklet_id=2)
+    assert first.end_ms < second.start_ms
+
+    associator = Associator(config=AffinityConfig(max_cost=0.5))
+    results = associator.assign([second, first])  # cố ý đảo thứ tự vào
+
+    assert len({r.global_id for r in results}) == 1
+    assert associator.stats.created == 1
+    assert associator.stats.matched == 1
+    assert [r.is_new for r in sorted(results, key=lambda r: r.tracklet.start_ms)] == [True, False]
+
+
+def test_manh_noi_tiep_khac_nguoi_van_bi_tach():
+    """Đối chứng: cùng vòng, không chồng thời gian nhưng ngoại hình khác nhau thì KHÔNG nối."""
+    a = l2_normalize(np.ones(DIM, dtype=np.float32))
+    b = l2_normalize(np.array([1.0] + [-1.0] * (DIM - 1), dtype=np.float32))
+    first = _tracklet("cam01", 1, start_ms=1_000, embedding=a, tracklet_id=1)
+    second = _tracklet("cam01", 2, start_ms=2_000, embedding=b, tracklet_id=2)
+
+    results = Associator(config=AffinityConfig(max_cost=0.5)).assign([first, second])
+
+    assert len({r.global_id for r in results}) == 2

@@ -288,6 +288,10 @@ class Gallery:
         self.n_created = 0
         self.n_closed = 0
 
+    def reserve_ids_from(self, first_id: int) -> None:
+        """Không cấp `global_id` nhỏ hơn `first_id` — cùng lý do với `TrackletBuilder`."""
+        self._next_id = max(self._next_id, int(first_id))
+
     # ------------------------------------------------------------------ vòng đời
 
     def create(self, tracklet: Tracklet) -> GlobalTrack:

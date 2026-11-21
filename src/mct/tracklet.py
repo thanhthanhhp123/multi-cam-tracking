@@ -266,7 +266,9 @@ class Tracklet:
         if self.closed:
             raise ValueError(f"tracklet {self.tracklet_id} đã đóng, không thêm được observation")
 
-        if self.n_frames == 0:
+        # Mốc đầu cũng phải là mốc SỚM nhất đã thấy (đối xứng với end_* bên dưới): message tới
+        # lệch thứ tự thì message đầu tiên tới chưa chắc là message đầu tiên theo thời gian.
+        if self.n_frames == 0 or obs.ts_ms < self.start_ms:
             self.start_ms = obs.ts_ms
             self.start_frame_id = obs.frame_id
             self.first_bbox = obs.bbox
@@ -372,6 +374,14 @@ class TrackletBuilder:
         self.n_closed = 0
         self.n_dropped_short = 0
         """Số tracklet bị bỏ vì ngắn hơn min_frames — theo dõi để biết ngưỡng có quá gắt không."""
+
+    def reserve_ids_from(self, first_id: int) -> None:
+        """Không cấp `tracklet_id` nhỏ hơn `first_id` — dùng khi ghi tiếp vào DB của lần chạy trước.
+
+        `tracklet_id` là khoá chính của bảng `appearances`; cấp lại từ 1 sau mỗi lần khởi động
+        thì tracklet mới đè lên dòng của tracklet cũ (xem `Store.next_ids`).
+        """
+        self._next_id = max(self._next_id, int(first_id))
 
     # ------------------------------------------------------------------ nạp dữ liệu
 
